@@ -1,0 +1,22 @@
+{
+  "name": "크레건설 브리딩 비서",
+  "short_name": "크레건설",
+  "description": "크레스티드 게코 브리더를 위한 기록·관리 비서",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#FAF6EF",
+  "theme_color": "#F3EDE2",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

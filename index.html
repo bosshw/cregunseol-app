@@ -1,0 +1,1361 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#F3EDE2">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="크레건설">
+  <link rel="manifest" href="manifest.json">
+  <title>크레건설 브리딩 비서</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    html, body, #root { height: 100%; background: #FAF6EF; }
+    body { font-family: -apple-system, 'Noto Sans KR', sans-serif; color: #3B2F2A; overscroll-behavior: none; }
+
+    :root {
+      /* 크레건설 아이덴티티: 아이보리 × 버건디-브라운 */
+      --bg: #FAF6EF;          /* 아이보리 바탕 */
+      --bg2: #F3EDE2;         /* 헤더/탭바 크림 */
+      --bg3: #F0E9DC;         /* 입력창/보조 면 */
+      --card: #FFFDF8;        /* 카드 */
+      --border: #E4DACA;      /* 경계선 */
+      --accent: #8E3B45;      /* 버건디 (주 버튼) */
+      --accent2: #7C2D3A;     /* 버건디 진한 텍스트 */
+      --accent-soft: #F4E3E1; /* 버건디 옅은 면 (선택/말풍선) */
+      --accent-dim: #A85560;  /* 버건디 중간 */
+      --on-accent: #FFF6EE;   /* 버건디 위 글자 */
+      --text: #3B2F2A;        /* 다크 브라운 본문 */
+      --text2: #6B5A4E;       /* 중간 브라운 */
+      --text3: #A08D7C;       /* 옅은 브라운 캡션 */
+      --danger: #B3362B;
+      --warning: #C87F2F;
+      --gold: #A9812E;
+      --radius: 14px;
+      --shadow: 0 2px 10px rgba(59,47,42,.07);
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
+    }
+
+    .app { display: flex; flex-direction: column; height: 100vh; max-width: 430px; margin: 0 auto; position: relative; background: var(--bg); }
+    .screen { flex: 1; overflow-y: auto; padding-bottom: calc(70px + var(--safe-bottom)); }
+    .screen::-webkit-scrollbar { display: none; }
+
+    /* 상단 헤더 */
+    .header { background: var(--bg2); padding: 16px 20px 12px; border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 10; }
+    .header h1 { font-size: 18px; font-weight: 700; color: var(--accent2); }
+    .header-row { display: flex; align-items: center; justify-content: space-between; }
+    .header-sub { font-size: 12px; color: var(--text3); margin-top: 2px; }
+
+    /* 하단 탭바 */
+    .tabbar { display: flex; background: var(--bg2); border-top: 1px solid var(--border); position: fixed; bottom: 0; left: 50%; transform: translateX(-50%); width: 100%; max-width: 430px; padding-bottom: var(--safe-bottom); z-index: 20; }
+    .tab-btn { flex: 1; display: flex; flex-direction: column; align-items: center; padding: 10px 0 8px; gap: 3px; border: none; background: none; color: var(--text3); font-size: 10px; cursor: pointer; transition: color .15s; }
+    .tab-btn.active { color: var(--accent); }
+    .tab-btn svg { width: 22px; height: 22px; }
+
+    /* 카드 */
+    .card { background: var(--card); border-radius: var(--radius); padding: 16px; margin: 0 16px 12px; border: 1px solid var(--border); box-shadow: var(--shadow); }
+    .card-sm { background: var(--card); border-radius: 10px; padding: 12px 14px; border: 1px solid var(--border); }
+
+    /* 버튼 */
+    .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 13px 20px; border-radius: 12px; border: none; font-size: 15px; font-weight: 600; cursor: pointer; transition: opacity .15s, transform .1s; width: 100%; }
+    .btn:active { transform: scale(.97); opacity: .85; }
+    .btn-primary { background: var(--accent); color: var(--on-accent); box-shadow: 0 3px 10px rgba(142,59,69,.25); }
+    .btn-secondary { background: var(--bg3); color: var(--text2); border: 1px solid var(--border); }
+    .btn-danger { background: #FBEAE7; color: var(--danger); border: 1px solid #EBC7C0; }
+    .btn-sm { padding: 8px 14px; font-size: 13px; border-radius: 8px; }
+    .btn-ghost { background: transparent; color: var(--accent2); border: 1px solid var(--border); }
+
+    /* 입력 */
+    .input { width: 100%; background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 13px 14px; color: var(--text); font-size: 15px; outline: none; transition: border-color .15s; }
+    .input:focus { border-color: var(--accent); }
+    .input::placeholder { color: var(--text3); }
+    textarea.input { resize: none; min-height: 80px; }
+
+    /* 라벨 */
+    .label { font-size: 12px; color: var(--text3); margin-bottom: 6px; display: block; }
+
+    /* 대화형 채팅 */
+    .chat-wrap { padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+    .chat-q { background: var(--card); border-radius: 14px 14px 14px 4px; padding: 12px 14px; font-size: 14px; color: var(--text2); max-width: 85%; border: 1px solid var(--border); align-self: flex-start; white-space: pre-line; line-height: 1.6; box-shadow: var(--shadow); }
+    .chat-a { align-self: flex-end; background: var(--accent-soft); border-radius: 14px 14px 4px 14px; padding: 10px 14px; font-size: 14px; color: var(--accent2); max-width: 85%; border: 1px solid #E5C6C4; white-space: pre-line; line-height: 1.55; }
+    .chat-input-row { display: flex; gap: 8px; align-items: flex-end; }
+    .chat-input-row .input { flex: 1; }
+    .send-btn { background: var(--accent); border: none; border-radius: 10px; padding: 13px 14px; cursor: pointer; color: var(--on-accent); font-size: 16px; flex-shrink: 0; }
+    .chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: -6px; }
+    .pending-bar { padding: 6px 16px 8px; cursor: pointer; }
+
+    /* 선택 옵션 */
+    .option-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .option-grid.cols3 { grid-template-columns: 1fr 1fr 1fr; }
+    .option-btn { padding: 12px 8px; background: var(--card); border: 1px solid var(--border); border-radius: 10px; color: var(--text2); font-size: 13px; cursor: pointer; text-align: center; transition: all .15s; }
+    .option-btn:active, .option-btn.selected { background: var(--accent-soft); border-color: var(--accent-dim); color: var(--accent2); }
+    .chip-btn { padding: 9px 14px; background: var(--card); border: 1px solid var(--accent-dim); border-radius: 20px; color: var(--accent2); font-size: 13px; cursor: pointer; transition: all .15s; box-shadow: var(--shadow); }
+    .chip-btn:active { background: var(--accent-soft); }
+
+    /* 개체 카드 */
+    .gecko-card { display: flex; align-items: center; gap: 14px; background: var(--card); border-radius: var(--radius); padding: 14px 16px; margin: 0 16px 10px; border: 1px solid var(--border); cursor: pointer; transition: border-color .15s; box-shadow: var(--shadow); }
+    .gecko-card:active { border-color: var(--accent-dim); }
+    .gecko-avatar { width: 48px; height: 48px; border-radius: 50%; background: var(--bg3); display: flex; align-items: center; justify-content: center; font-size: 22px; flex-shrink: 0; border: 2px solid var(--border); }
+    .gecko-info { flex: 1; min-width: 0; }
+    .gecko-name { font-size: 16px; font-weight: 700; color: var(--text); }
+    .gecko-meta { font-size: 12px; color: var(--text3); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .gender-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
+    .gender-dot.female { background: #C2607E; }
+    .gender-dot.male { background: #4A6FA5; }
+    .gender-dot.unknown { background: var(--text3); }
+
+    /* 배지 */
+    .badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+    .badge-green { background: var(--accent-soft); color: var(--accent2); border: 1px solid #E5C6C4; }
+    .badge-gold { background: #F5EBD6; color: var(--gold); border: 1px solid #E2D2AC; }
+    .badge-blue { background: #E7EDF6; color: #4A6FA5; border: 1px solid #C9D6E8; }
+
+    /* 섹션 헤더 */
+    .section-title { font-size: 12px; font-weight: 700; color: var(--text3); text-transform: uppercase; letter-spacing: .8px; padding: 16px 20px 8px; }
+
+    /* FAB */
+    .fab { position: fixed; bottom: calc(80px + var(--safe-bottom)); right: calc(50% - 215px + 16px); width: 56px; height: 56px; border-radius: 28px; background: var(--accent); border: none; color: var(--on-accent); font-size: 26px; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 18px rgba(142,59,69,.35); z-index: 15; transition: transform .15s; }
+    .fab:active { transform: scale(.9); }
+    @media (max-width: 430px) { .fab { right: 16px; left: auto; transform: none; } .fab:active { transform: scale(.9); } }
+
+    /* 이벤트 타임라인 */
+    .timeline { padding: 0 16px; }
+    .timeline-item { display: flex; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+    .timeline-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; margin-top: 5px; }
+    .timeline-content { flex: 1; }
+    .timeline-type { font-size: 12px; font-weight: 700; color: var(--text3); }
+    .timeline-detail { font-size: 14px; color: var(--text); margin-top: 2px; }
+    .timeline-date { font-size: 11px; color: var(--text3); margin-top: 3px; }
+
+    /* 통계 그리드 */
+    .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 0 16px 16px; }
+    .stat-card { background: var(--card); border-radius: 10px; padding: 12px 14px; border: 1px solid var(--border); box-shadow: var(--shadow); }
+    .stat-val { font-size: 22px; font-weight: 800; color: var(--accent2); }
+    .stat-label { font-size: 11px; color: var(--text3); margin-top: 2px; }
+
+    /* 빈 상태 */
+    .empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 60px 20px; color: var(--text3); text-align: center; }
+    .empty-icon { font-size: 52px; opacity: .6; }
+    .empty p { font-size: 14px; line-height: 1.6; white-space: pre-line; }
+
+    /* 뒤로가기 버튼 */
+    .back-btn { background: none; border: none; color: var(--accent2); font-size: 15px; cursor: pointer; display: flex; align-items: center; gap: 4px; padding: 0; }
+
+    /* 알림 뱃지 */
+    .notif-badge { background: var(--danger); color: white; border-radius: 10px; font-size: 10px; font-weight: 700; padding: 1px 5px; position: absolute; top: 6px; right: calc(50% - 30px); }
+
+    /* 공유 박스 */
+    .share-box { background: var(--card); border-radius: 10px; padding: 14px; border: 1px solid var(--border); text-align: center; box-shadow: var(--shadow); }
+    .share-code { font-size: 24px; font-weight: 800; letter-spacing: 4px; color: var(--accent2); font-family: monospace; }
+
+    /* 확인 화면 */
+    .confirm-list { display: flex; flex-direction: column; gap: 8px; }
+    .confirm-row { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--border); }
+    .confirm-row:last-child { border-bottom: none; }
+    .confirm-key { font-size: 13px; color: var(--text); }
+    .confirm-val { font-size: 12px; color: var(--text3); font-weight: 500; text-align: right; display: flex; align-items: center; gap: 8px; }
+
+    /* 토스트 */
+    .toast { position: fixed; bottom: calc(80px + var(--safe-bottom) + 10px); left: 50%; transform: translateX(-50%); background: var(--card); border: 1px solid var(--accent-dim); color: var(--accent2); padding: 10px 20px; border-radius: 20px; font-size: 13px; z-index: 100; white-space: nowrap; box-shadow: 0 4px 18px rgba(59,47,42,.18); animation: toastIn .2s ease; }
+    @keyframes toastIn { from { opacity: 0; transform: translateX(-50%) translateY(10px); } }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useCallback, useRef } = React;
+
+/* ══════════════════════════════════════════
+   데이터 레이어 (localStorage / Supabase 교체 지점)
+   ══════════════════════════════════════════ */
+const DB = {
+  getAll(key) {
+    try { return JSON.parse(localStorage.getItem(key) || '[]'); } catch { return []; }
+  },
+  save(key, data) {
+    localStorage.setItem(key, JSON.stringify(data));
+  },
+  getIndividuals() { return this.getAll('cg_individuals'); },
+  saveIndividuals(list) { this.save('cg_individuals', list); },
+  getEvents() { return this.getAll('cg_events'); },
+  saveEvents(list) { this.save('cg_events', list); },
+  getReminders() { return this.getAll('cg_reminders'); },
+  saveReminders(list) { this.save('cg_reminders', list); },
+  addIndividual(ind) {
+    const list = this.getIndividuals();
+    list.push({ ...ind, id: uuid(), createdAt: now() });
+    this.saveIndividuals(list);
+    return list[list.length - 1];
+  },
+  addEvent(ev) {
+    const list = this.getEvents();
+    list.push({ ...ev, id: uuid(), createdAt: now() });
+    this.saveEvents(list);
+  },
+  getEventsFor(individualId) {
+    return this.getEvents().filter(e => e.individualId === individualId);
+  },
+  updateIndividual(id, patch) {
+    this.saveIndividuals(this.getIndividuals().map(i => i.id === id ? { ...i, ...patch } : i));
+  },
+  deleteIndividual(id) {
+    this.saveIndividuals(this.getIndividuals().filter(i => i.id !== id));
+    this.saveEvents(this.getEvents().filter(e => e.individualId !== id));
+  }
+};
+
+const uuid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
+const now = () => new Date().toISOString();
+const localISO = (d) => { const t = new Date(d.getTime() - d.getTimezoneOffset() * 60000); return t.toISOString().slice(0, 10); };
+const todayStr = () => localISO(new Date());
+const fmtDate = (d) => d ? new Date(d).toLocaleDateString('ko-KR', { year:'numeric', month:'short', day:'numeric' }) : '-';
+const genderLabel = g => g === 'female' ? '♀ 암컷' : g === 'male' ? '♂ 수컷' : '미구분';
+const genderEmoji = g => g === 'female' ? '🔴' : g === 'male' ? '🔵' : '⚪';
+
+const EVENT_TYPES = [
+  { key: 'growth',       label: '성장',   emoji: '📏', color: '#8E3B45' },
+  { key: 'mating',       label: '메이팅', emoji: '💞', color: '#C2607E' },
+  { key: 'laying',       label: '산란',   emoji: '🥚', color: '#A9812E' },
+  { key: 'hatching',     label: '해칭',   emoji: '🐣', color: '#4A6FA5' },
+  { key: 'distribution', label: '분양',   emoji: '🤝', color: '#8A64A8' },
+  { key: 'shed',         label: '탈피',   emoji: '🌿', color: '#6E8B74' },
+  { key: 'feeding',      label: '먹이',   emoji: '🍽️', color: '#C87F2F' },
+  { key: 'photo',        label: '사진',   emoji: '📷', color: '#8A8177' },
+  { key: 'memo',         label: '메모',   emoji: '📝', color: '#A08D7C' },
+];
+
+/* ══════════════════════════════════════════
+   한 줄/대화 해석 엔진 (내장 규칙, 오프라인)
+   ══════════════════════════════════════════ */
+const escapeReg = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// 문장에서 등록된 개체 이름 찾기 (긴 이름 우선, 등장 순서대로)
+function findNamesInText(text, individuals) {
+  const found = [];
+  const sorted = [...individuals].sort((a, b) => b.name.length - a.name.length);
+  for (const ind of sorted) {
+    if (!ind.name) continue;
+    const i = text.indexOf(ind.name);
+    if (i !== -1 && !found.some(f => f.ind.id === ind.id)) found.push({ ind, idx: i });
+  }
+  return found.sort((a, b) => a.idx - b.idx).map(f => f.ind);
+}
+
+// 날짜 해석: "7월 10일", "2026-07-10", 어제/그제, 기본 오늘
+function parseKDate(text) {
+  let m = text.match(/(\d{4})[-./](\d{1,2})[-./](\d{1,2})/);
+  if (m) return `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
+  m = text.match(/(\d{1,2})월\s*(\d{1,2})일/);
+  if (m) return `${new Date().getFullYear()}-${String(m[1]).padStart(2,'0')}-${String(m[2]).padStart(2,'0')}`;
+  const d = new Date();
+  if (/그저께|그제/.test(text)) { d.setDate(d.getDate() - 2); return localISO(d); }
+  if (/어제/.test(text)) { d.setDate(d.getDate() - 1); return localISO(d); }
+  return todayStr();
+}
+
+// 문장에서 기록(팩트) 추출 — 한 문장에 여러 개 가능
+function extractFacts(text) {
+  const facts = [];
+  let m;
+
+  // 몸무게: "12그램", "12.5g"
+  m = text.match(/(\d+(?:\.\d+)?)\s*(?:그램|그람|g\b|G\b)/);
+  if (m) facts.push({ type: 'growth', data: { weight: m[1] } });
+
+  // 메이팅
+  if (/메이팅|교배|합사/.test(text)) facts.push({ type: 'mating', data: {} });
+
+  // 산란: "산란", "알 2개"
+  if (/산란/.test(text) || /알\s*\d+\s*개/.test(text)) {
+    const c = text.match(/알?\s*(\d+)\s*개/);
+    facts.push({ type: 'laying', data: { eggCount: c ? c[1] : '' } });
+  }
+
+  // 해칭/부화
+  if (/해칭|부화/.test(text)) {
+    const c = text.match(/(\d+)\s*마리/);
+    facts.push({ type: 'hatching', data: { count: c ? c[1] : '' } });
+  }
+
+  // 분양: "분양 15만원", "150,000원에 분양"
+  if (/분양/.test(text)) {
+    let price = '';
+    const man = text.match(/(\d+(?:\.\d+)?)\s*만\s*원?/);
+    const won = text.match(/(\d[\d,]*)\s*원/);
+    if (man) price = String(Math.round(parseFloat(man[1]) * 10000));
+    else if (won) price = won[1].replace(/,/g, '');
+    facts.push({ type: 'distribution', data: { price } });
+  }
+
+  // 탈피
+  if (/탈피/.test(text)) facts.push({ type: 'shed', data: {} });
+
+  // 먹이: 충식(귀뚜라미 계열)과 일반식(슈퍼푸드) 구분 (거식·안 먹음은 건강 메모로 분류)
+  const feedTrigger = /피딩|먹이|밥|먹었/.test(text) || CRICKET_RE.test(text) || SUPU_RE.test(text);
+  if (feedTrigger && !/안\s*먹|먹지\s*않|거식/.test(text)) {
+    const foodType = CRICKET_RE.test(text) ? '충식' : SUPU_RE.test(text) ? '슈푸' : '';
+    facts.push({ type: 'feeding', data: { foodType, notes: text } });
+  }
+
+  return facts;
+}
+
+// 먹이 분류 사전
+// 충식: 귀뚜라미 계열 은어 포함 (귀뚤이·뚤이·냉뚤·생뚤 등)
+const CRICKET_RE = /귀뚜라미|귀뚜리|귀뚤이|귀뚤|뚤이|냉뚜리|냉뚤|생뚤|밀웜|슈퍼웜|충식|두비아|레드런/;
+// 일반식: 슈퍼푸드(슈푸) 계열
+const SUPU_RE = /슈퍼푸드|슈푸|슬러리|판게아|레파시|CGD|일반식/;
+
+// 모프 인식: "모프는 초초야" + 유명 모프 단어 직접 언급
+const MORPH_WORDS = ['초초','릴리화이트','릴리','할리퀸','핀스트라이프','핀스','달마시안','팬텀','세이블','카푸치노','프라푸치노','아잔틱','바이컬러','타이거','브린들','플레임','트라이컬러','크림시클','엑스트림','슈퍼달마시안','헷100','솔리드백'];
+function extractMorph(text) {
+  const m = text.match(/모프(?:는|가|:)?\s*([가-힣A-Za-z0-9 ]+?)(?:야|이야|이에요|예요|입니다|임|이고|고|래|,|\.|!|$)/);
+  if (m && m[1].trim() && !/^(뭐|뭔|무엇|머)/.test(m[1].trim())) return m[1].trim();
+  for (const w of MORPH_WORDS) {
+    if (text.includes(w)) return w;
+  }
+  return null;
+}
+
+// 감성/맥락 감지
+const AFFECTION_RE = /특별|메인\s*개체|소중|아끼|예쁘|이쁘|귀엽|사랑|최고|보물|자랑|애정/;
+const HEALTH_RE = /아프|아파|병원|설사|무름|입마름|MBD|칼슘|식욕\s*부진|기운이?\s*없|안\s*먹|먹지\s*않|거식|토했|토를|상처|다쳤|꼬리\s*빠|절뚝/;
+const QUESTION_RE = /[?？]\s*$|어떻게\s|추천해|뭐가\s*좋|누가\s*좋|어떤\s*게\s*좋|해도\s*될까|괜찮을까/;
+
+// 응답 문구 다양화
+const OPENERS = ['기록함에 담았어요 ✅', '잘 적어뒀어요 ✍️', '차곡차곡 담아뒀어요 📥', '기록해뒀어요 🙂'];
+const pickOpener = () => OPENERS[Math.floor(Math.random() * OPENERS.length)];
+
+// 메모 성격에 따른 따뜻한 응답 (없으면 null → 기본 응답)
+function memoReply(name, text) {
+  if (HEALTH_RE.test(text)) {
+    return `저런, 걱정되시겠어요 😢 말씀하신 증상은 ${name} 기록에 잘 남겨둘게요.\n상태가 계속되면 파충류 진료가 가능한 병원에 보여주시는 걸 추천드려요.`;
+  }
+  if (AFFECTION_RE.test(text)) {
+    return `${name}를 정말 아끼시는 마음이 느껴져요 🦎 이 말씀은 ${name} 기록에 소중히 남겨둘게요.`;
+  }
+  return null;
+}
+
+// 미등록 새 이름 후보 추측: 첫 단어에서 조사 제거
+const KEYWORD_START = /^(오늘|어제|그제|그저께|저장|사진|메모|모프|알|메이팅|교배|합사|산란|해칭|부화|분양|탈피|먹이|피딩|밥|귀뚜라미)/;
+function guessNewName(text) {
+  const first = text.trim().split(/\s+/)[0];
+  if (!first) return null;
+  const cleaned = first.replace(/(한테|에게|이랑|께서|랑|가|은|는|도|를|을)$/, '') || first;
+  if (/\d/.test(cleaned)) return null;
+  if (KEYWORD_START.test(cleaned)) return null;
+  if (MORPH_WORDS.includes(cleaned)) return null;
+  if (CRICKET_RE.test(cleaned) || SUPU_RE.test(cleaned)) return null;
+  if (cleaned.length < 1 || cleaned.length > 10) return null;
+  return cleaned;
+}
+
+// 담긴 기록 한 줄 요약
+function factLabel(f) {
+  const t = EVENT_TYPES.find(e => e.key === f.type) || {};
+  let d = '';
+  switch (f.type) {
+    case 'growth':       d = f.data.weight + 'g'; break;
+    case 'mating':       d = f.data.partnerName ? '파트너 ' + f.data.partnerName : ''; break;
+    case 'laying':       d = f.data.eggCount ? '알 ' + f.data.eggCount + '개' : ''; break;
+    case 'hatching':     d = f.data.count ? f.data.count + '마리' : ''; break;
+    case 'distribution': d = f.data.price ? Number(f.data.price).toLocaleString() + '원' : ''; break;
+    case 'feeding':      d = f.data.foodType === '충식' ? '🦗 충식' : f.data.foodType === '슈푸' ? '🥣 슈푸' : ''; break;
+    case 'memo':         d = (f.data.notes || '').slice(0, 18); break;
+    case 'photo':        d = '1장'; break;
+    default: break;
+  }
+  return `${t.emoji || ''} ${t.label || f.type}${d ? ' · ' + d : ''}`;
+}
+
+/* ── 데이터 역질문 응답: "크한이 최근 산란 언제지?" ── */
+function answerQuery(target, text) {
+  // 미래 조언형 질문("누구랑 할까?")은 데이터 조회가 아님
+  if (/할까|좋을까|추천|어떻게\s*(해|하)/.test(text)) return null;
+  const explicit = /(언제|몇\s*(개|마리|살|그램|번)?|얼마|뭐야|뭐지|뭐였|무엇|누구야|누구지|누구랑\s*했|알려\s*줘|알려줄래|보여\s*줘|보여줄래)/.test(text);
+  const tailQ = /[?？]\s*$/.test(text) && /최근|마지막|산란|몸무게|무게|메이팅|탈피|밥|먹이|기록|모프|성별|해칭|부화|분양/.test(text);
+  if (!explicit && !tailQ) return null;
+
+  const evs = DB.getEventsFor(target.id).sort((a, b) =>
+    (b.date + (b.createdAt || '')) > (a.date + (a.createdAt || '')) ? 1 : -1);
+  const last = t => evs.find(e => e.type === t);
+  const ago = e => {
+    const d = Math.floor((new Date(todayStr()) - new Date(e.date)) / 86400000);
+    return d === 0 ? '오늘' : d === 1 ? '어제' : `${d}일 전`;
+  };
+  const none = (what, emoji) => `${target.name}는 아직 ${what} 기록이 없어요 ${emoji}`;
+
+  // 산란
+  if (/산란|알\s*(낳|난|났|몇)/.test(text)) {
+    const e = last('laying');
+    if (!e) return none('산란', '🥚');
+    const total = evs.filter(x => x.type === 'laying').length;
+    return `${target.name}의 가장 최근 산란은 ${fmtDate(e.date)} (${ago(e)})이에요 🥚${e.data?.eggCount ? ` · 알 ${e.data.eggCount}개` : ''}${total > 1 ? `\n지금까지 총 ${total}번 산란했어요.` : ''}`;
+  }
+  // 몸무게
+  if (/몸무게|무게|체중|그램|살쪘|말랐/.test(text)) {
+    const gs = evs.filter(x => x.type === 'growth' && x.data?.weight);
+    if (!gs.length) return none('몸무게', '📏');
+    const cur = gs[0], prev = gs[1];
+    let diff = '';
+    if (prev) {
+      const d = (parseFloat(cur.data.weight) - parseFloat(prev.data.weight)).toFixed(1).replace(/\.0$/, '');
+      diff = `\n지난 기록(${fmtDate(prev.date)} · ${prev.data.weight}g)보다 ${d > 0 ? '+' + d : d}g이에요.`;
+    }
+    return `${target.name}의 최근 몸무게는 ${cur.data.weight}g이에요 📏 (${fmtDate(cur.date)}, ${ago(cur)})${diff}`;
+  }
+  // 메이팅
+  if (/메이팅|교배|합사/.test(text)) {
+    const e = last('mating');
+    if (!e) return none('메이팅', '💞');
+    return `${target.name}의 마지막 메이팅은 ${fmtDate(e.date)} (${ago(e)})이에요 💞${e.data?.partnerName ? ` · 파트너: ${e.data.partnerName}` : ''}`;
+  }
+  // 탈피
+  if (/탈피/.test(text)) {
+    const e = last('shed');
+    if (!e) return none('탈피', '🌿');
+    return `${target.name}의 마지막 탈피는 ${fmtDate(e.date)} (${ago(e)})이에요 🌿`;
+  }
+  // 먹이
+  if (/밥|먹이|피딩|충식|슈푸/.test(text)) {
+    const e = last('feeding');
+    if (!e) return none('먹이', '🍽️');
+    const ft = e.data?.foodType === '충식' ? ' · 🦗 충식' : e.data?.foodType === '슈푸' ? ' · 🥣 슈푸' : '';
+    return `${target.name}가 마지막으로 밥 먹은 건 ${fmtDate(e.date)} (${ago(e)})이에요 🍽️${ft}`;
+  }
+  // 해칭/분양
+  if (/해칭|부화/.test(text)) {
+    const e = last('hatching');
+    if (!e) return none('해칭', '🐣');
+    return `${target.name}의 해칭 기록: ${fmtDate(e.date)} (${ago(e)}) 🐣${e.data?.count ? ` · ${e.data.count}마리` : ''}`;
+  }
+  if (/분양/.test(text)) {
+    const e = last('distribution');
+    if (!e) return none('분양', '🤝');
+    return `분양 기록: ${fmtDate(e.date)} 🤝${e.data?.price ? ` · ${Number(e.data.price).toLocaleString()}원` : ''}`;
+  }
+  // 프로필
+  if (/모프/.test(text)) {
+    return target.morph ? `${target.name}의 모프는 ${target.morph}예요 ✨` : `${target.name}의 모프는 아직 등록 전이에요. "모프는 ○○야"라고 알려주시면 적어둘게요.`;
+  }
+  if (/성별|암컷인지|수컷인지/.test(text)) {
+    return `${target.name}의 성별은 ${genderLabel(target.gender)}(으)로 기록돼 있어요.`;
+  }
+  if (/몇\s*살|나이|태어/.test(text)) {
+    if (!target.hatchDate) return `${target.name}의 출생일은 아직 등록 전이에요.`;
+    const days = Math.floor((Date.now() - new Date(target.hatchDate)) / 86400000);
+    return `${target.name}는 ${fmtDate(target.hatchDate)}에 태어나서 ${days}일째예요 🎂`;
+  }
+  // 요약
+  if (/기록|근황|요약|히스토리/.test(text)) {
+    if (!evs.length) return `${target.name}는 아직 기록이 없어요. 오늘부터 남겨볼까요? 🙂`;
+    const lines = evs.slice(0, 3).map(e => {
+      const t = EVENT_TYPES.find(x => x.key === e.type) || {};
+      return `· ${fmtDate(e.date)} ${t.emoji || ''} ${formatEventDetail(e)}`;
+    }).join('\n');
+    return `${target.name}의 최근 기록이에요 📋 (총 ${evs.length}건)\n${lines}`;
+  }
+  return null;
+}
+
+// 사진 압축 (localStorage 용량 보호)
+function compressImage(file, cb) {
+  const img = new Image();
+  img.onload = () => {
+    const max = 500;
+    const scale = Math.min(1, max / Math.max(img.width, img.height));
+    const c = document.createElement('canvas');
+    c.width = Math.round(img.width * scale);
+    c.height = Math.round(img.height * scale);
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    URL.revokeObjectURL(img.src);
+    cb(c.toDataURL('image/jpeg', 0.55));
+  };
+  img.src = URL.createObjectURL(file);
+}
+
+/* ══════════════════════════════════════════
+   Toast
+   ══════════════════════════════════════════ */
+function useToast() {
+  const [toast, setToast] = useState(null);
+  const showToast = useCallback((msg) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 2000);
+  }, []);
+  return [toast, showToast];
+}
+
+/* ══════════════════════════════════════════
+   앱 루트
+   ══════════════════════════════════════════ */
+function App() {
+  const [screen, setScreen] = useState({ name: 'home', props: {} });
+  const [tab, setTab] = useState('home');
+  const [toast, showToast] = useToast();
+  const [individuals, setIndividuals] = useState(() => DB.getIndividuals());
+
+  const refreshIndividuals = () => setIndividuals(DB.getIndividuals());
+
+  const navigate = (name, props = {}) => {
+    setScreen({ name, props });
+    if (['home','reminders','settings'].includes(name)) setTab(name);
+  };
+
+  const reminders = DB.getReminders().filter(r => new Date(r.date) >= new Date(todayStr()));
+
+  return (
+    <div className="app">
+      {screen.name === 'home' && (
+        <HomeScreen individuals={individuals} navigate={navigate} showToast={showToast} refreshIndividuals={refreshIndividuals} />
+      )}
+      {screen.name === 'chat' && (
+        <SmartChatScreen {...screen.props} navigate={navigate} showToast={showToast} refreshIndividuals={refreshIndividuals} />
+      )}
+      {screen.name === 'profile' && (
+        <ProfileScreen {...screen.props} navigate={navigate} showToast={showToast} refreshIndividuals={refreshIndividuals} individuals={individuals} />
+      )}
+      {screen.name === 'reminders' && (
+        <RemindersScreen navigate={navigate} />
+      )}
+      {screen.name === 'settings' && (
+        <SettingsScreen navigate={navigate} showToast={showToast} refreshIndividuals={refreshIndividuals} />
+      )}
+
+      {/* 하단 탭바 */}
+      {['home','reminders','settings'].includes(screen.name) && (
+        <div className="tabbar">
+          <button className={`tab-btn ${tab==='home'?'active':''}`} onClick={() => navigate('home')}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+            홈
+          </button>
+          <button className={`tab-btn ${tab==='reminders'?'active':''}`} onClick={() => navigate('reminders')} style={{position:'relative'}}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+            알림
+            {reminders.length > 0 && <span className="notif-badge">{reminders.length}</span>}
+          </button>
+          <button className={`tab-btn ${tab==='settings'?'active':''}`} onClick={() => navigate('settings')}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            설정
+          </button>
+        </div>
+      )}
+
+      {toast && <div className="toast">{toast}</div>}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════
+   홈 화면
+   ══════════════════════════════════════════ */
+function HomeScreen({ individuals, navigate, showToast, refreshIndividuals }) {
+  const [search, setSearch] = useState('');
+  const filtered = individuals.filter(i =>
+    i.name.toLowerCase().includes(search.toLowerCase()) ||
+    (i.morph || '').toLowerCase().includes(search.toLowerCase())
+  );
+  const stats = {
+    total: individuals.length,
+    female: individuals.filter(i => i.gender === 'female').length,
+    male: individuals.filter(i => i.gender === 'male').length,
+    fromCG: individuals.filter(i => i.isFromCreGunseol).length,
+  };
+
+  return (
+    <>
+      <div className="screen">
+        <div className="header">
+          <div className="header-row">
+            <div>
+              <h1>🦎 크레건설 비서</h1>
+              <div className="header-sub">＋ 버튼 하나로 등록부터 기록까지</div>
+            </div>
+            <div style={{display:'flex', gap:6}}>
+              {stats.fromCG > 0 && <span className="badge badge-gold">CG {stats.fromCG}</span>}
+            </div>
+          </div>
+        </div>
+
+        {individuals.length > 0 && (
+          <div style={{padding:'12px 16px 0'}}>
+            <input
+              className="input"
+              placeholder="🔍 이름 또는 모프 검색"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+            />
+          </div>
+        )}
+
+        {individuals.length > 0 && (
+          <div className="stat-grid" style={{paddingTop:12}}>
+            <div className="stat-card">
+              <div className="stat-val">{stats.total}</div>
+              <div className="stat-label">전체 개체</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-val" style={{color:'#C2607E'}}>{stats.female} / <span style={{color:'#4A6FA5'}}>{stats.male}</span></div>
+              <div className="stat-label">♀ 암컷 / ♂ 수컷</div>
+            </div>
+          </div>
+        )}
+
+        {filtered.length === 0 && (
+          <div className="empty">
+            <div className="empty-icon">🦎</div>
+            <p>{individuals.length === 0 ? '아직 등록된 개체가 없어요.\n＋ 버튼을 누르고 대화하듯 말씀해보세요.\n예) "크한이 12그램"' : '검색 결과가 없어요.'}</p>
+          </div>
+        )}
+
+        <div className="section-title" style={{display: individuals.length ? 'block' : 'none'}}>내 개체</div>
+
+        {filtered.map(gecko => (
+          <GeckoCard key={gecko.id} gecko={gecko} onClick={() => navigate('profile', { gecko })} />
+        ))}
+
+        <div style={{height: 16}} />
+      </div>
+
+      <button className="fab" onClick={() => navigate('chat')}>＋</button>
+    </>
+  );
+}
+
+function GeckoCard({ gecko, onClick }) {
+  const events = DB.getEventsFor(gecko.id);
+  const lastEvent = events.sort((a,b) => b.createdAt > a.createdAt ? 1 : -1)[0];
+  return (
+    <div className="gecko-card" onClick={onClick}>
+      <div className="gecko-avatar">{genderEmoji(gecko.gender)}</div>
+      <div className="gecko-info">
+        <div style={{display:'flex', alignItems:'center', gap:6}}>
+          <div className="gecko-name">{gecko.name}</div>
+          {gecko.isFromCreGunseol && <span className="badge badge-gold" style={{fontSize:10}}>CG</span>}
+        </div>
+        <div className="gecko-meta">
+          <span className={`gender-dot ${gecko.gender}`}></span>
+          {gecko.morph || '모프 미등록'} {gecko.hatchDate ? `· ${fmtDate(gecko.hatchDate)} 출생` : ''}
+        </div>
+        {lastEvent && (
+          <div style={{fontSize:11, color:'var(--text3)', marginTop:3}}>
+            최근: {EVENT_TYPES.find(e=>e.key===lastEvent.type)?.emoji} {fmtDate(lastEvent.date)}
+          </div>
+        )}
+      </div>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" strokeWidth="2"><polyline points="9 18 15 12 9 6"/></svg>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════
+   단일 ＋ 대화형 등록/기록 화면
+   — 이름·기록을 한 문장으로 말하면 알아서 분배
+   ══════════════════════════════════════════ */
+function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko }) {
+  const geckoRef = useRef(presetGecko || null);      // 현재 대화 대상
+  const heldRef = useRef([]);                        // 대상 미정으로 보류된 기록
+  const heldMorphRef = useRef(null);                 // 대상 미정 모프
+  const pendingNameRef = useRef(null);               // 새 이름 등록 확인 대기
+  const pendingRef = useRef([]);                     // 담긴 기록 (ref 미러)
+
+  const [geckoName, setGeckoName] = useState(presetGecko ? presetGecko.name : null);
+  const [messages, setMessages] = useState(() => [{
+    role: 'bot',
+    text: presetGecko
+      ? `${presetGecko.name} 이야기 들려주세요 🦎\n"12그램" · "크순이랑 메이팅" · "알 2개 산란" · "모프는 초초야"처럼 편하게 말씀하시면 제가 알아서 정리할게요.\n사진은 📷 버튼, 다 끝나면 "저장"이라고 해주세요.`
+      : `안녕하세요! 오늘은 어떤 아이 이야기인가요? 🦎\n\n이름만 알려주셔도 되고, "크한이 12그램"처럼 한 번에 말씀하셔도 제가 알아서 그 아이 기록에 정리해둘게요.\n처음 보는 이름이면 새로 등록해드려요.`
+  }]);
+  const [pending, setPending] = useState([]);
+  const [input, setInput] = useState('');
+  const [phase, setPhase] = useState('chat');        // 'chat' | 'confirm'
+  const [layingReminder, setLayingReminder] = useState(true);
+  const fileRef = useRef(null);
+  const endRef = useRef(null);
+
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, phase]);
+
+  const addMsg = (m) => setMessages(ms => [...ms, m]);
+  const bot = (text, chips) => addMsg({ role: 'bot', text, chips });
+  const updatePending = (fn) => { pendingRef.current = fn(pendingRef.current); setPending(pendingRef.current); };
+
+  const setTarget = (ind) => { geckoRef.current = ind; setGeckoName(ind ? ind.name : null); };
+
+  /* ── 담기 + 요약 응답 ── */
+  const pushPending = (fs, target, extraLine) => {
+    if (!fs.length) return;
+    updatePending(p => [...p, ...fs]);
+    const lines = fs.map(f => '· ' + factLabel(f)).join('\n');
+    const head = extraLine ? extraLine + '\n\n' : '';
+    bot(`${head}${target.name} ${pickOpener()}\n${lines}\n\n계속 말씀하셔도 되고, 끝나면 저장을 눌러주세요.`, [
+      { label: '💾 이제 저장할까요?', kind: 'save' },
+    ]);
+  };
+
+  /* ── 모프 프로필 반영 ── */
+  const applyMorph = (target, morph) => {
+    DB.updateIndividual(target.id, { morph });
+    refreshIndividuals();
+    if (geckoRef.current && geckoRef.current.id === target.id) geckoRef.current = { ...geckoRef.current, morph };
+    return `모프가 ${morph}군요! ✨ ${target.name} 프로필에 적어뒀어요.`;
+  };
+
+  /* ── 새 개체 등록 ── */
+  const doRegister = (name) => {
+    pendingNameRef.current = null;
+    const saved = DB.addIndividual({
+      name, gender: 'unknown', morph: '', hatchDate: '', isFromCreGunseol: false,
+      sireId: null, damId: null,
+      shareCode: Math.random().toString(36).slice(2, 8).toUpperCase(),
+    });
+    refreshIndividuals();
+    setTarget(saved);
+    let morphLine = '';
+    if (heldMorphRef.current) {
+      morphLine = '\n' + applyMorph(saved, heldMorphRef.current);
+      heldMorphRef.current = null;
+    }
+    bot(`🦎 ${name}, 우리 식구가 됐어요! 만나서 반가워요.${morphLine}\n성별을 알고 계시면 골라주세요. (나중에 말씀하셔도 돼요)`, [
+      { label: '♀ 암컷', kind: 'gender', value: 'female' },
+      { label: '♂ 수컷', kind: 'gender', value: 'male' },
+      { label: '미구분이에요', kind: 'gender', value: 'unknown' },
+    ]);
+    if (heldRef.current.length) {
+      const flushed = heldRef.current.map(f => ({ ...f, targetId: saved.id, targetName: saved.name }));
+      heldRef.current = [];
+      pushPending(flushed, saved);
+    }
+  };
+
+  /* ── 확인 화면 이동 ── */
+  const goConfirm = () => {
+    if (!pendingRef.current.length) {
+      bot('아직 담긴 기록이 없어요. 먼저 기록할 내용을 말씀해주세요. 🙂');
+      return;
+    }
+    setPhase('confirm');
+  };
+
+  /* ── 칩 버튼 처리 ── */
+  const handleChip = (kind, value) => {
+    if (kind === 'register-yes') {
+      if (pendingNameRef.current) doRegister(pendingNameRef.current);
+    } else if (kind === 'register-no') {
+      pendingNameRef.current = null;
+      heldRef.current = [];
+      heldMorphRef.current = null;
+      bot('알겠습니다. 등록하려는 아이 이름을 다시 알려주세요. 🦎');
+    } else if (kind === 'gender') {
+      const g = geckoRef.current;
+      if (!g) return;
+      DB.updateIndividual(g.id, { gender: value });
+      refreshIndividuals();
+      geckoRef.current = { ...g, gender: value };
+      bot(`${g.name}, ${genderLabel(value)}으로 기억할게요. 이제 편하게 이야기해주세요 🙂`);
+    } else if (kind === 'save') {
+      goConfirm();
+    } else if (kind === 'feed-type' && value) {
+      const f = { ...value.fact, data: { ...value.fact.data, foodType: value.foodType } };
+      pushPending([f], { name: f.targetName });
+    } else if (kind === 'memo-save' && value) {
+      pushPending([{ type: 'memo', data: { notes: value.text }, date: value.date, targetId: value.targetId, targetName: value.targetName }], { name: value.targetName });
+    } else if (kind === 'memo-skip') {
+      bot('네, 기록 없이 넘어갈게요 🙂 다른 이야기 들려주세요.');
+    }
+  };
+
+  /* ── 문장 해석 본체 ── */
+  const process = (text) => {
+    // 1) 새 이름 등록 확인에 글로 답한 경우
+    if (pendingNameRef.current) {
+      if (/^(응|네|넵|예|어|그래|맞아|등록|ㅇㅇ|ㅇ)/.test(text)) { doRegister(pendingNameRef.current); return; }
+      if (/^(아니|노|취소|ㄴㄴ|ㄴ)/.test(text)) {
+        pendingNameRef.current = null; heldRef.current = []; heldMorphRef.current = null;
+        bot('알겠습니다. 등록하려는 아이 이름을 다시 알려주세요. 🦎');
+        return;
+      }
+      pendingNameRef.current = null; // 다른 문장이면 새로 해석
+    }
+
+    // 2) 저장 의도
+    if (/(저장|기록해\s*줘|끝|완료|됐어)/.test(text) && text.replace(/\s/g, '').length <= 8) {
+      goConfirm();
+      return;
+    }
+
+    // 3) 해석
+    const inds = DB.getIndividuals();
+    const names = findNamesInText(text, inds);
+    const facts = extractFacts(text);
+    const morph = extractMorph(text);
+    const date = parseKDate(text);
+
+    let target = geckoRef.current;
+    if (names.length) { target = names[0]; setTarget(names[0]); }
+
+    // 메이팅 파트너: 문장 속 두 번째 이름 또는 "상대/파트너 ○○"
+    const mating = facts.find(f => f.type === 'mating');
+    if (mating) {
+      const partner = names.find(n => target && n.id !== target.id);
+      if (partner) { mating.data.partnerId = partner.id; mating.data.partnerName = partner.name; }
+      else {
+        const pm = text.match(/(?:상대|파트너)(?:는|은)?\s*(\S+)/);
+        if (pm) mating.data.partnerName = pm[1].replace(/(이랑|랑|이야|이고|이에요|예요|야|고|임)$/, '');
+      }
+    }
+
+    // 4) 대상을 아직 모름
+    if (!target) {
+      const cand = guessNewName(text);
+      if (cand) {
+        pendingNameRef.current = cand;
+        heldRef.current = [...heldRef.current, ...facts.map(f => ({ ...f, date }))];
+        if (morph) heldMorphRef.current = morph;
+        bot(`"${cand}"(은)는 처음 보는 이름이네요. 새 개체로 등록할까요?`, [
+          { label: '🦎 네, 등록해주세요', kind: 'register-yes' },
+          { label: '아니요, 다시 입력할게요', kind: 'register-no' },
+        ]);
+      } else {
+        bot('등록하려는 아이가 누구인가요? 이름을 알려주세요. 🦎');
+      }
+      return;
+    }
+
+    // 5) 보류돼 있던 기록(사진 등)에 대상 확정
+    if (heldRef.current.length) {
+      const flushed = heldRef.current.map(f => ({ ...f, targetId: target.id, targetName: target.name }));
+      heldRef.current = [];
+      pushPending(flushed, target);
+    }
+
+    // 5.5) 데이터 역질문 → 기록에서 찾아 답변
+    const qa = answerQuery(target, text);
+    if (qa) { bot(qa); return; }
+
+    // 5.6) 조언형 질문 → 기록하지 않고 한계 안내 + 메모 여부 선택
+    if (/((할까|좋을까|될까|괜찮을까)(요)?\s*[?？]?\s*$)|추천해|추천\s*좀/.test(text)) {
+      bot(`좋은 질문이에요! 다만 지금 제 머리는 기록 정리 전용이라, 상담 답변은 아직 어려워요 🙏\n(AI 연결이 되면 이런 질문에도 답해드릴 수 있어요)\n이 내용을 ${target.name} 메모로 남겨둘까요?`, [
+        { label: '📝 메모로 남기기', kind: 'memo-save', value: { text, date, targetId: target.id, targetName: target.name } },
+        { label: '괜찮아요', kind: 'memo-skip' },
+      ]);
+      return;
+    }
+
+    // 6) 모프 → 프로필에 즉시 반영
+    let morphLine = null;
+    if (morph) morphLine = applyMorph(target, morph);
+
+    // 7) 성별 언급 → 프로필 반영 ("수컷이야" 등 단정 표현만, 메이팅 문장 제외)
+    let genderPhrase = null;
+    if (!mating) {
+      const gm = text.match(/(수컷|암컷)(?:이야|이에요|입니다|임|이래|같아|이다)/);
+      if (gm) {
+        genderPhrase = gm[0];
+        const gv = gm[1] === '수컷' ? 'male' : 'female';
+        DB.updateIndividual(target.id, { gender: gv });
+        refreshIndividuals();
+        geckoRef.current = { ...geckoRef.current, gender: gv };
+        morphLine = (morphLine ? morphLine + '\n' : '') + `${target.name}, ${genderLabel(gv)}으로 기억할게요.`;
+      }
+    }
+
+    // 8) 기록 분배
+    if (!facts.length) {
+      const leftover = text
+        .replace(new RegExp(escapeReg(target.name), 'g'), '')
+        .replace(morph ? new RegExp('모프(는|가)?\\s*' + escapeReg(morph) + '(야|이야|이에요|예요|입니다|임)?', 'g') : /$^/, '')
+        .replace(genderPhrase ? new RegExp(escapeReg(genderPhrase), 'g') : /$^/, '')
+        .replace(/[\s,.!?~은는이가도야]/g, '');
+
+      if (leftover.length < 2) {
+        // 이름/모프만 말한 경우
+        if (morphLine) {
+          bot(`${morphLine}\n다른 이야기도 들려주세요. 몸무게·메이팅·산란·탈피·사진 뭐든 좋아요 🙂`);
+        } else {
+          bot(`${target.name}(이)군요! 오늘은 어떤 이야기인가요?\n\n예) "12그램" · "크순이랑 메이팅" · "알 2개 산란" · "모프는 초초야" · 📷 사진\n그냥 오늘 있었던 일을 편하게 적어주셔도 메모로 남겨둬요.`);
+        }
+        return;
+      }
+
+      // 질문형 문장 → 솔직하게 한계 안내 + 메모 여부 선택
+      if (QUESTION_RE.test(text) && !HEALTH_RE.test(text)) {
+        bot(`좋은 질문이에요! 다만 지금 제 머리는 기록 정리 전용이라, 상담 답변은 아직 어려워요 🙏\n(AI 연결이 되면 이런 질문에도 답해드릴 수 있어요)\n이 내용을 ${target.name} 메모로 남겨둘까요?`, [
+          { label: '📝 메모로 남기기', kind: 'memo-save', value: { text, date, targetId: target.id, targetName: target.name } },
+          { label: '괜찮아요', kind: 'memo-skip' },
+        ]);
+        return;
+      }
+
+      // 감성/건강 메모 → 따뜻한 응답과 함께 담기
+      const warm = memoReply(target.name, text);
+      updatePending(p => [...p, { type: 'memo', data: { notes: text }, date, targetId: target.id, targetName: target.name }]);
+      if (warm) {
+        bot(`${morphLine ? morphLine + '\n' : ''}${warm}\n\n계속 말씀하셔도 되고, 끝나면 저장을 눌러주세요.`, [
+          { label: '💾 이제 저장할까요?', kind: 'save' },
+        ]);
+      } else {
+        bot(`${morphLine ? morphLine + '\n' : ''}${target.name} ${pickOpener()}\n· ${factLabel({ type: 'memo', data: { notes: text } })}\n\n계속 말씀하셔도 되고, 끝나면 저장을 눌러주세요.`, [
+          { label: '💾 이제 저장할까요?', kind: 'save' },
+        ]);
+      }
+      return;
+    }
+
+    // 먹이인데 종류를 모르면 물어보기 (충식/슈푸)
+    const withTarget = f => ({ ...f, date, targetId: target.id, targetName: target.name });
+    const unknownFeed = facts.find(f => f.type === 'feeding' && !f.data.foodType);
+    if (unknownFeed) {
+      const rest = facts.filter(f => f !== unknownFeed);
+      if (rest.length) pushPending(rest.map(withTarget), target, morphLine);
+      else if (morphLine) bot(morphLine);
+      const feedFact = withTarget(unknownFeed);
+      bot(`${target.name} 밥 먹었군요! 🍽️ 어떤 먹이였나요?`, [
+        { label: '🦗 충식 (귀뚜라미 등)', kind: 'feed-type', value: { fact: feedFact, foodType: '충식' } },
+        { label: '🥣 슈퍼푸드 (슈푸)', kind: 'feed-type', value: { fact: feedFact, foodType: '슈푸' } },
+        { label: '그냥 저장할게요', kind: 'feed-type', value: { fact: feedFact, foodType: '' } },
+      ]);
+      return;
+    }
+
+    pushPending(facts.map(withTarget), target, morphLine);
+  };
+
+  const send = () => {
+    const text = input.trim();
+    if (!text) return;
+    addMsg({ role: 'user', text });
+    setInput('');
+    setTimeout(() => process(text), 120);
+  };
+
+  /* ── 사진 첨부 ── */
+  const onPhotoPick = (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    compressImage(file, (dataUrl) => {
+      addMsg({ role: 'user', photo: dataUrl });
+      const g = geckoRef.current;
+      const fact = { type: 'photo', data: { photo: dataUrl }, date: todayStr() };
+      if (g) pushPending([{ ...fact, targetId: g.id, targetName: g.name }], g);
+      else {
+        heldRef.current.push(fact);
+        bot('예쁜 사진이네요! 담아뒀어요. 어느 아이의 사진인가요? 🦎');
+      }
+    });
+  };
+
+  /* ── 최종 저장 ── */
+  const doSave = () => {
+    const list = pendingRef.current;
+    if (!list.length) { setPhase('chat'); return; }
+    let reminderMsg = '';
+    list.forEach(f => {
+      DB.addEvent({ individualId: f.targetId, type: f.type, date: f.date || todayStr(), data: f.data || {} });
+      if (f.type === 'laying' && layingReminder) {
+        const d = new Date(f.date || todayStr());
+        d.setDate(d.getDate() + 75);
+        const rs = DB.getReminders();
+        rs.push({ id: uuid(), individualId: f.targetId, geckoName: f.targetName, type: 'hatching_expected', date: localISO(d), message: `${f.targetName} 부화 예정일` });
+        DB.saveReminders(rs);
+        reminderMsg = ' · 🔔 부화 알림 설정';
+      }
+    });
+    refreshIndividuals();
+    showToast(`✅ ${list.length}건 저장 완료!${reminderMsg}`);
+    const g = geckoRef.current;
+    const fresh = g ? DB.getIndividuals().find(i => i.id === g.id) : null;
+    if (fresh) navigate('profile', { gecko: fresh });
+    else navigate('home');
+  };
+
+  const removePending = (f) => updatePending(p => p.filter(x => x !== f));
+
+  // 확인 화면: 개체별 그룹
+  const grouped = {};
+  pending.forEach(f => { (grouped[f.targetName] = grouped[f.targetName] || []).push(f); });
+
+  return (
+    <div style={{display:'flex', flexDirection:'column', flex:1, minHeight:0}}>
+      <div className="header">
+        <div className="header-row">
+          <button className="back-btn" onClick={() => navigate('home')}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6"/></svg>
+            홈
+          </button>
+          <span style={{fontSize:14, color:'var(--text3)'}}>
+            {geckoName ? `🦎 ${geckoName}` : '✨ 무엇이든 기록'}
+          </span>
+        </div>
+      </div>
+
+      {phase === 'chat' && (
+        <>
+          <div className="chat-wrap" style={{flex:1, overflowY:'auto'}}>
+            {messages.map((m, i) => (
+              <div key={i} style={{display:'flex', flexDirection:'column', gap:6}}>
+                {m.role === 'bot' ? (
+                  <>
+                    <div className="chat-q">{m.text}</div>
+                    {m.chips && (
+                      <div className="chip-row" style={{marginTop:0}}>
+                        {m.chips.map((c, j) => (
+                          <button key={j} className="chip-btn" onClick={() => handleChip(c.kind, c.value)}>{c.label}</button>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                ) : m.photo ? (
+                  <img src={m.photo} alt="첨부 사진" style={{alignSelf:'flex-end', maxWidth:160, borderRadius:12, border:'1px solid var(--accent-dim)'}} />
+                ) : (
+                  <div className="chat-a">{m.text}</div>
+                )}
+              </div>
+            ))}
+            <div ref={endRef} />
+          </div>
+
+          {pending.length > 0 && (
+            <div className="pending-bar" onClick={goConfirm}>
+              <span className="badge badge-green">📥 담긴 기록 {pending.length}건 — 눌러서 저장하기</span>
+            </div>
+          )}
+
+          <div style={{padding:'10px 16px', paddingBottom:'calc(12px + var(--safe-bottom))', borderTop:'1px solid var(--border)', background:'var(--bg2)', display:'flex', gap:8}}>
+            <button className="send-btn" style={{background:'var(--card)', color:'var(--text2)', border:'1px solid var(--border)'}} onClick={() => fileRef.current && fileRef.current.click()}>📷</button>
+            <input
+              className="input"
+              style={{flex:1}}
+              placeholder='예: 크한이 12그램 / 저장'
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && send()}
+            />
+            <button className="send-btn" onClick={send}>→</button>
+            <input ref={fileRef} type="file" accept="image/*" style={{display:'none'}} onChange={onPhotoPick} />
+          </div>
+        </>
+      )}
+
+      {phase === 'confirm' && (
+        <div style={{padding:16, flex:1, overflowY:'auto'}}>
+          <div style={{fontSize:17, fontWeight:700, marginBottom:14}}>💾 이렇게 저장할까요?</div>
+
+          {Object.entries(grouped).map(([name, fs]) => (
+            <div className="card" key={name} style={{margin:'0 0 12px'}}>
+              <div style={{fontSize:15, fontWeight:700, marginBottom:4}}>🦎 {name}</div>
+              <div className="confirm-list">
+                {fs.map((f, i) => (
+                  <div className="confirm-row" key={i}>
+                    <span className="confirm-key">{factLabel(f)}</span>
+                    <span className="confirm-val">
+                      {fmtDate(f.date)}
+                      <button onClick={() => removePending(f)} style={{background:'none', border:'none', color:'var(--text3)', cursor:'pointer', fontSize:15}}>✕</button>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+
+          {pending.some(f => f.type === 'laying') && (
+            <label style={{display:'flex', alignItems:'center', gap:8, fontSize:13, color:'var(--text2)', margin:'0 4px 14px', cursor:'pointer'}}>
+              <input type="checkbox" checked={layingReminder} onChange={e => setLayingReminder(e.target.checked)} />
+              🔔 부화 예정 알림 자동 설정 (산란일 +75일)
+            </label>
+          )}
+
+          <div style={{display:'flex', flexDirection:'column', gap:8}}>
+            <button className="btn btn-primary" onClick={doSave}>✅ 저장하기 ({pending.length}건)</button>
+            <button className="btn btn-secondary" onClick={() => setPhase('chat')}>← 더 기록하기</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════
+   개체 프로필
+   ══════════════════════════════════════════ */
+function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndividuals, individuals }) {
+  const [gecko, setGecko] = useState(() => DB.getIndividuals().find(i => i.id === initialGecko.id) || initialGecko);
+  const [events, setEvents] = useState(() => DB.getEventsFor(initialGecko.id));
+  const [showShare, setShowShare] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  const handleDelete = () => {
+    DB.deleteIndividual(gecko.id);
+    refreshIndividuals();
+    showToast('삭제 완료');
+    navigate('home');
+  };
+
+  const lastWeight = events.filter(e => e.type === 'growth' && e.data?.weight).sort((a,b) => b.date > a.date ? 1 : -1)[0];
+  const age = gecko.hatchDate ? Math.floor((Date.now() - new Date(gecko.hatchDate)) / (1000*60*60*24)) : null;
+
+  return (
+    <div className="screen">
+      <div className="header">
+        <div className="header-row">
+          <button className="back-btn" onClick={() => { refreshIndividuals(); navigate('home'); }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6"/></svg>
+            목록
+          </button>
+          <button className="back-btn" onClick={() => setShowShare(s => !s)}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+            공유
+          </button>
+        </div>
+      </div>
+
+      {/* 헤더 카드 */}
+      <div style={{padding:'16px 16px 0'}}>
+        <div className="card">
+          <div style={{display:'flex', alignItems:'center', gap:14}}>
+            <div style={{fontSize:52}}>{genderEmoji(gecko.gender)}</div>
+            <div style={{flex:1}}>
+              <div style={{display:'flex', alignItems:'center', gap:8, flexWrap:'wrap'}}>
+                <div style={{fontSize:22, fontWeight:800}}>{gecko.name}</div>
+                {gecko.isFromCreGunseol && <span className="badge badge-gold">크레건설</span>}
+              </div>
+              <div style={{fontSize:13, color:'var(--text3)', marginTop:4}}>
+                {genderLabel(gecko.gender)}
+                {gecko.morph ? ` · ${gecko.morph}` : ''}
+              </div>
+              {gecko.hatchDate && (
+                <div style={{fontSize:12, color:'var(--text3)', marginTop:2}}>
+                  {fmtDate(gecko.hatchDate)} 출생 ({age}일)
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* 빠른 통계 */}
+          <div style={{display:'flex', gap:10, marginTop:14}}>
+            {lastWeight && (
+              <div style={{flex:1, background:'var(--bg3)', borderRadius:8, padding:'8px 10px', border:'1px solid var(--border)'}}>
+                <div style={{fontSize:16, fontWeight:700, color:'var(--accent2)'}}>{lastWeight.data.weight}g</div>
+                <div style={{fontSize:10, color:'var(--text3)'}}>최근 몸무게</div>
+              </div>
+            )}
+            <div style={{flex:1, background:'var(--bg3)', borderRadius:8, padding:'8px 10px', border:'1px solid var(--border)'}}>
+              <div style={{fontSize:16, fontWeight:700, color:'var(--accent2)'}}>{events.length}</div>
+              <div style={{fontSize:10, color:'var(--text3)'}}>기록 수</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 공유 박스 */}
+      {showShare && (
+        <div style={{padding:'0 16px 10px'}}>
+          <div className="share-box">
+            <div style={{fontSize:12, color:'var(--text3)', marginBottom:6}}>공유 코드</div>
+            <div className="share-code">{gecko.shareCode}</div>
+            <div style={{fontSize:11, color:'var(--text3)', marginTop:6}}>Powered by 크레건설</div>
+            <button className="btn btn-ghost btn-sm" style={{marginTop:10}} onClick={() => {
+              navigator.clipboard?.writeText(gecko.shareCode);
+              showToast('코드 복사됨!');
+            }}>📋 코드 복사</button>
+          </div>
+        </div>
+      )}
+
+      {/* 기록 추가 → 동일한 대화형 화면으로 */}
+      <div style={{padding:'0 16px 10px'}}>
+        <button className="btn btn-primary" onClick={() => navigate('chat', { presetGecko: gecko })}>
+          💬 {gecko.name} 기록하기
+        </button>
+      </div>
+
+      <div className="section-title">활동 기록 {events.length > 0 ? `(${events.length})` : ''}</div>
+
+      {events.length === 0 ? (
+        <div className="empty" style={{padding:'30px 20px'}}>
+          <div className="empty-icon" style={{fontSize:36}}>📋</div>
+          <p>아직 기록이 없어요. 위 버튼으로 첫 기록을 남겨보세요.</p>
+        </div>
+      ) : (
+        <div className="timeline">
+          {[...events].sort((a,b) => b.date > a.date ? 1 : -1).map(ev => {
+            const t = EVENT_TYPES.find(e => e.key === ev.type);
+            return (
+              <div key={ev.id} className="timeline-item">
+                <div className="timeline-dot" style={{background: t?.color || 'var(--text3)'}} />
+                <div className="timeline-content">
+                  <div className="timeline-type">{t?.emoji} {t?.label}</div>
+                  <div className="timeline-detail">{formatEventDetail(ev)}</div>
+                  {ev.data?.photo && (
+                    <img src={ev.data.photo} alt="기록 사진" style={{maxWidth:150, borderRadius:8, marginTop:6, display:'block', border:'1px solid var(--border)'}} />
+                  )}
+                  {ev.data?.notes && ev.type !== 'feeding' && ev.type !== 'memo' && (
+                    <div style={{fontSize:12, color:'var(--text3)', marginTop:2}}>{ev.data.notes}</div>
+                  )}
+                  <div className="timeline-date">{fmtDate(ev.date)}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* 삭제 */}
+      <div style={{padding:'20px 16px 16px'}}>
+        {!confirmDelete ? (
+          <button className="btn btn-danger btn-sm" onClick={() => setConfirmDelete(true)}>🗑️ 개체 삭제</button>
+        ) : (
+          <div>
+            <div style={{fontSize:13, color:'var(--danger)', marginBottom:8}}>{gecko.name}를 정말 삭제할까요? 모든 기록이 사라져요.</div>
+            <div style={{display:'flex', gap:8}}>
+              <button className="btn btn-danger" onClick={handleDelete} style={{flex:1}}>삭제</button>
+              <button className="btn btn-secondary" onClick={() => setConfirmDelete(false)} style={{flex:1}}>취소</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function formatEventDetail(ev) {
+  const d = ev.data || {};
+  switch (ev.type) {
+    case 'growth':       return d.weight ? `${d.weight}g` : '성장 기록';
+    case 'mating':       return d.partnerName ? `파트너: ${d.partnerName}` : '메이팅 기록';
+    case 'laying':       return d.eggCount ? `알 ${d.eggCount}개 산란` : '산란 기록';
+    case 'hatching':     return d.count ? `${d.count}마리 부화` : '해칭 기록';
+    case 'distribution': return d.price ? `${Number(d.price).toLocaleString()}원에 분양` : '분양 기록';
+    case 'shed':         return '탈피 완료';
+    case 'feeding':      return d.foodType ? `${d.foodType === '충식' ? '🦗 충식' : '🥣 슈푸(일반식)'} 급여` : (d.notes || '먹이 급여');
+    case 'photo':        return '사진 기록';
+    case 'memo':         return d.notes || '메모';
+    default:             return '';
+  }
+}
+
+/* ══════════════════════════════════════════
+   알림 화면
+   ══════════════════════════════════════════ */
+function RemindersScreen({ navigate }) {
+  const [all, setAll] = useState(() => [...DB.getReminders()].sort((a,b) => a.date > b.date ? 1 : -1));
+  const upcoming = all.filter(r => new Date(r.date) >= new Date(todayStr()));
+  const past = all.filter(r => new Date(r.date) < new Date(todayStr()));
+
+  const deleteReminder = (id) => {
+    const next = DB.getReminders().filter(r => r.id !== id);
+    DB.saveReminders(next);
+    setAll([...next].sort((a,b) => a.date > b.date ? 1 : -1));
+  };
+
+  return (
+    <div className="screen">
+      <div className="header"><h1>🔔 알림</h1></div>
+      {all.length === 0 && (
+        <div className="empty">
+          <div className="empty-icon">🔔</div>
+          <p>설정된 알림이 없어요.{'\n'}산란 기록 시 부화 예정 알림을 설정할 수 있어요.</p>
+        </div>
+      )}
+      {upcoming.length > 0 && (
+        <>
+          <div className="section-title">예정 알림</div>
+          {upcoming.map(r => <ReminderCard key={r.id} r={r} onDelete={deleteReminder} />)}
+        </>
+      )}
+      {past.length > 0 && (
+        <>
+          <div className="section-title" style={{color:'var(--text3)'}}>지난 알림</div>
+          {past.map(r => <ReminderCard key={r.id} r={r} onDelete={deleteReminder} past />)}
+        </>
+      )}
+    </div>
+  );
+}
+
+function ReminderCard({ r, onDelete, past }) {
+  const daysLeft = Math.ceil((new Date(r.date) - new Date(todayStr())) / (1000*60*60*24));
+  return (
+    <div className="card" style={{opacity: past ? .6 : 1}}>
+      <div style={{display:'flex', justifyContent:'space-between', alignItems:'flex-start'}}>
+        <div>
+          <div style={{fontSize:15, fontWeight:700}}>🐣 {r.geckoName}</div>
+          <div style={{fontSize:13, color:'var(--text3)', marginTop:2}}>{r.message}</div>
+          <div style={{fontSize:12, color: past ? 'var(--text3)' : daysLeft <= 7 ? 'var(--warning)' : 'var(--accent2)', marginTop:4}}>
+            {past ? fmtDate(r.date) + ' (지남)' : daysLeft === 0 ? '오늘!' : `D-${daysLeft} · ${fmtDate(r.date)}`}
+          </div>
+        </div>
+        <button onClick={() => onDelete(r.id)} style={{background:'none', border:'none', color:'var(--text3)', cursor:'pointer', fontSize:16}}>✕</button>
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════
+   설정 화면
+   ══════════════════════════════════════════ */
+function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
+  const exportData = () => {
+    const data = {
+      individuals: DB.getIndividuals(),
+      events: DB.getEvents(),
+      reminders: DB.getReminders(),
+      exportedAt: now(),
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `creg_backup_${todayStr()}.json`;
+    a.click();
+    showToast('📦 백업 파일 다운로드');
+  };
+
+  return (
+    <div className="screen">
+      <div className="header"><h1>⚙️ 설정</h1></div>
+      <div style={{padding:'16px', display:'flex', flexDirection:'column', gap:12}}>
+        <div className="card" style={{margin:0}}>
+          <div style={{fontSize:13, fontWeight:700, marginBottom:12, color:'var(--text2)'}}>데이터</div>
+          <div style={{display:'flex', flexDirection:'column', gap:8}}>
+            <button className="btn btn-secondary" onClick={exportData}>📦 데이터 백업 (JSON)</button>
+          </div>
+        </div>
+        <div className="card" style={{margin:0}}>
+          <div style={{fontSize:13, fontWeight:700, marginBottom:6, color:'var(--text2)'}}>앱 정보</div>
+          <div style={{fontSize:13, color:'var(--text3)', lineHeight:1.7}}>
+            크레건설 브리딩 비서 v1.2<br/>
+            등록·기록: ＋ 버튼 하나, 대화형 자동 분배<br/>
+            테마: 아이보리 × 버건디 (크레건설 아이덴티티)<br/>
+            현재: 로컬 저장 모드 · 예정: Supabase 동기화 + AI 상담
+          </div>
+        </div>
+        <div className="card" style={{margin:0}}>
+          <div style={{fontSize:13, fontWeight:700, marginBottom:6, color:'var(--accent2)'}}>Powered by 크레건설</div>
+          <div style={{fontSize:12, color:'var(--text3)'}}>크레스티드 게코 전문 브리더</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════
+   렌더
+   ══════════════════════════════════════════ */
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+
+// PWA 서비스 워커 등록
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(() => {});
+  });
+}
+</script>
+</body>
+</html>
