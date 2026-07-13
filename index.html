@@ -268,6 +268,15 @@ const mainKeyOf = ev => (MAIN_FIELD[ev.type] || [null])[0];
 const mainLabelOf = ev => (MAIN_FIELD[ev.type] || [null, ''])[1];
 const mainValOf = ev => { const k = mainKeyOf(ev); return k ? (ev.data && ev.data[k]) || '' : ''; };
 
+// 대표사진: 지정된 avatar → 없으면 최근 사진
+function avatarSrc(gecko) {
+  if (gecko.avatar) return gecko.avatar;
+  const p = DB.getEventsFor(gecko.id)
+    .filter(e => e.type === 'photo' && e.data && e.data.photo)
+    .sort((a, b) => (b.date + (b.createdAt || '')) > (a.date + (a.createdAt || '')) ? 1 : -1)[0];
+  return p ? p.data.photo : null;
+}
+
 /* ══════════════════════════════════════════
    한 줄/대화 해석 엔진 (내장 규칙, 오프라인)
    ══════════════════════════════════════════ */
@@ -379,7 +388,7 @@ function memoReply(name, text) {
 }
 
 // 미등록 새 이름 후보 추측: 첫 단어에서 조사 제거
-const KEYWORD_START = /^(오늘|어제|그제|그저께|저장|사진|메모|모프|알|메이팅|교배|합사|산란|해칭|부화|분양|탈피|먹이|피딩|밥|귀뚜라미)/;
+const KEYWORD_START = /^(오늘|어제|그제|그저께|저장|사진|메모|모프|알|메이팅|교배|합사|산란|해칭|부화|분양|탈피|먹이|피딩|밥|귀뚜라미|외부)/;
 function guessNewName(text) {
   const first = text.trim().split(/\s+/)[0];
   if (!first) return null;
@@ -583,22 +592,22 @@ function App() {
    ══════════════════════════════════════════ */
 function HomeScreen({ individuals, navigate, showToast, refreshIndividuals }) {
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('active');
-  const activeInds = individuals.filter(i => (i.status || 'own') !== 'sold');
-  const byStatus = statusFilter === 'active'
-    ? activeInds
-    : individuals.filter(i => (i.status || 'own') === statusFilter);
-  const filtered = byStatus.filter(i =>
-    i.name.toLowerCase().includes(search.toLowerCase()) ||
-    (i.morph || '').toLowerCase().includes(search.toLowerCase())
-  );
+  const [view, setView] = useState('own'); // own | sale | mating | hatch
+  const [saleFilter, setSaleFilter] = useState('available');
+  const activeInds = individuals.filter(i => (i.status || 'own') !== 'sold' && !i.isExternal);
   const stats = {
     total: activeInds.length,
     female: activeInds.filter(i => i.gender === 'female').length,
     male: activeInds.filter(i => i.gender === 'male').length,
     fromCG: activeInds.filter(i => i.isFromCreGunseol).length,
-    sold: individuals.length - activeInds.length,
+    sold: individuals.filter(i => (i.status || 'own') === 'sold').length,
   };
+  const bySearch = list => list.filter(i =>
+    i.name.toLowerCase().includes(search.toLowerCase()) ||
+    (i.morph || '').toLowerCase().includes(search.toLowerCase())
+  );
+  const ownList = bySearch(activeInds);
+  const saleList = bySearch(individuals.filter(i => (i.status || 'own') === saleFilter && !i.isExternal));
 
   return (
     <>
@@ -641,30 +650,182 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals }) {
 
         {individuals.length > 0 && (
           <div style={{display:'flex', gap:6, padding:'12px 16px 0', overflowX:'auto'}}>
-            {[['active','🏠 보유중'],['available','🏷️ 분양가능'],['reserved','📌 예약중'],['sold',`🤝 분양완료${stats.sold ? ' ' + stats.sold : ''}`]].map(([k, l]) => (
-              <button key={k} className="chip-btn" style={statusFilter === k ? {background:'var(--accent-soft)', fontWeight:700} : {}} onClick={() => setStatusFilter(k)}>{l}</button>
+            {[['own','🏠 축양리스트'],['sale','🏷️ 분양리스트'],['mating','💞 메이팅기록'],['hatch','🐣 해칭기록']].map(([k, l]) => (
+              <button key={k} className="chip-btn" style={view === k ? {background:'var(--accent-soft)', fontWeight:700} : {}} onClick={() => setView(k)}>{l}</button>
             ))}
           </div>
         )}
 
-        {filtered.length === 0 && (
-          <div className="empty">
-            <div className="empty-icon">🦎</div>
-            <p>{individuals.length === 0 ? '아직 등록된 개체가 없어요.\n＋ 버튼을 누르고 대화하듯 말씀해보세요.\n예) "크한이 12그램"' : search ? '검색 결과가 없어요.' : '이 상태의 아이가 없어요.'}</p>
+        {view === 'sale' && individuals.length > 0 && (
+          <div style={{display:'flex', gap:6, padding:'10px 16px 0'}}>
+            {[['available','분양가능'],['reserved','예약중'],['sold',`분양완료${stats.sold ? ' ' + stats.sold : ''}`]].map(([k, l]) => (
+              <button key={k} className="chip-btn" style={{fontSize:12, padding:'6px 11px', ...(saleFilter === k ? {background:'var(--accent-soft)', fontWeight:700} : {})}} onClick={() => setSaleFilter(k)}>{l}</button>
+            ))}
           </div>
         )}
 
-        <div className="section-title" style={{display: filtered.length ? 'block' : 'none'}}>내 개체</div>
+        {view === 'own' && (
+          <>
+            {ownList.length === 0 && (
+              <div className="empty">
+                <div className="empty-icon">🦎</div>
+                <p>{individuals.length === 0 ? '아직 등록된 개체가 없어요.\n＋ 버튼을 누르고 대화하듯 말씀해보세요.\n예) "크한이 12그램"' : '검색 결과가 없어요.'}</p>
+              </div>
+            )}
+            <div className="section-title" style={{display: ownList.length ? 'block' : 'none'}}>내 개체</div>
+            {ownList.map(gecko => (
+              <GeckoCard key={gecko.id} gecko={gecko} onClick={() => navigate('profile', { gecko })} />
+            ))}
+          </>
+        )}
 
-        {filtered.map(gecko => (
-          <GeckoCard key={gecko.id} gecko={gecko} onClick={() => navigate('profile', { gecko })} />
-        ))}
+        {view === 'sale' && (
+          <>
+            {saleList.length === 0 && (
+              <div className="empty" style={{padding:'40px 20px'}}>
+                <div className="empty-icon" style={{fontSize:36}}>🏷️</div>
+                <p>이 상태의 아이가 없어요.{'\n'}프로필이나 대화에서 분양 상태를 바꿀 수 있어요.</p>
+              </div>
+            )}
+            {saleList.map(gecko => (
+              <GeckoCard key={gecko.id} gecko={gecko} onClick={() => navigate('profile', { gecko })} />
+            ))}
+          </>
+        )}
+
+        {view === 'mating' && <MatingView individuals={individuals} navigate={navigate} />}
+        {view === 'hatch' && <HatchView individuals={individuals} refreshIndividuals={refreshIndividuals} showToast={showToast} navigate={navigate} />}
 
         <div style={{height: 16}} />
       </div>
 
       <button className="fab" onClick={() => navigate('chat')}>＋</button>
     </>
+  );
+}
+
+
+/* ── 메이팅기록 뷰: 수컷×암컷 페어별 산란 차수 ── */
+function MatingView({ individuals, navigate }) {
+  const [open, setOpen] = useState(null);
+  const byId = {};
+  individuals.forEach(i => { byId[i.id] = i; });
+  const evs = DB.getEvents();
+  const pairs = {};
+  const orderPair = (aId, aName, bId, bName) => {
+    const a = byId[aId], b = byId[bId];
+    let male = { id: aId, name: aName }, female = { id: bId, name: bName };
+    if ((a && a.gender === 'female') || (b && b.gender === 'male')) {
+      male = { id: bId, name: bName }; female = { id: aId, name: aName };
+    }
+    return { k: male.name + '|' + female.name, male, female };
+  };
+  evs.filter(e => e.type === 'mating').forEach(e => {
+    const tName = (byId[e.individualId] || {}).name || '?';
+    const pName = (e.data && e.data.partnerName) || '?';
+    const { k, male, female } = orderPair(e.individualId, tName, e.data && e.data.partnerId, pName);
+    (pairs[k] = pairs[k] || { male, female, matings: [], layings: [] }).matings.push(e);
+  });
+  evs.filter(e => e.type === 'laying' && e.data && e.data.sireName).forEach(e => {
+    const momName = (byId[e.individualId] || {}).name || '?';
+    const k = e.data.sireName + '|' + momName;
+    if (!pairs[k]) pairs[k] = { male: { id: e.data.sireId, name: e.data.sireName }, female: { id: e.individualId, name: momName }, matings: [], layings: [] };
+    pairs[k].layings.push(e);
+  });
+  const list = Object.entries(pairs);
+  if (!list.length) {
+    return (
+      <div className="empty" style={{padding:'40px 20px'}}>
+        <div className="empty-icon" style={{fontSize:36}}>💞</div>
+        <p>아직 메이팅 기록이 없어요.{'\n'}＋에서 "크한이 크봉이랑 메이팅했어"처럼 말씀해보세요.</p>
+      </div>
+    );
+  }
+  return (
+    <div style={{paddingTop:10}}>
+      {list.map(([k, p]) => {
+        const lays = [...p.layings].sort((a, b) => a.date > b.date ? 1 : -1);
+        const mates = [...p.matings].sort((a, b) => a.date > b.date ? 1 : -1);
+        return (
+          <div className="card" key={k} style={{cursor:'pointer'}} onClick={() => setOpen(open === k ? null : k)}>
+            <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+              <div style={{fontSize:15, fontWeight:700}}>🔵 {p.male.name} × 🔴 {p.female.name}</div>
+              <div style={{fontSize:12, color:'var(--text3)'}}>메이팅 {mates.length}회 · 산란 {lays.length}회 {open === k ? '▲' : '▼'}</div>
+            </div>
+            {open === k && (
+              <div style={{marginTop:10, borderTop:'1px solid var(--border)', paddingTop:10}}>
+                {mates.length > 0 && (
+                  <div style={{fontSize:13, color:'var(--text2)', marginBottom:8}}>
+                    💞 메이팅: {mates.map(m => fmtDate(m.date)).join(' · ')}
+                  </div>
+                )}
+                {lays.length === 0 ? (
+                  <div style={{fontSize:12, color:'var(--text3)'}}>아직 산란 기록이 없어요.</div>
+                ) : lays.map((l, i) => (
+                  <div key={l.id} style={{display:'flex', justifyContent:'space-between', fontSize:13, padding:'5px 0', borderBottom: i < lays.length - 1 ? '1px dashed var(--border)' : 'none'}}>
+                    <span style={{color:'var(--text)'}}>🥚 {i + 1}차 산란</span>
+                    <span style={{color:'var(--text3)'}}>{fmtDate(l.date)}{l.data.eggCount ? ` · ${l.data.eggCount}개` : ''}{l.data.notes ? ` · ${l.data.notes.slice(0, 14)}` : ''}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ── 해칭기록 뷰: 베이비 목록 + 정보 수정 ── */
+function HatchView({ individuals, refreshIndividuals, showToast, navigate }) {
+  const [open, setOpen] = useState(null);
+  const [vals, setVals] = useState({});
+  const byId = {};
+  individuals.forEach(i => { byId[i.id] = i; });
+  const babies = individuals.filter(i => i.damId || i.sireId)
+    .sort((a, b) => (b.hatchDate || '') > (a.hatchDate || '') ? 1 : -1);
+  if (!babies.length) {
+    return (
+      <div className="empty" style={{padding:'40px 20px'}}>
+        <div className="empty-icon" style={{fontSize:36}}>🐣</div>
+        <p>아직 해칭 기록이 없어요.{'\n'}"2마리 부화했어"라고 기록하면 베이비가 자동 등록돼요.</p>
+      </div>
+    );
+  }
+  return (
+    <div style={{paddingTop:10}}>
+      {babies.map(b => (
+        <div className="card" key={b.id}>
+          <div style={{cursor:'pointer'}} onClick={() => {
+            if (open === b.id) { setOpen(null); return; }
+            setVals({ morph: b.morph || '', spots: b.spots || '', notes: b.babyNotes || '' });
+            setOpen(b.id);
+          }}>
+            <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+              <div style={{fontSize:15, fontWeight:700}}>🐣 {b.name} {genderEmoji(b.gender)}</div>
+              <div style={{fontSize:12, color:'var(--text3)'}}>{fmtDate(b.hatchDate)} {open === b.id ? '▲' : '▼'}</div>
+            </div>
+            <div style={{fontSize:12, color:'var(--text3)', marginTop:4}}>
+              부 {byId[b.sireId] ? byId[b.sireId].name : '-'} · 모 {byId[b.damId] ? byId[b.damId].name : '-'} · {b.morph || '모프 미정'}{b.spots ? ` · 점: ${b.spots}` : ''}
+            </div>
+          </div>
+          {open === b.id && (
+            <div style={{marginTop:10, borderTop:'1px solid var(--border)', paddingTop:10, display:'flex', flexDirection:'column', gap:6}}>
+              <input className="input" style={{padding:'8px 10px', fontSize:13}} placeholder="모프 (예: 릴리화이트)" value={vals.morph} onChange={e => setVals(v => ({ ...v, morph: e.target.value }))} />
+              <input className="input" style={{padding:'8px 10px', fontSize:13}} placeholder="점여부 (예: 꼬리점 2개 / 무점)" value={vals.spots} onChange={e => setVals(v => ({ ...v, spots: e.target.value }))} />
+              <input className="input" style={{padding:'8px 10px', fontSize:13}} placeholder="특이사항" value={vals.notes} onChange={e => setVals(v => ({ ...v, notes: e.target.value }))} />
+              <div style={{display:'flex', gap:6}}>
+                <button className="btn btn-primary btn-sm" style={{flex:1}} onClick={() => {
+                  DB.updateIndividual(b.id, { morph: vals.morph.trim(), spots: vals.spots.trim(), babyNotes: vals.notes.trim() });
+                  refreshIndividuals(); showToast('베이비 정보 저장 완료'); setOpen(null);
+                }}>저장</button>
+                <button className="btn btn-secondary btn-sm" style={{flex:1}} onClick={() => navigate('profile', { gecko: b })}>프로필 보기</button>
+              </div>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -676,13 +837,15 @@ function GeckoCard({ gecko, onClick }) {
   const feedDays = lastFeed ? Math.floor((new Date(todayStr()) - new Date(lastFeed.date)) / 86400000) : null;
   const stKey = gecko.status || 'own';
   const st = STATUS[stKey] || STATUS.own;
+  const av = avatarSrc(gecko);
   return (
     <div className="gecko-card" onClick={onClick}>
-      <div className="gecko-avatar">{genderEmoji(gecko.gender)}</div>
+      <div className="gecko-avatar" style={av ? {backgroundImage:`url(${av})`, backgroundSize:'cover', backgroundPosition:'center'} : {}}>{av ? '' : genderEmoji(gecko.gender)}</div>
       <div className="gecko-info">
         <div style={{display:'flex', alignItems:'center', gap:6, flexWrap:'wrap'}}>
           <div className="gecko-name">{gecko.name}</div>
           {gecko.isFromCreGunseol && <span className="badge badge-gold" style={{fontSize:10}}>CG</span>}
+          {gecko.isExternal && <span className="badge badge-blue" style={{fontSize:10}}>외부</span>}
           {stKey !== 'own' && (
             <span className="badge" style={{fontSize:10, background:'var(--bg3)', color:st.color, border:'1px solid var(--border)'}}>{st.label}</span>
           )}
@@ -788,6 +951,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
   const heldRef = useRef([]);                        // 대상 미정으로 보류된 기록
   const heldMorphRef = useRef(null);                 // 대상 미정 모프
   const heldGenderRef = useRef(null);               // 대상 미정 성별
+  const heldExternalRef = useRef(false);             // 외부 개체 등록 플래그
   const pendingNameRef = useRef(null);               // 새 이름 등록 확인 대기
   const pendingBabyRef = useRef(null);               // 해칭 베이비 이름 답변 대기
   const pendingRef = useRef([]);                     // 담긴 기록 (ref 미러)
@@ -838,9 +1002,11 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     pendingNameRef.current = null;
     const detectedGender = heldGenderRef.current;
     heldGenderRef.current = null;
+    const isExternal = heldExternalRef.current;
+    heldExternalRef.current = false;
     const saved = DB.addIndividual({
       name, gender: detectedGender || 'unknown', morph: '', hatchDate: '', isFromCreGunseol: false,
-      sireId: null, damId: null,
+      isExternal, sireId: null, damId: null,
       shareCode: Math.random().toString(36).slice(2, 8).toUpperCase(),
     });
     refreshIndividuals();
@@ -850,10 +1016,11 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       morphLine = '\n' + applyMorph(saved, heldMorphRef.current);
       heldMorphRef.current = null;
     }
+    const extLine = isExternal ? '\n(외부 개체로 등록했어요 — 축양리스트엔 표시되지 않고, 혈통 연결에만 사용돼요)' : '';
     if (detectedGender) {
-      bot(`🦎 ${name}, 우리 식구가 됐어요! 만나서 반가워요.${morphLine}\n${name}, ${genderLabel(detectedGender)}으로 기억할게요. 이제 편하게 이야기해주세요 🙂`);
+      bot(`🦎 ${name}, 우리 식구가 됐어요! 만나서 반가워요.${morphLine}\n${name}, ${genderLabel(detectedGender)}으로 기억할게요.${extLine} 이제 편하게 이야기해주세요 🙂`);
     } else {
-      bot(`🦎 ${name}, 우리 식구가 됐어요! 만나서 반가워요.${morphLine}\n성별을 알고 계시면 골라주세요. (나중에 말씀하셔도 돼요)`, [
+      bot(`🦎 ${name}, 우리 식구가 됐어요! 만나서 반가워요.${morphLine}${extLine}\n성별을 알고 계시면 골라주세요. (나중에 말씀하셔도 돼요)`, [
         { label: '♀ 암컷', kind: 'gender', value: 'female' },
         { label: '♂ 수컷', kind: 'gender', value: 'male' },
         { label: '미구분이에요', kind: 'gender', value: 'unknown' },
@@ -884,6 +1051,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       heldRef.current = [];
       heldMorphRef.current = null;
       heldGenderRef.current = null;
+      heldExternalRef.current = false;
       bot('알겠습니다. 등록하려는 아이 이름을 다시 알려주세요. 🦎');
     } else if (kind === 'gender') {
       const g = geckoRef.current;
@@ -910,7 +1078,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     if (pendingNameRef.current) {
       if (/^(응|네|넵|예|어|그래|맞아|등록|ㅇㅇ|ㅇ)/.test(text)) { doRegister(pendingNameRef.current); return; }
       if (/^(아니|노|취소|ㄴㄴ|ㄴ)/.test(text)) {
-        pendingNameRef.current = null; heldRef.current = []; heldMorphRef.current = null; heldGenderRef.current = null;
+        pendingNameRef.current = null; heldRef.current = []; heldMorphRef.current = null; heldGenderRef.current = null; heldExternalRef.current = false;
         bot('알겠습니다. 등록하려는 아이 이름을 다시 알려주세요. 🦎');
         return;
       }
@@ -972,6 +1140,8 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
           const gm = text.match(/(수컷|암컷)(?:이야|이에요|입니다|임|이래|같아|이다)/);
           if (gm) heldGenderRef.current = gm[1] === '수컷' ? 'male' : 'female';
         }
+        // 외부 개체 캡처: "마인이 외부 개체야"
+        if (/외부/.test(text)) heldExternalRef.current = true;
         bot(`"${cand}"(은)는 처음 보는 이름이네요. 새 개체로 등록할까요?`, [
           { label: '🦎 네, 등록해주세요', kind: 'register-yes' },
           { label: '아니요, 다시 입력할게요', kind: 'register-no' },
@@ -1337,6 +1507,7 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
   const [editingId, setEditingId] = useState(null);
   const [editVals, setEditVals] = useState({});
   const [confirmDelEvent, setConfirmDelEvent] = useState(null);
+  const [photoView, setPhotoView] = useState(null); // {src, date}
 
   const refreshLocal = () => {
     setGecko(DB.getIndividuals().find(i => i.id === gecko.id) || gecko);
@@ -1373,7 +1544,9 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
       <div style={{padding:'16px 16px 0'}}>
         <div className="card">
           <div style={{display:'flex', alignItems:'center', gap:14}}>
-            <div style={{fontSize:52}}>{genderEmoji(gecko.gender)}</div>
+            {(() => { const av = avatarSrc(gecko); return (
+              <div style={{width:64, height:64, borderRadius:'50%', flexShrink:0, border:'2px solid var(--border)', background: av ? `url(${av}) center/cover` : 'var(--bg3)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:34}}>{av ? '' : genderEmoji(gecko.gender)}</div>
+            ); })()}
             <div style={{flex:1}}>
               <div style={{display:'flex', alignItems:'center', gap:8, flexWrap:'wrap'}}>
                 <div style={{fontSize:22, fontWeight:800}}>{gecko.name}</div>
@@ -1504,7 +1677,8 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
                     <>
                       <div className="timeline-detail">{formatEventDetail(ev)}</div>
                       {ev.data?.photo && (
-                        <img src={ev.data.photo} alt="기록 사진" style={{maxWidth:150, borderRadius:8, marginTop:6, display:'block', border:'1px solid var(--border)'}} />
+                        <img src={ev.data.photo} alt="기록 사진" style={{maxWidth:150, borderRadius:8, marginTop:6, display:'block', border:'1px solid var(--border)', cursor:'pointer'}}
+                          onClick={() => setPhotoView({ src: ev.data.photo, date: ev.date })} />
                       )}
                       {ev.data?.notes && ev.type !== 'feeding' && ev.type !== 'memo' && (
                         <div style={{fontSize:12, color:'var(--text3)', marginTop:2}}>{ev.data.notes}</div>
@@ -1533,6 +1707,18 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
           </div>
         )}
       </div>
+
+      {/* 사진 크게 보기 + 다운로드 + 대표사진 */}
+      {photoView && (
+        <div style={{position:'fixed', inset:0, background:'rgba(30,20,15,.88)', zIndex:200, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:14, padding:20}} onClick={() => setPhotoView(null)}>
+          <img src={photoView.src} alt="사진 크게 보기" style={{maxWidth:'92%', maxHeight:'68%', borderRadius:12}} onClick={e => e.stopPropagation()} />
+          <div style={{display:'flex', gap:8, flexWrap:'wrap', justifyContent:'center'}} onClick={e => e.stopPropagation()}>
+            <a className="btn btn-primary btn-sm" style={{width:'auto', textDecoration:'none'}} href={photoView.src} download={`${gecko.name}_${photoView.date}.jpg`}>⬇ 다운로드</a>
+            <button className="btn btn-secondary btn-sm" style={{width:'auto'}} onClick={() => { DB.updateIndividual(gecko.id, { avatar: photoView.src }); refreshLocal(); showToast('⭐ 대표사진 설정 완료'); setPhotoView(null); }}>⭐ 대표사진으로</button>
+            <button className="btn btn-secondary btn-sm" style={{width:'auto'}} onClick={() => setPhotoView(null)}>닫기</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1618,11 +1804,40 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
     setSettings(s);
     showToast('설정 저장 완료');
   };
+  const importRef = useRef(null);
+  const [importData, setImportData] = useState(null);
+  const onImportPick = (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const d = JSON.parse(reader.result);
+        if (!Array.isArray(d.individuals) || !Array.isArray(d.events)) throw new Error('bad');
+        setImportData(d);
+      } catch (err) {
+        showToast('⚠️ 올바른 백업 파일이 아니에요');
+      }
+    };
+    reader.readAsText(file);
+  };
+  const doImport = () => {
+    if (!importData) return;
+    DB.saveIndividuals(importData.individuals);
+    DB.saveEvents(importData.events);
+    DB.saveReminders(importData.reminders || []);
+    if (importData.settings) DB.saveSettings(importData.settings);
+    setImportData(null);
+    refreshIndividuals();
+    showToast('✅ 백업 복원 완료!');
+  };
   const exportData = () => {
     const data = {
       individuals: DB.getIndividuals(),
       events: DB.getEvents(),
       reminders: DB.getReminders(),
+      settings: DB.getSettings(),
       exportedAt: now(),
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -1641,6 +1856,20 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
           <div style={{fontSize:13, fontWeight:700, marginBottom:12, color:'var(--text2)'}}>데이터</div>
           <div style={{display:'flex', flexDirection:'column', gap:8}}>
             <button className="btn btn-secondary" onClick={exportData}>📦 데이터 백업 (JSON)</button>
+            {importData ? (
+              <div style={{background:'var(--bg3)', borderRadius:10, padding:12}}>
+                <div style={{fontSize:13, color:'var(--text2)', marginBottom:8}}>
+                  개체 {importData.individuals.length}마리 · 기록 {importData.events.length}건을 복원할까요?{'\n'}지금 데이터는 백업 내용으로 교체돼요.
+                </div>
+                <div style={{display:'flex', gap:6}}>
+                  <button className="btn btn-primary btn-sm" style={{flex:1}} onClick={doImport}>복원하기</button>
+                  <button className="btn btn-secondary btn-sm" style={{flex:1}} onClick={() => setImportData(null)}>취소</button>
+                </div>
+              </div>
+            ) : (
+              <button className="btn btn-secondary" onClick={() => importRef.current && importRef.current.click()}>📥 백업 복원 (가져오기)</button>
+            )}
+            <input ref={importRef} type="file" accept=".json,application/json" style={{display:'none'}} onChange={onImportPick} />
           </div>
         </div>
         <div className="card" style={{margin:0}}>
@@ -1655,8 +1884,8 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
         <div className="card" style={{margin:0}}>
           <div style={{fontSize:13, fontWeight:700, marginBottom:6, color:'var(--text2)'}}>앱 정보</div>
           <div style={{fontSize:13, color:'var(--text3)', lineHeight:1.7}}>
-            크레건설 브리딩 비서 v1.4<br/>
-            브리딩 체인 · 혈통 · 성장 그래프 · 분양 관리<br/>
+            크레건설 브리딩 비서 v1.5<br/>
+            축양·분양·메이팅·해칭 4탭 · 사진 다운로드 · 백업 복원<br/>
             테마: 아이보리 × 버건디 (크레건설 아이덴티티)<br/>
             현재: 로컬 저장 모드 · 예정: Supabase 동기화 + AI 상담
           </div>
