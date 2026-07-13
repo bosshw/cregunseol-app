@@ -662,6 +662,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
   const geckoRef = useRef(presetGecko || null);      // 현재 대화 대상
   const heldRef = useRef([]);                        // 대상 미정으로 보류된 기록
   const heldMorphRef = useRef(null);                 // 대상 미정 모프
+  const heldGenderRef = useRef(null);               // 대상 미정 성별
   const pendingNameRef = useRef(null);               // 새 이름 등록 확인 대기
   const pendingRef = useRef([]);                     // 담긴 기록 (ref 미러)
 
@@ -694,7 +695,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     const lines = fs.map(f => '· ' + factLabel(f)).join('\n');
     const head = extraLine ? extraLine + '\n\n' : '';
     bot(`${head}${target.name} ${pickOpener()}\n${lines}\n\n계속 말씀하셔도 되고, 끝나면 저장을 눌러주세요.`, [
-      { label: '💾 이제 저장할까요?', kind: 'save' },
+      { label: '💾 이제 저장할래', kind: 'save' },
     ]);
   };
 
@@ -709,8 +710,10 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
   /* ── 새 개체 등록 ── */
   const doRegister = (name) => {
     pendingNameRef.current = null;
+    const detectedGender = heldGenderRef.current;
+    heldGenderRef.current = null;
     const saved = DB.addIndividual({
-      name, gender: 'unknown', morph: '', hatchDate: '', isFromCreGunseol: false,
+      name, gender: detectedGender || 'unknown', morph: '', hatchDate: '', isFromCreGunseol: false,
       sireId: null, damId: null,
       shareCode: Math.random().toString(36).slice(2, 8).toUpperCase(),
     });
@@ -721,11 +724,15 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       morphLine = '\n' + applyMorph(saved, heldMorphRef.current);
       heldMorphRef.current = null;
     }
-    bot(`🦎 ${name}, 우리 식구가 됐어요! 만나서 반가워요.${morphLine}\n성별을 알고 계시면 골라주세요. (나중에 말씀하셔도 돼요)`, [
-      { label: '♀ 암컷', kind: 'gender', value: 'female' },
-      { label: '♂ 수컷', kind: 'gender', value: 'male' },
-      { label: '미구분이에요', kind: 'gender', value: 'unknown' },
-    ]);
+    if (detectedGender) {
+      bot(`🦎 ${name}, 우리 식구가 됐어요! 만나서 반가워요.${morphLine}\n${name}, ${genderLabel(detectedGender)}으로 기억할게요. 이제 편하게 이야기해주세요 🙂`);
+    } else {
+      bot(`🦎 ${name}, 우리 식구가 됐어요! 만나서 반가워요.${morphLine}\n성별을 알고 계시면 골라주세요. (나중에 말씀하셔도 돼요)`, [
+        { label: '♀ 암컷', kind: 'gender', value: 'female' },
+        { label: '♂ 수컷', kind: 'gender', value: 'male' },
+        { label: '미구분이에요', kind: 'gender', value: 'unknown' },
+      ]);
+    }
     if (heldRef.current.length) {
       const flushed = heldRef.current.map(f => ({ ...f, targetId: saved.id, targetName: saved.name }));
       heldRef.current = [];
@@ -750,6 +757,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       pendingNameRef.current = null;
       heldRef.current = [];
       heldMorphRef.current = null;
+      heldGenderRef.current = null;
       bot('알겠습니다. 등록하려는 아이 이름을 다시 알려주세요. 🦎');
     } else if (kind === 'gender') {
       const g = geckoRef.current;
@@ -776,7 +784,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     if (pendingNameRef.current) {
       if (/^(응|네|넵|예|어|그래|맞아|등록|ㅇㅇ|ㅇ)/.test(text)) { doRegister(pendingNameRef.current); return; }
       if (/^(아니|노|취소|ㄴㄴ|ㄴ)/.test(text)) {
-        pendingNameRef.current = null; heldRef.current = []; heldMorphRef.current = null;
+        pendingNameRef.current = null; heldRef.current = []; heldMorphRef.current = null; heldGenderRef.current = null;
         bot('알겠습니다. 등록하려는 아이 이름을 다시 알려주세요. 🦎');
         return;
       }
@@ -817,6 +825,11 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
         pendingNameRef.current = cand;
         heldRef.current = [...heldRef.current, ...facts.map(f => ({ ...f, date }))];
         if (morph) heldMorphRef.current = morph;
+        // 성별 미리 캡처 (메이팅 문장 제외)
+        if (!mating) {
+          const gm = text.match(/(수컷|암컷)(?:이야|이에요|입니다|임|이래|같아|이다)/);
+          if (gm) heldGenderRef.current = gm[1] === '수컷' ? 'male' : 'female';
+        }
         bot(`"${cand}"(은)는 처음 보는 이름이네요. 새 개체로 등록할까요?`, [
           { label: '🦎 네, 등록해주세요', kind: 'register-yes' },
           { label: '아니요, 다시 입력할게요', kind: 'register-no' },
@@ -897,11 +910,11 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       updatePending(p => [...p, { type: 'memo', data: { notes: text }, date, targetId: target.id, targetName: target.name }]);
       if (warm) {
         bot(`${morphLine ? morphLine + '\n' : ''}${warm}\n\n계속 말씀하셔도 되고, 끝나면 저장을 눌러주세요.`, [
-          { label: '💾 이제 저장할까요?', kind: 'save' },
+          { label: '💾 이제 저장할래', kind: 'save' },
         ]);
       } else {
         bot(`${morphLine ? morphLine + '\n' : ''}${target.name} ${pickOpener()}\n· ${factLabel({ type: 'memo', data: { notes: text } })}\n\n계속 말씀하셔도 되고, 끝나면 저장을 눌러주세요.`, [
-          { label: '💾 이제 저장할까요?', kind: 'save' },
+          { label: '💾 이제 저장할래', kind: 'save' },
         ]);
       }
       return;
@@ -969,10 +982,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     });
     refreshIndividuals();
     showToast(`✅ ${list.length}건 저장 완료!${reminderMsg}`);
-    const g = geckoRef.current;
-    const fresh = g ? DB.getIndividuals().find(i => i.id === g.id) : null;
-    if (fresh) navigate('profile', { gecko: fresh });
-    else navigate('home');
+    navigate('home');
   };
 
   const removePending = (f) => updatePending(p => p.filter(x => x !== f));
@@ -1072,7 +1082,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
           )}
 
           <div style={{display:'flex', flexDirection:'column', gap:8}}>
-            <button className="btn btn-primary" onClick={doSave}>✅ 저장하기 ({pending.length}건)</button>
+            <button className="btn btn-primary" onClick={doSave}>✅ 기록마무리하기 ({pending.length}건)</button>
             <button className="btn btn-secondary" onClick={() => setPhase('chat')}>← 더 기록하기</button>
           </div>
         </div>
@@ -1105,257 +1115,4 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
       <div className="header">
         <div className="header-row">
           <button className="back-btn" onClick={() => { refreshIndividuals(); navigate('home'); }}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6"/></svg>
-            목록
-          </button>
-          <button className="back-btn" onClick={() => setShowShare(s => !s)}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
-            공유
-          </button>
-        </div>
-      </div>
-
-      {/* 헤더 카드 */}
-      <div style={{padding:'16px 16px 0'}}>
-        <div className="card">
-          <div style={{display:'flex', alignItems:'center', gap:14}}>
-            <div style={{fontSize:52}}>{genderEmoji(gecko.gender)}</div>
-            <div style={{flex:1}}>
-              <div style={{display:'flex', alignItems:'center', gap:8, flexWrap:'wrap'}}>
-                <div style={{fontSize:22, fontWeight:800}}>{gecko.name}</div>
-                {gecko.isFromCreGunseol && <span className="badge badge-gold">크레건설</span>}
-              </div>
-              <div style={{fontSize:13, color:'var(--text3)', marginTop:4}}>
-                {genderLabel(gecko.gender)}
-                {gecko.morph ? ` · ${gecko.morph}` : ''}
-              </div>
-              {gecko.hatchDate && (
-                <div style={{fontSize:12, color:'var(--text3)', marginTop:2}}>
-                  {fmtDate(gecko.hatchDate)} 출생 ({age}일)
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* 빠른 통계 */}
-          <div style={{display:'flex', gap:10, marginTop:14}}>
-            {lastWeight && (
-              <div style={{flex:1, background:'var(--bg3)', borderRadius:8, padding:'8px 10px', border:'1px solid var(--border)'}}>
-                <div style={{fontSize:16, fontWeight:700, color:'var(--accent2)'}}>{lastWeight.data.weight}g</div>
-                <div style={{fontSize:10, color:'var(--text3)'}}>최근 몸무게</div>
-              </div>
-            )}
-            <div style={{flex:1, background:'var(--bg3)', borderRadius:8, padding:'8px 10px', border:'1px solid var(--border)'}}>
-              <div style={{fontSize:16, fontWeight:700, color:'var(--accent2)'}}>{events.length}</div>
-              <div style={{fontSize:10, color:'var(--text3)'}}>기록 수</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* 공유 박스 */}
-      {showShare && (
-        <div style={{padding:'0 16px 10px'}}>
-          <div className="share-box">
-            <div style={{fontSize:12, color:'var(--text3)', marginBottom:6}}>공유 코드</div>
-            <div className="share-code">{gecko.shareCode}</div>
-            <div style={{fontSize:11, color:'var(--text3)', marginTop:6}}>Powered by 크레건설</div>
-            <button className="btn btn-ghost btn-sm" style={{marginTop:10}} onClick={() => {
-              navigator.clipboard?.writeText(gecko.shareCode);
-              showToast('코드 복사됨!');
-            }}>📋 코드 복사</button>
-          </div>
-        </div>
-      )}
-
-      {/* 기록 추가 → 동일한 대화형 화면으로 */}
-      <div style={{padding:'0 16px 10px'}}>
-        <button className="btn btn-primary" onClick={() => navigate('chat', { presetGecko: gecko })}>
-          💬 {gecko.name} 기록하기
-        </button>
-      </div>
-
-      <div className="section-title">활동 기록 {events.length > 0 ? `(${events.length})` : ''}</div>
-
-      {events.length === 0 ? (
-        <div className="empty" style={{padding:'30px 20px'}}>
-          <div className="empty-icon" style={{fontSize:36}}>📋</div>
-          <p>아직 기록이 없어요. 위 버튼으로 첫 기록을 남겨보세요.</p>
-        </div>
-      ) : (
-        <div className="timeline">
-          {[...events].sort((a,b) => b.date > a.date ? 1 : -1).map(ev => {
-            const t = EVENT_TYPES.find(e => e.key === ev.type);
-            return (
-              <div key={ev.id} className="timeline-item">
-                <div className="timeline-dot" style={{background: t?.color || 'var(--text3)'}} />
-                <div className="timeline-content">
-                  <div className="timeline-type">{t?.emoji} {t?.label}</div>
-                  <div className="timeline-detail">{formatEventDetail(ev)}</div>
-                  {ev.data?.photo && (
-                    <img src={ev.data.photo} alt="기록 사진" style={{maxWidth:150, borderRadius:8, marginTop:6, display:'block', border:'1px solid var(--border)'}} />
-                  )}
-                  {ev.data?.notes && ev.type !== 'feeding' && ev.type !== 'memo' && (
-                    <div style={{fontSize:12, color:'var(--text3)', marginTop:2}}>{ev.data.notes}</div>
-                  )}
-                  <div className="timeline-date">{fmtDate(ev.date)}</div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* 삭제 */}
-      <div style={{padding:'20px 16px 16px'}}>
-        {!confirmDelete ? (
-          <button className="btn btn-danger btn-sm" onClick={() => setConfirmDelete(true)}>🗑️ 개체 삭제</button>
-        ) : (
-          <div>
-            <div style={{fontSize:13, color:'var(--danger)', marginBottom:8}}>{gecko.name}를 정말 삭제할까요? 모든 기록이 사라져요.</div>
-            <div style={{display:'flex', gap:8}}>
-              <button className="btn btn-danger" onClick={handleDelete} style={{flex:1}}>삭제</button>
-              <button className="btn btn-secondary" onClick={() => setConfirmDelete(false)} style={{flex:1}}>취소</button>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function formatEventDetail(ev) {
-  const d = ev.data || {};
-  switch (ev.type) {
-    case 'growth':       return d.weight ? `${d.weight}g` : '성장 기록';
-    case 'mating':       return d.partnerName ? `파트너: ${d.partnerName}` : '메이팅 기록';
-    case 'laying':       return d.eggCount ? `알 ${d.eggCount}개 산란` : '산란 기록';
-    case 'hatching':     return d.count ? `${d.count}마리 부화` : '해칭 기록';
-    case 'distribution': return d.price ? `${Number(d.price).toLocaleString()}원에 분양` : '분양 기록';
-    case 'shed':         return '탈피 완료';
-    case 'feeding':      return d.foodType ? `${d.foodType === '충식' ? '🦗 충식' : '🥣 슈푸(일반식)'} 급여` : (d.notes || '먹이 급여');
-    case 'photo':        return '사진 기록';
-    case 'memo':         return d.notes || '메모';
-    default:             return '';
-  }
-}
-
-/* ══════════════════════════════════════════
-   알림 화면
-   ══════════════════════════════════════════ */
-function RemindersScreen({ navigate }) {
-  const [all, setAll] = useState(() => [...DB.getReminders()].sort((a,b) => a.date > b.date ? 1 : -1));
-  const upcoming = all.filter(r => new Date(r.date) >= new Date(todayStr()));
-  const past = all.filter(r => new Date(r.date) < new Date(todayStr()));
-
-  const deleteReminder = (id) => {
-    const next = DB.getReminders().filter(r => r.id !== id);
-    DB.saveReminders(next);
-    setAll([...next].sort((a,b) => a.date > b.date ? 1 : -1));
-  };
-
-  return (
-    <div className="screen">
-      <div className="header"><h1>🔔 알림</h1></div>
-      {all.length === 0 && (
-        <div className="empty">
-          <div className="empty-icon">🔔</div>
-          <p>설정된 알림이 없어요.{'\n'}산란 기록 시 부화 예정 알림을 설정할 수 있어요.</p>
-        </div>
-      )}
-      {upcoming.length > 0 && (
-        <>
-          <div className="section-title">예정 알림</div>
-          {upcoming.map(r => <ReminderCard key={r.id} r={r} onDelete={deleteReminder} />)}
-        </>
-      )}
-      {past.length > 0 && (
-        <>
-          <div className="section-title" style={{color:'var(--text3)'}}>지난 알림</div>
-          {past.map(r => <ReminderCard key={r.id} r={r} onDelete={deleteReminder} past />)}
-        </>
-      )}
-    </div>
-  );
-}
-
-function ReminderCard({ r, onDelete, past }) {
-  const daysLeft = Math.ceil((new Date(r.date) - new Date(todayStr())) / (1000*60*60*24));
-  return (
-    <div className="card" style={{opacity: past ? .6 : 1}}>
-      <div style={{display:'flex', justifyContent:'space-between', alignItems:'flex-start'}}>
-        <div>
-          <div style={{fontSize:15, fontWeight:700}}>🐣 {r.geckoName}</div>
-          <div style={{fontSize:13, color:'var(--text3)', marginTop:2}}>{r.message}</div>
-          <div style={{fontSize:12, color: past ? 'var(--text3)' : daysLeft <= 7 ? 'var(--warning)' : 'var(--accent2)', marginTop:4}}>
-            {past ? fmtDate(r.date) + ' (지남)' : daysLeft === 0 ? '오늘!' : `D-${daysLeft} · ${fmtDate(r.date)}`}
-          </div>
-        </div>
-        <button onClick={() => onDelete(r.id)} style={{background:'none', border:'none', color:'var(--text3)', cursor:'pointer', fontSize:16}}>✕</button>
-      </div>
-    </div>
-  );
-}
-
-/* ══════════════════════════════════════════
-   설정 화면
-   ══════════════════════════════════════════ */
-function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
-  const exportData = () => {
-    const data = {
-      individuals: DB.getIndividuals(),
-      events: DB.getEvents(),
-      reminders: DB.getReminders(),
-      exportedAt: now(),
-    };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `creg_backup_${todayStr()}.json`;
-    a.click();
-    showToast('📦 백업 파일 다운로드');
-  };
-
-  return (
-    <div className="screen">
-      <div className="header"><h1>⚙️ 설정</h1></div>
-      <div style={{padding:'16px', display:'flex', flexDirection:'column', gap:12}}>
-        <div className="card" style={{margin:0}}>
-          <div style={{fontSize:13, fontWeight:700, marginBottom:12, color:'var(--text2)'}}>데이터</div>
-          <div style={{display:'flex', flexDirection:'column', gap:8}}>
-            <button className="btn btn-secondary" onClick={exportData}>📦 데이터 백업 (JSON)</button>
-          </div>
-        </div>
-        <div className="card" style={{margin:0}}>
-          <div style={{fontSize:13, fontWeight:700, marginBottom:6, color:'var(--text2)'}}>앱 정보</div>
-          <div style={{fontSize:13, color:'var(--text3)', lineHeight:1.7}}>
-            크레건설 브리딩 비서 v1.2<br/>
-            등록·기록: ＋ 버튼 하나, 대화형 자동 분배<br/>
-            테마: 아이보리 × 버건디 (크레건설 아이덴티티)<br/>
-            현재: 로컬 저장 모드 · 예정: Supabase 동기화 + AI 상담
-          </div>
-        </div>
-        <div className="card" style={{margin:0}}>
-          <div style={{fontSize:13, fontWeight:700, marginBottom:6, color:'var(--accent2)'}}>Powered by 크레건설</div>
-          <div style={{fontSize:12, color:'var(--text3)'}}>크레스티드 게코 전문 브리더</div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ══════════════════════════════════════════
-   렌더
-   ══════════════════════════════════════════ */
-const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(<App />);
-
-// PWA 서비스 워커 등록
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js').catch(() => {});
-  });
-}
-</script>
-</body>
-</html>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6
