@@ -246,6 +246,27 @@ const STATUS = {
   sold:      { label: '🤝 분양완료', color: '#8A64A8' },
 };
 
+// 예정일 자동 계산 기준 (일)
+const LAYING_AFTER_MATING = 30;   // 메이팅 → 산란 예정
+const HATCH_AFTER_LAYING = 75;    // 산란 → 해칭 예정
+
+// 예정일 대비 실제일 차이 문구
+function diffPhrase(diffDays) {
+  if (diffDays === 0) return '예정일과 정확히 일치';
+  return diffDays > 0 ? `예정보다 ${diffDays}일 늦음` : `예정보다 ${-diffDays}일 빠름`;
+}
+// 개체의 특정 예정 알림 중 실제일과 가장 가까운 것 찾기 (60일 이내)
+function matchExpectedReminder(indId, type, actualDate) {
+  let best = null, bestGap = Infinity;
+  DB.getReminders().forEach(r => {
+    if (r.individualId === indId && r.type === type) {
+      const gap = Math.abs((new Date(actualDate) - new Date(r.date)) / 86400000);
+      if (gap < bestGap) { bestGap = gap; best = r; }
+    }
+  });
+  return best && bestGap <= 60 ? best : null;
+}
+
 const nameCore = (n) => {
   let s = (n || '').trim();
   if (s.length > 1 && s.endsWith('이')) s = s.slice(0, -1);
@@ -292,6 +313,24 @@ function findNamesInText(text, individuals) {
     if (i !== -1 && !found.some(f => f.ind.id === ind.id)) found.push({ ind, idx: i });
   }
   return found.sort((a, b) => a.idx - b.idx).map(f => f.ind);
+}
+
+// 메이팅 상대(파트너) 이름 추출 — 미등록 개체도 인식
+// "크한이랑 크룡이가 메이팅" 처럼 동반(랑/와/과/하고) 또는 주격(가/이가) 조사로 이어진
+// 이름을 모두 뽑고 대상(excludeName)을 제외한다. 탐욕적 매칭으로 끝의 '이'를 이름에 남긴다.
+const PARTNER_STOPWORDS = ['오늘','어제','그제','그저께','내일','모레','방금','아까','우리','둘','모두','서로','다시','오늘은','메이팅','교배','합사'];
+function extractPartnerNames(text, excludeName) {
+  const out = [];
+  const re = /([가-힣]{2,10})(?:이랑|랑|이와|와|과|하고|이하고|이가|가|은|는)(?=\s|$|[,.!?~])/g;
+  let m;
+  while ((m = re.exec(text))) {
+    const n = m[1];
+    if (!n || n === excludeName || out.includes(n)) continue;
+    if (PARTNER_STOPWORDS.includes(n)) continue;
+    if (MORPH_WORDS.includes(n) || CRICKET_RE.test(n) || SUPU_RE.test(n)) continue;
+    out.push(n);
+  }
+  return out;
 }
 
 // 날짜 해석: "7월 10일", "2026-07-10", 어제/그제, 기본 오늘
@@ -540,7 +579,7 @@ function App() {
 
   const navigate = (name, props = {}) => {
     setScreen({ name, props });
-    if (['home','reminders','settings'].includes(name)) setTab(name);
+    if (['home','calendar','reminders','settings'].includes(name)) setTab(name);
   };
 
   const reminders = DB.getReminders().filter(r => new Date(r.date) >= new Date(todayStr()));
@@ -556,6 +595,9 @@ function App() {
       {screen.name === 'profile' && (
         <ProfileScreen key={screen.props.gecko && screen.props.gecko.id} {...screen.props} navigate={navigate} showToast={showToast} refreshIndividuals={refreshIndividuals} individuals={individuals} />
       )}
+      {screen.name === 'calendar' && (
+        <CalendarScreen navigate={navigate} individuals={individuals} />
+      )}
       {screen.name === 'reminders' && (
         <RemindersScreen navigate={navigate} />
       )}
@@ -564,11 +606,15 @@ function App() {
       )}
 
       {/* 하단 탭바 */}
-      {['home','reminders','settings'].includes(screen.name) && (
+      {['home','calendar','reminders','settings'].includes(screen.name) && (
         <div className="tabbar">
           <button className={`tab-btn ${tab==='home'?'active':''}`} onClick={() => navigate('home')}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
             홈
+          </button>
+          <button className={`tab-btn ${tab==='calendar'?'active':''}`} onClick={() => navigate('calendar')}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            캘린더
           </button>
           <button className={`tab-btn ${tab==='reminders'?'active':''}`} onClick={() => navigate('reminders')} style={{position:'relative'}}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -594,11 +640,11 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals }) {
   const [search, setSearch] = useState('');
   const [view, setView] = useState('own'); // own | sale | mating | hatch
   const [saleFilter, setSaleFilter] = useState('available');
+  const [favOnly, setFavOnly] = useState(false);
   const activeInds = individuals.filter(i => (i.status || 'own') !== 'sold' && !i.isExternal);
   const stats = {
     total: activeInds.length,
-    female: activeInds.filter(i => i.gender === 'female').length,
-    male: activeInds.filter(i => i.gender === 'male').length,
+    fav: activeInds.filter(i => i.favorite).length,
     fromCG: activeInds.filter(i => i.isFromCreGunseol).length,
     sold: individuals.filter(i => (i.status || 'own') === 'sold').length,
   };
@@ -606,8 +652,12 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals }) {
     i.name.toLowerCase().includes(search.toLowerCase()) ||
     (i.morph || '').toLowerCase().includes(search.toLowerCase())
   );
-  const ownList = bySearch(activeInds);
+  // 즐겨찾기 우선 정렬 + (필터 시) 즐겨찾기만
+  const favSort = list => [...list].sort((a, b) => (b.favorite ? 1 : 0) - (a.favorite ? 1 : 0));
+  let ownList = favSort(bySearch(activeInds));
+  if (favOnly) ownList = ownList.filter(i => i.favorite);
   const saleList = bySearch(individuals.filter(i => (i.status || 'own') === saleFilter && !i.isExternal));
+  const toggleFav = (g) => { DB.updateIndividual(g.id, { favorite: !g.favorite }); refreshIndividuals(); };
 
   return (
     <>
@@ -641,9 +691,11 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals }) {
               <div className="stat-val">{stats.total}</div>
               <div className="stat-label">전체 개체</div>
             </div>
-            <div className="stat-card">
-              <div className="stat-val" style={{color:'#C2607E'}}>{stats.female} / <span style={{color:'#4A6FA5'}}>{stats.male}</span></div>
-              <div className="stat-label">♀ 암컷 / ♂ 수컷</div>
+            <div className="stat-card"
+              onClick={() => { setView('own'); setFavOnly(f => !f); }}
+              style={{cursor:'pointer', ...(favOnly ? {borderColor:'var(--accent-dim)', background:'var(--accent-soft)'} : {})}}>
+              <div className="stat-val" style={{color:'var(--gold)'}}>⭐ {stats.fav}</div>
+              <div className="stat-label">{favOnly ? '즐겨찾기만 보는 중 · 눌러 해제' : '즐겨찾기 · 눌러서 모아보기'}</div>
             </div>
           </div>
         )}
@@ -668,13 +720,13 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals }) {
           <>
             {ownList.length === 0 && (
               <div className="empty">
-                <div className="empty-icon">🦎</div>
-                <p>{individuals.length === 0 ? '아직 등록된 개체가 없어요.\n＋ 버튼을 누르고 대화하듯 말씀해보세요.\n예) "크한이 12그램"' : '검색 결과가 없어요.'}</p>
+                <div className="empty-icon">{favOnly ? '⭐' : '🦎'}</div>
+                <p>{favOnly ? '즐겨찾기한 아이가 없어요.\n개체 카드의 ☆ 를 눌러 즐겨찾기에 추가해보세요.' : (individuals.length === 0 ? '아직 등록된 개체가 없어요.\n＋ 버튼을 누르고 대화하듯 말씀해보세요.\n예) "크한이 12그램"' : '검색 결과가 없어요.')}</p>
               </div>
             )}
-            <div className="section-title" style={{display: ownList.length ? 'block' : 'none'}}>내 개체</div>
+            <div className="section-title" style={{display: ownList.length ? 'block' : 'none'}}>{favOnly ? '⭐ 즐겨찾기' : '내 개체'}</div>
             {ownList.map(gecko => (
-              <GeckoCard key={gecko.id} gecko={gecko} onClick={() => navigate('profile', { gecko })} />
+              <GeckoCard key={gecko.id} gecko={gecko} onClick={() => navigate('profile', { gecko })} onToggleFav={toggleFav} />
             ))}
           </>
         )}
@@ -688,7 +740,7 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals }) {
               </div>
             )}
             {saleList.map(gecko => (
-              <GeckoCard key={gecko.id} gecko={gecko} onClick={() => navigate('profile', { gecko })} />
+              <GeckoCard key={gecko.id} gecko={gecko} onClick={() => navigate('profile', { gecko })} onToggleFav={toggleFav} />
             ))}
           </>
         )}
@@ -829,7 +881,7 @@ function HatchView({ individuals, refreshIndividuals, showToast, navigate }) {
   );
 }
 
-function GeckoCard({ gecko, onClick }) {
+function GeckoCard({ gecko, onClick, onToggleFav }) {
   const events = DB.getEventsFor(gecko.id);
   const lastEvent = [...events].sort((a,b) => b.createdAt > a.createdAt ? 1 : -1)[0];
   const lastFeed = events.filter(e => e.type === 'feeding')
@@ -865,6 +917,14 @@ function GeckoCard({ gecko, onClick }) {
           )}
         </div>
       </div>
+      {onToggleFav && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onToggleFav(gecko); }}
+          aria-label="즐겨찾기"
+          style={{background:'none', border:'none', cursor:'pointer', fontSize:20, lineHeight:1, padding:'2px 4px', color: gecko.favorite ? 'var(--gold)' : 'var(--text3)'}}>
+          {gecko.favorite ? '⭐' : '☆'}
+        </button>
+      )}
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" strokeWidth="2"><polyline points="9 18 15 12 9 6"/></svg>
     </div>
   );
@@ -1067,6 +1127,18 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       pushPending([f], { name: f.targetName });
     } else if (kind === 'memo-save' && value) {
       pushPending([{ type: 'memo', data: { notes: value.text }, date: value.date, targetId: value.targetId, targetName: value.targetName }], { name: value.targetName });
+    } else if (kind === 'register-partner' && value) {
+      const existing = DB.getIndividuals().find(i => i.name === value.name);
+      const partner = existing || DB.addIndividual({
+        name: value.name, gender: 'unknown', morph: '', hatchDate: '', isFromCreGunseol: false,
+        isExternal: false, sireId: null, damId: null,
+        shareCode: Math.random().toString(36).slice(2, 8).toUpperCase(),
+      });
+      refreshIndividuals();
+      // 담긴 메이팅 기록에 파트너 연결
+      updatePending(p => p.map(f => (f.type === 'mating' && f.data && f.data.partnerName === value.name && !f.data.partnerId)
+        ? { ...f, data: { ...f.data, partnerId: partner.id } } : f));
+      bot(`🦎 ${value.name}, 등록하고 파트너로 연결해뒀어요! 저장하면 혈통에도 반영돼요.`);
     } else if (kind === 'memo-skip') {
       bot('네, 기록 없이 넘어갈게요 🙂 다른 이야기 들려주세요.');
     }
@@ -1117,38 +1189,59 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     let target = geckoRef.current;
     if (names.length) { target = names[0]; setTarget(names[0]); }
 
-    // 메이팅 파트너: 문장 속 두 번째 이름 또는 "상대/파트너 ○○"
+    // 메이팅 파트너: 등록 개체 → "상대/파트너 ○○" → 문장 속 다른 이름(미등록 포함)
     const mating = facts.find(f => f.type === 'mating');
+    let unregPartner = null;                            // 미등록 파트너 이름 (등록 유도용)
     if (mating) {
       const partner = names.find(n => target && n.id !== target.id);
       if (partner) { mating.data.partnerId = partner.id; mating.data.partnerName = partner.name; }
       else {
-        const pm = text.match(/(?:상대|파트너)(?:는|은)?\s*(\S+)/);
-        if (pm) mating.data.partnerName = pm[1].replace(/(이랑|랑|이야|이고|이에요|예요|야|고|임)$/, '');
+        const pm = text.match(/(?:상대|파트너)(?:는|은)?\s*([가-힣A-Za-z0-9]+)/);
+        if (pm) {
+          const pn = pm[1].replace(/(이랑|랑|이야|이고|이에요|예요|야|고|임)$/, '');
+          mating.data.partnerName = pn; unregPartner = pn;
+        } else {
+          const others = extractPartnerNames(text, target ? target.name : '');
+          if (others.length) { mating.data.partnerName = others[0]; unregPartner = others[0]; }
+        }
       }
     }
 
-    // 4) 대상을 아직 모름
+    // 3.5) 새 주체(미등록) 감지
+    //  - 대상 미정: 기존처럼 첫 단어를 새 이름 후보로
+    //  - 활성 개체가 있어도(메이팅 제외) 문장 주체가 다른 미등록 이름이면 그 아이로 전환
+    let newSubject = null;
     if (!target) {
-      const cand = guessNewName(text);
-      if (cand) {
-        pendingNameRef.current = cand;
-        heldRef.current = [...heldRef.current, ...facts.map(f => ({ ...f, date }))];
-        if (morph) heldMorphRef.current = morph;
-        // 성별 미리 캡처 (메이팅 문장 제외)
-        if (!mating) {
-          const gm = text.match(/(수컷|암컷)(?:이야|이에요|입니다|임|이래|같아|이다)/);
-          if (gm) heldGenderRef.current = gm[1] === '수컷' ? 'male' : 'female';
-        }
-        // 외부 개체 캡처: "마인이 외부 개체야"
-        if (/외부/.test(text)) heldExternalRef.current = true;
-        bot(`"${cand}"(은)는 처음 보는 이름이네요. 새 개체로 등록할까요?`, [
-          { label: '🦎 네, 등록해주세요', kind: 'register-yes' },
-          { label: '아니요, 다시 입력할게요', kind: 'register-no' },
-        ]);
-      } else {
-        bot('등록하려는 아이가 누구인가요? 이름을 알려주세요. 🦎');
+      const c = guessNewName(text);
+      if (c && !inds.some(i => i.name === c)) newSubject = c;
+    } else if (!mating) {
+      const c = guessNewName(text);
+      if (c && c !== target.name && !inds.some(i => i.name === c)) {
+        const genderAssert = /(수컷|암컷)(?:이야|이에요|입니다|임|이래|같아|이다)/.test(text);
+        if (facts.length || morph || genderAssert) newSubject = c;   // 기록할 내용이 있을 때만 전환
       }
+    }
+
+    // 4) 새 개체 등록 플로우
+    if (newSubject) {
+      pendingNameRef.current = newSubject;
+      heldRef.current = [...heldRef.current, ...facts.map(f => ({ ...f, date }))];
+      if (morph) heldMorphRef.current = morph;
+      // 성별 미리 캡처 (메이팅 문장 제외)
+      if (!mating) {
+        const gm = text.match(/(수컷|암컷)(?:이야|이에요|입니다|임|이래|같아|이다)/);
+        if (gm) heldGenderRef.current = gm[1] === '수컷' ? 'male' : 'female';
+      }
+      // 외부 개체 캡처: "마인이 외부 개체야"
+      if (/외부/.test(text)) heldExternalRef.current = true;
+      bot(`"${newSubject}"(은)는 처음 보는 이름이네요. 새 개체로 등록할까요?`, [
+        { label: '🦎 네, 등록해주세요', kind: 'register-yes' },
+        { label: '아니요, 다시 입력할게요', kind: 'register-no' },
+      ]);
+      return;
+    }
+    if (!target) {
+      bot('등록하려는 아이가 누구인가요? 이름을 알려주세요. 🦎');
       return;
     }
 
@@ -1303,6 +1396,14 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     const mapped = facts.map(withTarget);
     pushPending(mapped, target, morphLine);
 
+    // 미등록 파트너 → 새 개체로 등록해 혈통 연결 유도
+    if (unregPartner && !inds.some(i => i.name === unregPartner)) {
+      bot(`파트너 "${unregPartner}"도 새로 등록해서 혈통에 연결해둘까요? 🧬`, [
+        { label: `🦎 ${unregPartner} 등록`, kind: 'register-partner', value: { name: unregPartner } },
+        { label: '아니요, 이름만 남길게요', kind: 'memo-skip' },
+      ]);
+    }
+
     const hf = mapped.find(f => f.type === 'hatching');
     if (hf && (DB.getSettings().babyNaming || 'combo') === 'ask') {
       pendingBabyRef.current = hf;
@@ -1348,7 +1449,36 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
           .sort((a, b) => b.date > a.date ? 1 : -1)[0];
         if (mate) { f.data.sireId = mate.data.partnerId; f.data.sireName = mate.data.partnerName; }
       }
+      // 예정일 대비 실제일 차이 기록 (산란/해칭)
+      if (f.type === 'laying' || f.type === 'hatching') {
+        const expType = f.type === 'laying' ? 'laying_expected' : 'hatching_expected';
+        const exp = matchExpectedReminder(f.targetId, expType, f.date || todayStr());
+        if (exp) {
+          f.data.expectedDate = exp.date;
+          f.data.diffDays = Math.round((new Date(f.date || todayStr()) - new Date(exp.date)) / 86400000);
+          DB.saveReminders(DB.getReminders().filter(r => r.id !== exp.id)); // 예정 완료 → 제거
+        }
+      }
       DB.addEvent({ individualId: f.targetId, type: f.type, date: f.date || todayStr(), data: f.data || {} });
+
+      // 메이팅 → 산란 예정 알림 자동 생성 (암컷 기준)
+      if (f.type === 'mating') {
+        const all = DB.getIndividuals();
+        const t = all.find(i => i.id === f.targetId);
+        const p = f.data.partnerId ? all.find(i => i.id === f.data.partnerId) : null;
+        const fem = (t && t.gender === 'female') ? t : (p && p.gender === 'female') ? p : t;
+        if (fem) {
+          const d = new Date(f.date || todayStr());
+          d.setDate(d.getDate() + LAYING_AFTER_MATING);
+          const dISO = localISO(d);
+          const rs = DB.getReminders();
+          if (!rs.some(r => r.individualId === fem.id && r.type === 'laying_expected' && r.date === dISO)) {
+            rs.push({ id: uuid(), individualId: fem.id, geckoName: fem.name, type: 'laying_expected', date: dISO, message: `${fem.name} 산란 예정일` });
+            DB.saveReminders(rs);
+            reminderMsg = ' · 🔔 산란 예정 알림 설정';
+          }
+        }
+      }
       if (f.type === 'distribution') {
         DB.updateIndividual(f.targetId, { status: 'sold', salePrice: f.data.price || '' });
       }
@@ -1378,7 +1508,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       }
       if (f.type === 'laying' && layingReminder) {
         const d = new Date(f.date || todayStr());
-        d.setDate(d.getDate() + 75);
+        d.setDate(d.getDate() + HATCH_AFTER_LAYING);
         const rs = DB.getReminders();
         rs.push({ id: uuid(), individualId: f.targetId, geckoName: f.targetName, type: 'hatching_expected', date: localISO(d), message: `${f.targetName} 부화 예정일` });
         DB.saveReminders(rs);
@@ -1508,6 +1638,14 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
   const [editVals, setEditVals] = useState({});
   const [confirmDelEvent, setConfirmDelEvent] = useState(null);
   const [photoView, setPhotoView] = useState(null); // {src, date}
+  const eventPhotoRef = useRef(null);
+
+  const onEventPhoto = (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    compressImage(file, (url) => setEditVals(v => ({ ...v, photo: url })));
+  };
 
   const refreshLocal = () => {
     setGecko(DB.getIndividuals().find(i => i.id === gecko.id) || gecko);
@@ -1550,6 +1688,10 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
             <div style={{flex:1}}>
               <div style={{display:'flex', alignItems:'center', gap:8, flexWrap:'wrap'}}>
                 <div style={{fontSize:22, fontWeight:800}}>{gecko.name}</div>
+                <button onClick={() => { DB.updateIndividual(gecko.id, { favorite: !gecko.favorite }); refreshLocal(); showToast(gecko.favorite ? '즐겨찾기 해제' : '⭐ 즐겨찾기 추가'); }}
+                  aria-label="즐겨찾기" style={{background:'none', border:'none', cursor:'pointer', fontSize:22, lineHeight:1, padding:0, color: gecko.favorite ? 'var(--gold)' : 'var(--text3)'}}>
+                  {gecko.favorite ? '⭐' : '☆'}
+                </button>
                 {gecko.isFromCreGunseol && <span className="badge badge-gold">크레건설</span>}
               </div>
               <div style={{fontSize:13, color:'var(--text3)', marginTop:4}}>
@@ -1640,7 +1782,7 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
                       <button onClick={() => {
                         setConfirmDelEvent(null);
                         if (isEditing) { setEditingId(null); return; }
-                        setEditVals({ date: ev.date, main: mainValOf(ev), notes: (ev.data && ev.data.notes) || '' });
+                        setEditVals({ date: ev.date, main: mainValOf(ev), notes: (ev.data && ev.data.notes) || '', photo: (ev.data && ev.data.photo) || '' });
                         setEditingId(ev.id);
                       }} style={{background:'none', border:'none', cursor:'pointer', fontSize:13, color:'var(--text3)'}}>✏️</button>
                       <button onClick={() => { setEditingId(null); setConfirmDelEvent(ev.id); }} style={{background:'none', border:'none', cursor:'pointer', fontSize:13, color:'var(--text3)'}}>🗑️</button>
@@ -1662,11 +1804,23 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
                         <input className="input" style={{padding:'8px 10px', fontSize:13}} placeholder={mainLabelOf(ev)} value={editVals.main} onChange={e => setEditVals(v => ({ ...v, main: e.target.value }))} />
                       )}
                       <input className="input" style={{padding:'8px 10px', fontSize:13}} placeholder="메모" value={editVals.notes} onChange={e => setEditVals(v => ({ ...v, notes: e.target.value }))} />
+                      <div style={{display:'flex', alignItems:'center', gap:8, flexWrap:'wrap'}}>
+                        {editVals.photo ? (
+                          <>
+                            <img src={editVals.photo} alt="첨부" style={{width:52, height:52, borderRadius:8, objectFit:'cover', border:'1px solid var(--border)'}} />
+                            <button className="btn btn-secondary btn-sm" style={{width:'auto'}} onClick={() => eventPhotoRef.current && eventPhotoRef.current.click()}>사진 변경</button>
+                            <button className="btn btn-secondary btn-sm" style={{width:'auto'}} onClick={() => setEditVals(v => ({ ...v, photo: '' }))}>제거</button>
+                          </>
+                        ) : (
+                          <button className="btn btn-secondary btn-sm" style={{width:'auto'}} onClick={() => eventPhotoRef.current && eventPhotoRef.current.click()}>📷 사진 첨부</button>
+                        )}
+                      </div>
                       <div style={{display:'flex', gap:6}}>
                         <button className="btn btn-primary btn-sm" style={{flex:1}} onClick={() => {
                           const data = { ...(ev.data || {}), notes: editVals.notes };
                           const mk = mainKeyOf(ev);
                           if (mk) data[mk] = editVals.main;
+                          if (editVals.photo) data.photo = editVals.photo; else delete data.photo;
                           DB.updateEvent(ev.id, { date: editVals.date || ev.date, data });
                           setEditingId(null); refreshLocal(); showToast('수정 완료');
                         }}>저장</button>
@@ -1708,6 +1862,8 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
         )}
       </div>
 
+      <input ref={eventPhotoRef} type="file" accept="image/*" style={{display:'none'}} onChange={onEventPhoto} />
+
       {/* 사진 크게 보기 + 다운로드 + 대표사진 */}
       {photoView && (
         <div style={{position:'fixed', inset:0, background:'rgba(30,20,15,.88)', zIndex:200, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:14, padding:20}} onClick={() => setPhotoView(null)}>
@@ -1728,8 +1884,14 @@ function formatEventDetail(ev) {
   switch (ev.type) {
     case 'growth':       return d.weight ? `${d.weight}g` : '성장 기록';
     case 'mating':       return d.partnerName ? `파트너: ${d.partnerName}` : '메이팅 기록';
-    case 'laying':       return d.eggCount ? `알 ${d.eggCount}개 산란${d.sireName ? ' (부: ' + d.sireName + ')' : ''}` : '산란 기록';
-    case 'hatching':     return d.count ? `${d.count}마리 부화` : '해칭 기록';
+    case 'laying': {
+      const base = d.eggCount ? `알 ${d.eggCount}개 산란${d.sireName ? ' (부: ' + d.sireName + ')' : ''}` : '산란 기록';
+      return d.diffDays !== undefined ? `${base} · 🎯 ${diffPhrase(d.diffDays)}` : base;
+    }
+    case 'hatching': {
+      const base = d.count ? `${d.count}마리 부화` : '해칭 기록';
+      return d.diffDays !== undefined ? `${base} · 🎯 ${diffPhrase(d.diffDays)}` : base;
+    }
     case 'distribution': return d.price ? `${Number(d.price).toLocaleString()}원에 분양` : '분양 기록';
     case 'shed':         return '탈피 완료';
     case 'feeding':      return d.foodType ? `${d.foodType === '충식' ? '🦗 충식' : '🥣 슈푸(일반식)'} 급여` : (d.notes || '먹이 급여');
@@ -1737,6 +1899,109 @@ function formatEventDetail(ev) {
     case 'memo':         return d.notes || '메모';
     default:             return '';
   }
+}
+
+/* ══════════════════════════════════════════
+   캘린더 화면
+   ══════════════════════════════════════════ */
+function CalendarScreen({ navigate, individuals }) {
+  const [cur, setCur] = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
+  const byId = {};
+  individuals.forEach(i => { byId[i.id] = i; });
+
+  // 이 달의 항목 수집: 예정(리마인더) + 실제(이벤트)
+  const items = {}; // 'YYYY-MM-DD' -> [{emoji, label, name, planned}]
+  const add = (ds, it) => { (items[ds] = items[ds] || []).push(it); };
+  DB.getReminders().forEach(r => {
+    if (r.type === 'laying_expected') add(r.date, { emoji: '🥚', label: '산란 예정', name: r.geckoName, planned: true });
+    else if (r.type === 'hatching_expected') add(r.date, { emoji: '🐣', label: '해칭 예정', name: r.geckoName, planned: true });
+  });
+  DB.getEvents().forEach(e => {
+    const nm = (byId[e.individualId] || {}).name || '';
+    if (e.type === 'mating') add(e.date, { emoji: '💞', label: '메이팅', name: nm });
+    else if (e.type === 'laying') add(e.date, { emoji: '🥚', label: '산란', name: nm });
+    else if (e.type === 'hatching') add(e.date, { emoji: '🐣', label: '해칭', name: nm });
+  });
+
+  const startDow = new Date(cur.y, cur.m, 1).getDay();
+  const daysInMonth = new Date(cur.y, cur.m + 1, 0).getDate();
+  const pad = n => String(n).padStart(2, '0');
+  const dstr = d => `${cur.y}-${pad(cur.m + 1)}-${pad(d)}`;
+  const today = todayStr();
+  const prev = () => setCur(c => { const m = c.m - 1; return m < 0 ? { y: c.y - 1, m: 11 } : { y: c.y, m }; });
+  const next = () => setCur(c => { const m = c.m + 1; return m > 11 ? { y: c.y + 1, m: 0 } : { y: c.y, m }; });
+
+  const cells = [];
+  for (let i = 0; i < startDow; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+
+  const monthItems = Object.entries(items)
+    .filter(([ds]) => ds.startsWith(`${cur.y}-${pad(cur.m + 1)}`))
+    .sort((a, b) => a[0] > b[0] ? 1 : -1);
+
+  const WD = ['일', '월', '화', '수', '목', '금', '토'];
+  return (
+    <div className="screen">
+      <div className="header"><h1>📅 캘린더</h1></div>
+      <div style={{padding:'12px 16px'}}>
+        <div className="card" style={{margin:0}}>
+          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10}}>
+            <button className="chip-btn" style={{padding:'6px 13px'}} onClick={prev}>‹</button>
+            <div style={{fontSize:16, fontWeight:800}}>{cur.y}년 {cur.m + 1}월</div>
+            <button className="chip-btn" style={{padding:'6px 13px'}} onClick={next}>›</button>
+          </div>
+          <div style={{display:'grid', gridTemplateColumns:'repeat(7,1fr)', gap:2, textAlign:'center'}}>
+            {WD.map((w, i) => (
+              <div key={w} style={{fontSize:11, fontWeight:700, padding:'4px 0', color: i === 0 ? '#C2607E' : i === 6 ? '#4A6FA5' : 'var(--text3)'}}>{w}</div>
+            ))}
+            {cells.map((d, i) => {
+              if (d === null) return <div key={'e' + i} />;
+              const ds = dstr(d);
+              const its = items[ds] || [];
+              const isToday = ds === today;
+              return (
+                <div key={ds} style={{minHeight:46, borderRadius:8, padding:'3px 1px', border: isToday ? '1.5px solid var(--accent)' : '1px solid transparent', background: its.length ? 'var(--bg3)' : 'transparent'}}>
+                  <div style={{fontSize:11, fontWeight: isToday ? 800 : 500, color: isToday ? 'var(--accent2)' : 'var(--text2)'}}>{d}</div>
+                  <div style={{display:'flex', flexWrap:'wrap', justifyContent:'center', gap:1, lineHeight:1}}>
+                    {its.slice(0, 3).map((it, j) => (
+                      <span key={j} style={{fontSize:10, opacity: it.planned ? 0.55 : 1}}>{it.emoji}</span>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div style={{fontSize:12, color:'var(--text3)', margin:'8px 4px 4px'}}>🥚 산란 · 🐣 해칭 · 💞 메이팅 · 흐린 아이콘은 예정일</div>
+
+        {monthItems.length === 0 ? (
+          <div className="empty" style={{padding:'30px 20px'}}>
+            <div className="empty-icon" style={{fontSize:36}}>📅</div>
+            <p>이 달 예정·기록이 없어요.{'\n'}메이팅·산란을 기록하면 예정일이 자동으로 표시돼요.</p>
+          </div>
+        ) : monthItems.map(([ds, its]) => {
+          const dleft = Math.ceil((new Date(ds) - new Date(today)) / 86400000);
+          return (
+            <div className="card" key={ds} style={{margin:'8px 0 0', padding:'10px 14px'}}>
+              <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:4}}>
+                <div style={{fontSize:12, fontWeight:700, color:'var(--accent2)'}}>{fmtDate(ds)}</div>
+                <div style={{fontSize:11, color: dleft === 0 ? 'var(--accent)' : dleft > 0 ? 'var(--text3)' : 'var(--text3)'}}>
+                  {dleft === 0 ? '오늘' : dleft > 0 ? `D-${dleft}` : `${-dleft}일 전`}
+                </div>
+              </div>
+              {its.map((it, j) => (
+                <div key={j} style={{fontSize:13, color:'var(--text2)', padding:'2px 0'}}>
+                  {it.emoji} {it.name} · {it.label}{it.planned ? ' (예정)' : ''}
+                </div>
+              ))}
+            </div>
+          );
+        })}
+        <div style={{height:16}} />
+      </div>
+    </div>
+  );
 }
 
 /* ══════════════════════════════════════════
@@ -1778,13 +2043,14 @@ function RemindersScreen({ navigate }) {
   );
 }
 
+const REMINDER_EMOJI = { laying_expected: '🥚', hatching_expected: '🐣' };
 function ReminderCard({ r, onDelete, past }) {
   const daysLeft = Math.ceil((new Date(r.date) - new Date(todayStr())) / (1000*60*60*24));
   return (
     <div className="card" style={{opacity: past ? .6 : 1}}>
       <div style={{display:'flex', justifyContent:'space-between', alignItems:'flex-start'}}>
         <div>
-          <div style={{fontSize:15, fontWeight:700}}>🐣 {r.geckoName}</div>
+          <div style={{fontSize:15, fontWeight:700}}>{REMINDER_EMOJI[r.type] || '🔔'} {r.geckoName}</div>
           <div style={{fontSize:13, color:'var(--text3)', marginTop:2}}>{r.message}</div>
           <div style={{fontSize:12, color: past ? 'var(--text3)' : daysLeft <= 7 ? 'var(--warning)' : 'var(--accent2)', marginTop:4}}>
             {past ? fmtDate(r.date) + ' (지남)' : daysLeft === 0 ? '오늘!' : `D-${daysLeft} · ${fmtDate(r.date)}`}
@@ -1884,8 +2150,9 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
         <div className="card" style={{margin:0}}>
           <div style={{fontSize:13, fontWeight:700, marginBottom:6, color:'var(--text2)'}}>앱 정보</div>
           <div style={{fontSize:13, color:'var(--text3)', lineHeight:1.7}}>
-            크레건설 브리딩 비서 v1.5<br/>
-            축양·분양·메이팅·해칭 4탭 · 사진 다운로드 · 백업 복원<br/>
+            크레건설 브리딩 비서 v1.6<br/>
+            축양·분양·메이팅·해칭 · 즐겨찾기 · 캘린더(산란·해칭 예정일)<br/>
+            사진 첨부 · 예정일 대비 차이 기록 · 백업 복원<br/>
             테마: 아이보리 × 버건디 (크레건설 아이덴티티)<br/>
             현재: 로컬 저장 모드 · 예정: Supabase 동기화 + AI 상담
           </div>
