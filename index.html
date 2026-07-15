@@ -212,6 +212,14 @@ const DB = {
   getSettings() {
     try { return JSON.parse(localStorage.getItem('cg_settings') || '{}'); } catch { return {}; }
   },
+  getReadReminderIds() {
+    try { return JSON.parse(localStorage.getItem('cg_read_reminders') || '[]'); } catch { return []; }
+  },
+  markRemindersRead(ids) {
+    const merged = [...new Set([...this.getReadReminderIds(), ...ids])];
+    const valid = new Set(this.getReminders().map(r => r.id));
+    localStorage.setItem('cg_read_reminders', JSON.stringify(merged.filter(id => valid.has(id))));
+  },
   saveSettings(s) { localStorage.setItem('cg_settings', JSON.stringify(s)); },
   deleteIndividual(id) {
     this.saveIndividuals(this.getIndividuals().filter(i => i.id !== id));
@@ -223,6 +231,8 @@ const uuid = () => Math.random().toString(36).slice(2) + Date.now().toString(36)
 const now = () => new Date().toISOString();
 const localISO = (d) => { const t = new Date(d.getTime() - d.getTimezoneOffset() * 60000); return t.toISOString().slice(0, 10); };
 const todayStr = () => localISO(new Date());
+const daysUntil = (ds) => Math.ceil((new Date(ds) - new Date(todayStr())) / 86400000);
+const NOTIFY_WINDOW = 1; // 알림·배지는 D-1과 당일부터
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('ko-KR', { year:'numeric', month:'short', day:'numeric' }) : '-';
 const genderLabel = g => g === 'female' ? '♀ 암컷' : g === 'male' ? '♂ 수컷' : '미구분';
 const genderEmoji = g => g === 'female' ? '🔴' : g === 'male' ? '🔵' : '⚪';
@@ -249,6 +259,9 @@ const STATUS = {
 // 예정일 자동 계산 기준 (일)
 const LAYING_AFTER_MATING = 30;   // 메이팅 → 산란 예정
 const HATCH_AFTER_LAYING = 75;    // 산란 → 해칭 예정
+
+// 공유 기능: 서버(Supabase) 연동 전까지 UI 숨김 (shareCode 데이터는 유지)
+const SHOW_SHARE = false;
 
 // 예정일 대비 실제일 차이 문구
 function diffPhrase(diffDays) {
@@ -426,17 +439,31 @@ function memoReply(name, text) {
   return null;
 }
 
+// 비속어 필터: 개체 이름으로 쓸 수 없는 표현
+const PROFANITY_RE = /병신|븅신|빙신|씨발|시발|씨빨|시빨|씹|좆|존나|졸라|지랄|섹스|자지|보지|니미|니애미|애미|엠창|개새끼|새꺄|미친놈|미친년|또라이|호로|후장|걸레|창녀|창놈|병자|ㅅㅂ|ㅆㅂ|ㅄ|ㅂㅅ|ㅈㄹ|ㄲㅈ|fuck|shit|sex/i;
+const isBadName = (n) => PROFANITY_RE.test((n || '').replace(/\s/g, ''));
+const BAD_NAME_MSG = '귀여운 아이들에게 비속어는 좋은 선택이 아닌 것 같아요 🙂\n예쁜 이름으로 다시 알려주시겠어요?';
+
+// "이름은/이름이 ○○(이)야" 명시 선언 패턴에서 이름 추출
+function extractNameDecl(text) {
+  const m = text.match(/이름(?:은|이|:)?\s*([가-힣A-Za-z0-9]{1,10}?)(?:이야|이에요|예요|입니다|이래|라고\s*해|라고|이다|임|야|고)?[\s.!?~]*$/);
+  return m ? m[1] : null;
+}
+
 // 미등록 새 이름 후보 추측: 첫 단어에서 조사 제거
-const KEYWORD_START = /^(오늘|어제|그제|그저께|저장|사진|메모|모프|알|메이팅|교배|합사|산란|해칭|부화|분양|탈피|먹이|피딩|밥|귀뚜라미|외부)/;
-function guessNewName(text) {
+const KEYWORD_START = /^(오늘|어제|그제|그저께|저장|사진|메모|모프|알|메이팅|교배|합사|산란|해칭|부화|분양|탈피|먹이|피딩|밥|귀뚜라미|외부|이름|몸무게|무게|체중|성별|나이|상태|기록|얘|걔|암컷|수컷|파트너|상대|아빠|엄마|아비|어미)/;
+function guessNewName(text, individuals) {
   const first = text.trim().split(/\s+/)[0];
   if (!first) return null;
-  const cleaned = first.replace(/(한테|에게|이랑|께서|랑|가|은|는|도|를|을)$/, '') || first;
-  if (/\d/.test(cleaned)) return null;
+  const cleaned = first.replace(/(한테|에게|이랑|께서|랑|의|가|은|는|도|를|을)$/, '') || first;
+  if (/^\d+$/.test(cleaned)) return null;                      // 순수 숫자만 거부 ("범림1호" 등 숫자 포함 이름은 허용)
+  if (/^\d/.test(cleaned)) return null;                        // 숫자로 시작("12그램" 등)도 거부
   if (KEYWORD_START.test(cleaned)) return null;
   if (MORPH_WORDS.includes(cleaned)) return null;
   if (CRICKET_RE.test(cleaned) || SUPU_RE.test(cleaned)) return null;
   if (cleaned.length < 1 || cleaned.length > 10) return null;
+  // "크민이의"처럼 기존 개체명이 앞부분에 붙은 경우 → 새 이름 아님
+  if (individuals && individuals.some(i => i.name && (cleaned === i.name || cleaned.startsWith(i.name)))) return null;
   return cleaned;
 }
 
@@ -574,15 +601,22 @@ function App() {
   const [tab, setTab] = useState('home');
   const [toast, showToast] = useToast();
   const [individuals, setIndividuals] = useState(() => DB.getIndividuals());
+  const [remVer, setRemVer] = useState(0);
 
   const refreshIndividuals = () => setIndividuals(DB.getIndividuals());
+  const refreshReminders = () => setRemVer(v => v + 1);
 
   const navigate = (name, props = {}) => {
     setScreen({ name, props });
     if (['home','calendar','reminders','settings'].includes(name)) setTab(name);
   };
 
-  const reminders = DB.getReminders().filter(r => new Date(r.date) >= new Date(todayStr()));
+  // 배지: D-1·당일이면서 아직 확인하지 않은 알림만
+  const readIds = DB.getReadReminderIds();
+  const badgeCount = DB.getReminders().filter(r => {
+    const d = daysUntil(r.date);
+    return d >= 0 && d <= NOTIFY_WINDOW && !readIds.includes(r.id);
+  }).length;
 
   return (
     <div className="app">
@@ -596,10 +630,10 @@ function App() {
         <ProfileScreen key={screen.props.gecko && screen.props.gecko.id} {...screen.props} navigate={navigate} showToast={showToast} refreshIndividuals={refreshIndividuals} individuals={individuals} />
       )}
       {screen.name === 'calendar' && (
-        <CalendarScreen navigate={navigate} individuals={individuals} />
+        <CalendarScreen navigate={navigate} individuals={individuals} showToast={showToast} onRemindersChanged={refreshReminders} />
       )}
       {screen.name === 'reminders' && (
-        <RemindersScreen navigate={navigate} />
+        <RemindersScreen navigate={navigate} onChanged={refreshReminders} />
       )}
       {screen.name === 'settings' && (
         <SettingsScreen navigate={navigate} showToast={showToast} refreshIndividuals={refreshIndividuals} />
@@ -619,7 +653,7 @@ function App() {
           <button className={`tab-btn ${tab==='reminders'?'active':''}`} onClick={() => navigate('reminders')} style={{position:'relative'}}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
             알림
-            {reminders.length > 0 && <span className="notif-badge">{reminders.length}</span>}
+            {badgeCount > 0 && <span className="notif-badge">{badgeCount}</span>}
           </button>
           <button className={`tab-btn ${tab==='settings'?'active':''}`} onClick={() => navigate('settings')}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -745,7 +779,7 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals }) {
           </>
         )}
 
-        {view === 'mating' && <MatingView individuals={individuals} navigate={navigate} />}
+        {view === 'mating' && <MatingView individuals={individuals} navigate={navigate} showToast={showToast} />}
         {view === 'hatch' && <HatchView individuals={individuals} refreshIndividuals={refreshIndividuals} showToast={showToast} navigate={navigate} />}
 
         <div style={{height: 16}} />
@@ -757,9 +791,14 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals }) {
 }
 
 
-/* ── 메이팅기록 뷰: 수컷×암컷 페어별 산란 차수 ── */
-function MatingView({ individuals, navigate }) {
+/* ── 메이팅기록 뷰: 수컷×암컷 페어별 산란 차수 (건별 수정·삭제 지원) ── */
+function MatingView({ individuals, navigate, showToast }) {
   const [open, setOpen] = useState(null);
+  const [ver, setVer] = useState(0);
+  const [editingId, setEditingId] = useState(null);
+  const [editVals, setEditVals] = useState({});
+  const [confirmDel, setConfirmDel] = useState(null);
+  const refresh = () => setVer(v => v + 1);
   const byId = {};
   individuals.forEach(i => { byId[i.id] = i; });
   const evs = DB.getEvents();
@@ -799,20 +838,65 @@ function MatingView({ individuals, navigate }) {
         const lays = [...p.layings].sort((a, b) => a.date > b.date ? 1 : -1);
         const mates = [...p.matings].sort((a, b) => a.date > b.date ? 1 : -1);
         return (
-          <div className="card" key={k} style={{cursor:'pointer'}} onClick={() => setOpen(open === k ? null : k)}>
-            <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+          <div className="card" key={k}>
+            <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', cursor:'pointer'}}
+              onClick={() => { setOpen(open === k ? null : k); setEditingId(null); setConfirmDel(null); }}>
               <div style={{fontSize:15, fontWeight:700}}>🔵 {p.male.name} × 🔴 {p.female.name}</div>
               <div style={{fontSize:12, color:'var(--text3)'}}>메이팅 {mates.length}회 · 산란 {lays.length}회 {open === k ? '▲' : '▼'}</div>
             </div>
             {open === k && (
               <div style={{marginTop:10, borderTop:'1px solid var(--border)', paddingTop:10}}>
-                {mates.length > 0 && (
-                  <div style={{fontSize:13, color:'var(--text2)', marginBottom:8}}>
-                    💞 메이팅: {mates.map(m => fmtDate(m.date)).join(' · ')}
-                  </div>
-                )}
+                {mates.map((m, i) => {
+                  const isEditing = editingId === m.id;
+                  const target = byId[m.individualId];
+                  return (
+                    <div key={m.id} style={{padding:'5px 0', borderBottom:'1px dashed var(--border)'}}>
+                      <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', fontSize:13}}>
+                        <span style={{color:'var(--text)'}}>💞 {i + 1}회 메이팅</span>
+                        <span style={{display:'flex', alignItems:'center', gap:10, color:'var(--text3)'}}>
+                          {fmtDate(m.date)}{m.data && m.data.partnerName ? ` · ${m.data.partnerName}` : ''}
+                          <button onClick={() => {
+                            setConfirmDel(null);
+                            if (isEditing) { setEditingId(null); return; }
+                            setEditVals({ date: m.date, partnerId: (m.data && m.data.partnerId) || '' });
+                            setEditingId(m.id);
+                          }} style={{background:'none', border:'none', cursor:'pointer', fontSize:13, color:'var(--text3)'}}>✏️</button>
+                          <button onClick={() => { setEditingId(null); setConfirmDel(confirmDel === m.id ? null : m.id); }} style={{background:'none', border:'none', cursor:'pointer', fontSize:13, color:'var(--text3)'}}>🗑️</button>
+                        </span>
+                      </div>
+                      {confirmDel === m.id && (
+                        <div style={{display:'flex', gap:6, marginTop:6, alignItems:'center'}}>
+                          <span style={{fontSize:12, color:'var(--danger)', flex:1}}>이 메이팅 기록을 삭제할까요?</span>
+                          <button className="btn btn-danger btn-sm" style={{width:'auto'}} onClick={() => { DB.deleteEvent(m.id); setConfirmDel(null); refresh(); showToast && showToast('메이팅 기록 삭제 완료'); }}>삭제</button>
+                          <button className="btn btn-secondary btn-sm" style={{width:'auto'}} onClick={() => setConfirmDel(null)}>취소</button>
+                        </div>
+                      )}
+                      {isEditing && (
+                        <div style={{marginTop:6, display:'flex', flexDirection:'column', gap:6}}>
+                          <input type="date" className="input" style={{padding:'8px 10px', fontSize:13}} value={editVals.date || ''} onChange={e => setEditVals(v => ({ ...v, date: e.target.value }))} />
+                          <select className="input" style={{padding:'8px 10px', fontSize:13}} value={editVals.partnerId} onChange={e => setEditVals(v => ({ ...v, partnerId: e.target.value }))}>
+                            <option value="">파트너 선택</option>
+                            {individuals.filter(x => x.id !== m.individualId).map(x => (
+                              <option key={x.id} value={x.id}>{genderEmoji(x.gender)} {x.name}</option>
+                            ))}
+                          </select>
+                          <div style={{display:'flex', gap:6}}>
+                            <button className="btn btn-primary btn-sm" style={{flex:1}} onClick={() => {
+                              const partner = individuals.find(x => x.id === editVals.partnerId);
+                              const data = { ...(m.data || {}) };
+                              if (partner) { data.partnerId = partner.id; data.partnerName = partner.name; }
+                              DB.updateEvent(m.id, { date: editVals.date || m.date, data });
+                              setEditingId(null); refresh(); showToast && showToast('메이팅 기록 수정 완료');
+                            }}>저장</button>
+                            <button className="btn btn-secondary btn-sm" style={{flex:1}} onClick={() => setEditingId(null)}>취소</button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
                 {lays.length === 0 ? (
-                  <div style={{fontSize:12, color:'var(--text3)'}}>아직 산란 기록이 없어요.</div>
+                  <div style={{fontSize:12, color:'var(--text3)', paddingTop:5}}>아직 산란 기록이 없어요.</div>
                 ) : lays.map((l, i) => (
                   <div key={l.id} style={{display:'flex', justifyContent:'space-between', fontSize:13, padding:'5px 0', borderBottom: i < lays.length - 1 ? '1px dashed var(--border)' : 'none'}}>
                     <span style={{color:'var(--text)'}}>🥚 {i + 1}차 산란</span>
@@ -1059,6 +1143,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
 
   /* ── 새 개체 등록 ── */
   const doRegister = (name) => {
+    if (isBadName(name)) { pendingNameRef.current = null; bot(BAD_NAME_MSG); return; }
     pendingNameRef.current = null;
     const detectedGender = heldGenderRef.current;
     heldGenderRef.current = null;
@@ -1128,6 +1213,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     } else if (kind === 'memo-save' && value) {
       pushPending([{ type: 'memo', data: { notes: value.text }, date: value.date, targetId: value.targetId, targetName: value.targetName }], { name: value.targetName });
     } else if (kind === 'register-partner' && value) {
+      if (isBadName(value.name)) { bot(BAD_NAME_MSG); return; }
       const existing = DB.getIndividuals().find(i => i.name === value.name);
       const partner = existing || DB.addIndividual({
         name: value.name, gender: 'unknown', morph: '', hatchDate: '', isFromCreGunseol: false,
@@ -1169,6 +1255,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       pendingBabyRef.current = null;
       if (!/자동|아무|몰라|나중|알아서/.test(text)) {
         const babyNames = text.split(/[,，]/).map(s => s.trim()).filter(Boolean);
+        if (babyNames.some(isBadName)) { pendingBabyRef.current = hf; bot(BAD_NAME_MSG); return; }
         if (babyNames.length) {
           hf.data.babyNames = babyNames;
           bot(`좋아요! ${babyNames.join(', ')} — 저장할 때 이 이름으로 등록할게요 🐣`);
@@ -1207,18 +1294,32 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       }
     }
 
-    // 3.5) 새 주체(미등록) 감지
-    //  - 대상 미정: 기존처럼 첫 단어를 새 이름 후보로
-    //  - 활성 개체가 있어도(메이팅 제외) 문장 주체가 다른 미등록 이름이면 그 아이로 전환
+    // 3.4) "이름은/이름이 ○○야" 명시 선언 → 최우선 인식
+    const decl = !names.length ? extractNameDecl(text) : null;
+    if (decl) {
+      if (isBadName(decl)) { bot(BAD_NAME_MSG); return; }
+      const existing = inds.find(i => i.name === decl);
+      if (existing) { setTarget(existing); target = existing; }
+    }
+
+    // 3.5) 새 주체(미등록) 감지 — 보수적으로:
+    //  - 문장에서 기존 개체명을 찾았으면 새 등록을 묻지 않음
+    //  - 단독 이름이거나, 기록할 내용(무게·모프·성별 등)이 함께 있을 때만 등록 확인
     let newSubject = null;
-    if (!target) {
-      const c = guessNewName(text);
-      if (c && !inds.some(i => i.name === c)) newSubject = c;
-    } else if (!mating) {
-      const c = guessNewName(text);
-      if (c && c !== target.name && !inds.some(i => i.name === c)) {
-        const genderAssert = /(수컷|암컷)(?:이야|이에요|입니다|임|이래|같아|이다)/.test(text);
-        if (facts.length || morph || genderAssert) newSubject = c;   // 기록할 내용이 있을 때만 전환
+    if (decl && !inds.some(i => i.name === decl)) {
+      newSubject = decl;
+    } else if (!names.length) {
+      const singleWord = text.trim().split(/\s+/).length === 1;
+      const genderAssert = /(수컷|암컷)(?:이야|이에요|입니다|임|이래|같아|이다)/.test(text);
+      const c = guessNewName(text, inds);
+      if (c && isBadName(c) && (singleWord || facts.length || morph || genderAssert)) {
+        bot(BAD_NAME_MSG);
+        return;
+      }
+      if (!target) {
+        if (c && (singleWord || facts.length || morph || genderAssert)) newSubject = c;
+      } else if (!mating) {
+        if (c && c !== target.name && (facts.length || morph || genderAssert)) newSubject = c;
       }
     }
 
@@ -1671,10 +1772,12 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6"/></svg>
             목록
           </button>
-          <button className="back-btn" onClick={() => setShowShare(s => !s)}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
-            공유
-          </button>
+          {SHOW_SHARE && (
+            <button className="back-btn" onClick={() => setShowShare(s => !s)}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+              공유
+            </button>
+          )}
         </div>
       </div>
 
@@ -1723,7 +1826,7 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
       </div>
 
       {/* 공유 박스 */}
-      {showShare && (
+      {SHOW_SHARE && showShare && (
         <div style={{padding:'0 16px 10px'}}>
           <div className="share-box">
             <div style={{fontSize:12, color:'var(--text3)', marginBottom:6}}>공유 코드</div>
@@ -1904,23 +2007,32 @@ function formatEventDetail(ev) {
 /* ══════════════════════════════════════════
    캘린더 화면
    ══════════════════════════════════════════ */
-function CalendarScreen({ navigate, individuals }) {
+function CalendarScreen({ navigate, individuals, showToast, onRemindersChanged }) {
   const [cur, setCur] = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
+  const [ver, setVer] = useState(0);                 // 데이터 변경 시 리렌더
+  const [selected, setSelected] = useState(null);    // 선택된 날짜 'YYYY-MM-DD'
+  const [adding, setAdding] = useState(false);
+  const [form, setForm] = useState({ indId: '', type: 'growth', main: '', notes: '' });
+  const [editingEv, setEditingEv] = useState(null);  // 수정 중인 이벤트 id
+  const [editVals, setEditVals] = useState({});
+  const [confirmDel, setConfirmDel] = useState(null); // {kind, id}
+  const refresh = () => setVer(v => v + 1);
+  const closePanels = () => { setAdding(false); setEditingEv(null); setConfirmDel(null); };
   const byId = {};
   individuals.forEach(i => { byId[i.id] = i; });
 
-  // 이 달의 항목 수집: 예정(리마인더) + 실제(이벤트)
-  const items = {}; // 'YYYY-MM-DD' -> [{emoji, label, name, planned}]
+  // 이 달의 항목 수집: 예정(리마인더) + 실제(이벤트, 전체 종류)
+  const items = {}; // 'YYYY-MM-DD' -> [{emoji, label, name, planned, reminder?, event?}]
   const add = (ds, it) => { (items[ds] = items[ds] || []).push(it); };
   DB.getReminders().forEach(r => {
-    if (r.type === 'laying_expected') add(r.date, { emoji: '🥚', label: '산란 예정', name: r.geckoName, planned: true });
-    else if (r.type === 'hatching_expected') add(r.date, { emoji: '🐣', label: '해칭 예정', name: r.geckoName, planned: true });
+    const base = r.type === 'laying_expected' ? { emoji: '🥚', label: '산란 예정' }
+      : r.type === 'hatching_expected' ? { emoji: '🐣', label: '해칭 예정' }
+      : { emoji: '🔔', label: r.message || '알림' };
+    add(r.date, { ...base, name: r.geckoName || '', planned: true, reminder: r });
   });
   DB.getEvents().forEach(e => {
-    const nm = (byId[e.individualId] || {}).name || '';
-    if (e.type === 'mating') add(e.date, { emoji: '💞', label: '메이팅', name: nm });
-    else if (e.type === 'laying') add(e.date, { emoji: '🥚', label: '산란', name: nm });
-    else if (e.type === 'hatching') add(e.date, { emoji: '🐣', label: '해칭', name: nm });
+    const t = EVENT_TYPES.find(x => x.key === e.type) || {};
+    add(e.date, { emoji: t.emoji || '📌', label: t.label || e.type, name: (byId[e.individualId] || {}).name || '', event: e });
   });
 
   const startDow = new Date(cur.y, cur.m, 1).getDay();
@@ -1928,8 +2040,8 @@ function CalendarScreen({ navigate, individuals }) {
   const pad = n => String(n).padStart(2, '0');
   const dstr = d => `${cur.y}-${pad(cur.m + 1)}-${pad(d)}`;
   const today = todayStr();
-  const prev = () => setCur(c => { const m = c.m - 1; return m < 0 ? { y: c.y - 1, m: 11 } : { y: c.y, m }; });
-  const next = () => setCur(c => { const m = c.m + 1; return m > 11 ? { y: c.y + 1, m: 0 } : { y: c.y, m }; });
+  const prev = () => { setCur(c => { const m = c.m - 1; return m < 0 ? { y: c.y - 1, m: 11 } : { y: c.y, m }; }); setSelected(null); closePanels(); };
+  const next = () => { setCur(c => { const m = c.m + 1; return m > 11 ? { y: c.y + 1, m: 0 } : { y: c.y, m }; }); setSelected(null); closePanels(); };
 
   const cells = [];
   for (let i = 0; i < startDow; i++) cells.push(null);
@@ -1938,6 +2050,55 @@ function CalendarScreen({ navigate, individuals }) {
   const monthItems = Object.entries(items)
     .filter(([ds]) => ds.startsWith(`${cur.y}-${pad(cur.m + 1)}`))
     .sort((a, b) => a[0] > b[0] ? 1 : -1);
+
+  /* ── 선택 날짜 항목 삭제/수정/추가 ── */
+  const deleteReminder = (id) => {
+    DB.saveReminders(DB.getReminders().filter(r => r.id !== id));
+    setConfirmDel(null); refresh(); onRemindersChanged && onRemindersChanged();
+    showToast('예정 삭제 완료');
+  };
+  const deleteEvent = (id) => {
+    DB.deleteEvent(id);
+    setConfirmDel(null); refresh();
+    showToast('기록 삭제 완료');
+  };
+  const startEdit = (ev) => {
+    setConfirmDel(null); setAdding(false);
+    setEditVals({ date: ev.date, main: mainValOf(ev), notes: (ev.data && ev.data.notes) || '' });
+    setEditingEv(ev.id);
+  };
+  const saveEdit = (ev) => {
+    const data = { ...(ev.data || {}), notes: editVals.notes };
+    const mk = mainKeyOf(ev);
+    if (mk) data[mk] = editVals.main;
+    DB.updateEvent(ev.id, { date: editVals.date || ev.date, data });
+    setEditingEv(null); refresh();
+    showToast('수정 완료');
+  };
+  const saveNew = () => {
+    if (!selected) return;
+    if (form.type === 'reminder') {
+      if (!form.notes.trim() && !form.indId) { showToast('알림 내용을 입력해주세요'); return; }
+      const g = byId[form.indId];
+      const rs = DB.getReminders();
+      rs.push({ id: uuid(), individualId: form.indId || null, geckoName: g ? g.name : '', type: 'custom', date: selected, message: form.notes.trim() || '알림' });
+      DB.saveReminders(rs);
+      onRemindersChanged && onRemindersChanged();
+    } else {
+      if (!form.indId) { showToast('개체를 선택해주세요'); return; }
+      const mk = (MAIN_FIELD[form.type] || [null])[0];
+      const data = { notes: form.notes.trim() };
+      if (mk && form.main.trim()) data[mk] = form.main.trim();
+      DB.addEvent({ individualId: form.indId, type: form.type, date: selected, data });
+    }
+    setAdding(false);
+    setForm({ indId: '', type: 'growth', main: '', notes: '' });
+    refresh();
+    showToast('✅ 추가 완료');
+  };
+
+  const selItems = selected ? (items[selected] || []) : [];
+  const selMainLabel = (MAIN_FIELD[form.type] || [null, ''])[1];
 
   const WD = ['일', '월', '화', '수', '목', '금', '토'];
   return (
@@ -1959,9 +2120,14 @@ function CalendarScreen({ navigate, individuals }) {
               const ds = dstr(d);
               const its = items[ds] || [];
               const isToday = ds === today;
+              const isSel = ds === selected;
               return (
-                <div key={ds} style={{minHeight:46, borderRadius:8, padding:'3px 1px', border: isToday ? '1.5px solid var(--accent)' : '1px solid transparent', background: its.length ? 'var(--bg3)' : 'transparent'}}>
-                  <div style={{fontSize:11, fontWeight: isToday ? 800 : 500, color: isToday ? 'var(--accent2)' : 'var(--text2)'}}>{d}</div>
+                <div key={ds}
+                  onClick={() => { setSelected(isSel ? null : ds); closePanels(); }}
+                  style={{minHeight:46, borderRadius:8, padding:'3px 1px', cursor:'pointer',
+                    border: isSel ? '2px solid var(--accent)' : isToday ? '1.5px solid var(--accent-dim)' : '1px solid transparent',
+                    background: isSel ? 'var(--accent-soft)' : its.length ? 'var(--bg3)' : 'transparent'}}>
+                  <div style={{fontSize:11, fontWeight: (isToday || isSel) ? 800 : 500, color: (isToday || isSel) ? 'var(--accent2)' : 'var(--text2)'}}>{d}</div>
                   <div style={{display:'flex', flexWrap:'wrap', justifyContent:'center', gap:1, lineHeight:1}}>
                     {its.slice(0, 3).map((it, j) => (
                       <span key={j} style={{fontSize:10, opacity: it.planned ? 0.55 : 1}}>{it.emoji}</span>
@@ -1973,26 +2139,105 @@ function CalendarScreen({ navigate, individuals }) {
           </div>
         </div>
 
-        <div style={{fontSize:12, color:'var(--text3)', margin:'8px 4px 4px'}}>🥚 산란 · 🐣 해칭 · 💞 메이팅 · 흐린 아이콘은 예정일</div>
+        <div style={{fontSize:12, color:'var(--text3)', margin:'8px 4px 4px'}}>🥚 산란 · 🐣 해칭 · 💞 메이팅 · 흐린 아이콘은 예정일 · 날짜를 누르면 추가/수정</div>
+
+        {/* ── 선택된 날짜 패널 ── */}
+        {selected && (
+          <div className="card" style={{margin:'10px 0 0', border:'1.5px solid var(--accent-dim)'}}>
+            <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8}}>
+              <div style={{fontSize:14, fontWeight:800, color:'var(--accent2)'}}>📌 {fmtDate(selected)}</div>
+              <button onClick={() => { setSelected(null); closePanels(); }} style={{background:'none', border:'none', color:'var(--text3)', cursor:'pointer', fontSize:16}}>✕</button>
+            </div>
+
+            {selItems.length === 0 && !adding && (
+              <div style={{fontSize:13, color:'var(--text3)', marginBottom:8}}>이 날짜에는 아직 예정·기록이 없어요.</div>
+            )}
+
+            {selItems.map((it, j) => {
+              const ev = it.event;
+              const isEditing = ev && editingEv === ev.id;
+              const delKey = it.reminder ? 'r' + it.reminder.id : 'e' + (ev && ev.id);
+              return (
+                <div key={j} style={{borderBottom:'1px solid var(--border)', padding:'7px 0'}}>
+                  <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+                    <div style={{fontSize:13, color:'var(--text2)'}}>
+                      {it.emoji} {it.name ? it.name + ' · ' : ''}{ev ? formatEventDetail(ev) || it.label : it.label}{it.planned ? ' (예정)' : ''}
+                    </div>
+                    <div style={{display:'flex', gap:10, flexShrink:0}}>
+                      {ev && <button onClick={() => isEditing ? setEditingEv(null) : startEdit(ev)} style={{background:'none', border:'none', cursor:'pointer', fontSize:13, color:'var(--text3)'}}>✏️</button>}
+                      <button onClick={() => { setEditingEv(null); setAdding(false); setConfirmDel(confirmDel === delKey ? null : delKey); }} style={{background:'none', border:'none', cursor:'pointer', fontSize:13, color:'var(--text3)'}}>🗑️</button>
+                    </div>
+                  </div>
+
+                  {confirmDel === delKey && (
+                    <div style={{display:'flex', gap:6, marginTop:6, alignItems:'center'}}>
+                      <span style={{fontSize:12, color:'var(--danger)', flex:1}}>삭제할까요?</span>
+                      <button className="btn btn-danger btn-sm" style={{width:'auto'}} onClick={() => it.reminder ? deleteReminder(it.reminder.id) : deleteEvent(ev.id)}>삭제</button>
+                      <button className="btn btn-secondary btn-sm" style={{width:'auto'}} onClick={() => setConfirmDel(null)}>취소</button>
+                    </div>
+                  )}
+
+                  {isEditing && (
+                    <div style={{marginTop:6, display:'flex', flexDirection:'column', gap:6}}>
+                      <input type="date" className="input" style={{padding:'8px 10px', fontSize:13}} value={editVals.date || ''} onChange={e => setEditVals(v => ({ ...v, date: e.target.value }))} />
+                      {mainKeyOf(ev) && (
+                        <input className="input" style={{padding:'8px 10px', fontSize:13}} placeholder={mainLabelOf(ev)} value={editVals.main} onChange={e => setEditVals(v => ({ ...v, main: e.target.value }))} />
+                      )}
+                      <input className="input" style={{padding:'8px 10px', fontSize:13}} placeholder="메모" value={editVals.notes} onChange={e => setEditVals(v => ({ ...v, notes: e.target.value }))} />
+                      <div style={{display:'flex', gap:6}}>
+                        <button className="btn btn-primary btn-sm" style={{flex:1}} onClick={() => saveEdit(ev)}>저장</button>
+                        <button className="btn btn-secondary btn-sm" style={{flex:1}} onClick={() => setEditingEv(null)}>취소</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {/* ── 이 날짜에 추가 ── */}
+            {adding ? (
+              <div style={{marginTop:10, display:'flex', flexDirection:'column', gap:6}}>
+                <select className="input" style={{padding:'10px 12px', fontSize:14}} value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value }))}>
+                  {EVENT_TYPES.map(t => <option key={t.key} value={t.key}>{t.emoji} {t.label}</option>)}
+                  <option value="reminder">🔔 알림 (직접 추가)</option>
+                </select>
+                <select className="input" style={{padding:'10px 12px', fontSize:14}} value={form.indId} onChange={e => setForm(f => ({ ...f, indId: e.target.value }))}>
+                  <option value="">{form.type === 'reminder' ? '개체 선택 (선택사항)' : '개체 선택'}</option>
+                  {individuals.filter(i => !i.isExternal).map(i => <option key={i.id} value={i.id}>{genderEmoji(i.gender)} {i.name}</option>)}
+                </select>
+                {form.type !== 'reminder' && selMainLabel && (
+                  <input className="input" style={{padding:'10px 12px', fontSize:14}} placeholder={selMainLabel} value={form.main} onChange={e => setForm(f => ({ ...f, main: e.target.value }))} />
+                )}
+                <input className="input" style={{padding:'10px 12px', fontSize:14}} placeholder={form.type === 'reminder' ? '알림 내용 (예: 온도 점검)' : '메모 (선택)'} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
+                <div style={{display:'flex', gap:6}}>
+                  <button className="btn btn-primary btn-sm" style={{flex:1}} onClick={saveNew}>추가</button>
+                  <button className="btn btn-secondary btn-sm" style={{flex:1}} onClick={() => setAdding(false)}>취소</button>
+                </div>
+              </div>
+            ) : (
+              <button className="btn btn-ghost btn-sm" style={{marginTop:10}} onClick={() => { setAdding(true); setEditingEv(null); setConfirmDel(null); }}>＋ 이 날짜에 기록·알림 추가</button>
+            )}
+          </div>
+        )}
 
         {monthItems.length === 0 ? (
           <div className="empty" style={{padding:'30px 20px'}}>
             <div className="empty-icon" style={{fontSize:36}}>📅</div>
-            <p>이 달 예정·기록이 없어요.{'\n'}메이팅·산란을 기록하면 예정일이 자동으로 표시돼요.</p>
+            <p>이 달 예정·기록이 없어요.{'\n'}날짜를 눌러 직접 추가하거나,{'\n'}메이팅·산란을 기록하면 예정일이 자동 표시돼요.</p>
           </div>
         ) : monthItems.map(([ds, its]) => {
           const dleft = Math.ceil((new Date(ds) - new Date(today)) / 86400000);
           return (
-            <div className="card" key={ds} style={{margin:'8px 0 0', padding:'10px 14px'}}>
+            <div className="card" key={ds} style={{margin:'8px 0 0', padding:'10px 14px', cursor:'pointer'}} onClick={() => { setSelected(ds); closePanels(); }}>
               <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:4}}>
                 <div style={{fontSize:12, fontWeight:700, color:'var(--accent2)'}}>{fmtDate(ds)}</div>
-                <div style={{fontSize:11, color: dleft === 0 ? 'var(--accent)' : dleft > 0 ? 'var(--text3)' : 'var(--text3)'}}>
+                <div style={{fontSize:11, color: dleft === 0 ? 'var(--accent)' : 'var(--text3)'}}>
                   {dleft === 0 ? '오늘' : dleft > 0 ? `D-${dleft}` : `${-dleft}일 전`}
                 </div>
               </div>
               {its.map((it, j) => (
                 <div key={j} style={{fontSize:13, color:'var(--text2)', padding:'2px 0'}}>
-                  {it.emoji} {it.name} · {it.label}{it.planned ? ' (예정)' : ''}
+                  {it.emoji} {it.name ? it.name + ' · ' : ''}{it.label}{it.planned ? ' (예정)' : ''}
                 </div>
               ))}
             </div>
@@ -2007,15 +2252,25 @@ function CalendarScreen({ navigate, individuals }) {
 /* ══════════════════════════════════════════
    알림 화면
    ══════════════════════════════════════════ */
-function RemindersScreen({ navigate }) {
+function RemindersScreen({ navigate, onChanged }) {
   const [all, setAll] = useState(() => [...DB.getReminders()].sort((a,b) => a.date > b.date ? 1 : -1));
-  const upcoming = all.filter(r => new Date(r.date) >= new Date(todayStr()));
-  const past = all.filter(r => new Date(r.date) < new Date(todayStr()));
+  const imminent = all.filter(r => { const d = daysUntil(r.date); return d >= 0 && d <= NOTIFY_WINDOW; });
+  const upcoming = all.filter(r => daysUntil(r.date) > NOTIFY_WINDOW);
+  const past = all.filter(r => daysUntil(r.date) < 0);
+
+  // 화면을 열면 임박 알림은 읽음 처리 → 배지 제거
+  useEffect(() => {
+    if (imminent.length) {
+      DB.markRemindersRead(imminent.map(r => r.id));
+      onChanged && onChanged();
+    }
+  }, []);
 
   const deleteReminder = (id) => {
     const next = DB.getReminders().filter(r => r.id !== id);
     DB.saveReminders(next);
     setAll([...next].sort((a,b) => a.date > b.date ? 1 : -1));
+    onChanged && onChanged();
   };
 
   return (
@@ -2027,9 +2282,15 @@ function RemindersScreen({ navigate }) {
           <p>설정된 알림이 없어요.{'\n'}산란 기록 시 부화 예정 알림을 설정할 수 있어요.</p>
         </div>
       )}
+      {imminent.length > 0 && (
+        <>
+          <div className="section-title">🔔 알림 (임박)</div>
+          {imminent.map(r => <ReminderCard key={r.id} r={r} onDelete={deleteReminder} />)}
+        </>
+      )}
       {upcoming.length > 0 && (
         <>
-          <div className="section-title">예정 알림</div>
+          <div className="section-title">📅 다가오는 일정</div>
           {upcoming.map(r => <ReminderCard key={r.id} r={r} onDelete={deleteReminder} />)}
         </>
       )}
@@ -2150,9 +2411,9 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
         <div className="card" style={{margin:0}}>
           <div style={{fontSize:13, fontWeight:700, marginBottom:6, color:'var(--text2)'}}>앱 정보</div>
           <div style={{fontSize:13, color:'var(--text3)', lineHeight:1.7}}>
-            크레건설 브리딩 비서 v1.6<br/>
-            축양·분양·메이팅·해칭 · 즐겨찾기 · 캘린더(산란·해칭 예정일)<br/>
-            사진 첨부 · 예정일 대비 차이 기록 · 백업 복원<br/>
+            크레건설 브리딩 비서 v1.7<br/>
+            축양·분양·메이팅·해칭 · 즐겨찾기 · 캘린더(날짜별 추가·수정)<br/>
+            사진 첨부 · 예정일 대비 차이 기록 · 백업 복원 · 비속어 필터<br/>
             테마: 아이보리 × 버건디 (크레건설 아이덴티티)<br/>
             현재: 로컬 저장 모드 · 예정: Supabase 동기화 + AI 상담
           </div>
