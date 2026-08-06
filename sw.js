@@ -21,3 +21,4 @@ self.addEventListener('fetch', e => {
     caches.match(e.request).then(r => r || fetch(e.request))
   );
 });
+// redeploy trigger 2026-08-06 (pages deploy timeout retry)
