@@ -177,7 +177,36 @@ const DB = {
   getAll(key) {
     try { return JSON.parse(localStorage.getItem(key) || '[]'); } catch { return []; }
   },
+  // 저장 시 변경된 레코드에만 updatedAt 을 찍고, 사라진 레코드는 삭제표식(툼스톤)으로 남김
+  // → 모든 호출부를 고치지 않고도 서버 동기화에 필요한 정보가 자동으로 쌓임
   save(key, data) {
+    const list = Array.isArray(data) ? data : [];
+    let prev = [];
+    try { prev = this.getAll(key); } catch { prev = []; }
+    const prevMap = new Map(prev.map(r => [r && r.id, r]));
+    const t = now();
+    const changed = [];
+    const out = list.map(r => {
+      if (!r || !r.id) return r;
+      const p = prevMap.get(r.id);
+      prevMap.delete(r.id);
+      if (!p) { changed.push(r.id); return { ...r, updatedAt: r.updatedAt || t }; }
+      let same = false;
+      try { same = JSON.stringify({ ...p, updatedAt: 0 }) === JSON.stringify({ ...r, updatedAt: 0 }); } catch { same = false; }
+      if (same) return { ...r, updatedAt: p.updatedAt || t };
+      changed.push(r.id);
+      return { ...r, updatedAt: t };
+    });
+    const gone = [...prevMap.keys()].filter(Boolean);
+    localStorage.setItem(key, JSON.stringify(out));
+    if (typeof SYNC !== 'undefined') {
+      if (gone.length) SYNC.addTombstones(key, gone);
+      if (changed.length) SYNC.markDirty(key, changed);
+      if (gone.length || changed.length) SYNC.touch();
+    }
+  },
+  // 서버에서 내려받은 내용을 그대로 반영할 때 사용 (updatedAt 재기록·툼스톤 생성 안 함 → 되돌이 동기화 방지)
+  _raw(key, data) {
     localStorage.setItem(key, JSON.stringify(data));
   },
   getIndividuals() { return this.getAll('cg_individuals'); },
@@ -220,7 +249,16 @@ const DB = {
     const valid = new Set(this.getReminders().map(r => r.id));
     localStorage.setItem('cg_read_reminders', JSON.stringify(merged.filter(id => valid.has(id))));
   },
-  saveSettings(s) { localStorage.setItem('cg_settings', JSON.stringify(s)); },
+  saveSettings(s) {
+    let prev = {};
+    try { prev = this.getSettings(); } catch { prev = {}; }
+    let same = false;
+    try { same = JSON.stringify({ ...prev, _updatedAt: 0 }) === JSON.stringify({ ...s, _updatedAt: 0 }); } catch { same = false; }
+    const next = same ? { ...s, _updatedAt: prev._updatedAt || now() } : { ...s, _updatedAt: now() };
+    localStorage.setItem('cg_settings', JSON.stringify(next));
+    if (typeof SYNC !== 'undefined' && !same) { SYNC.markDirty('cg_settings', ['main']); SYNC.touch(); }
+  },
+  _rawSettings(s) { localStorage.setItem('cg_settings', JSON.stringify(s)); },
   deleteIndividual(id) {
     this.saveIndividuals(this.getIndividuals().filter(i => i.id !== id));
     this.saveEvents(this.getEvents().filter(e => e.individualId !== id));
@@ -229,6 +267,298 @@ const DB = {
 
 const uuid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
 const now = () => new Date().toISOString();
+
+/* ══════════════════════════════════════════
+   서버 동기화 (Supabase REST 직접 호출 · 외부 라이브러리 없음)
+
+   설계 요약
+   - 로컬 우선(local-first): 서버가 없거나 인터넷이 끊겨도 앱은 그대로 동작
+   - 저장 시 DB.save 가 updatedAt·툼스톤을 자동 기록 → 변경분만 서버에 올림
+   - 한 번의 동기화 = ① 올리기(push) → ② 내려받기(pull) 순서
+     올린 뒤에 내려받으므로 "내 최신 수정"이 서버 옛 데이터에 덮이지 않음
+   - 서버 updated_at 은 DB 트리거가 서버 시각으로 강제 → 폰·PC 시계 오차 무관
+   ══════════════════════════════════════════ */
+const SYNC_KINDS = [
+  { kind: 'individual', store: 'cg_individuals' },
+  { kind: 'event',      store: 'cg_events' },
+  { kind: 'reminder',   store: 'cg_reminders' },
+];
+const STORE_OF_KIND = SYNC_KINDS.reduce((a, k) => (a[k.kind] = k.store, a), {});
+const KIND_OF_STORE = SYNC_KINDS.reduce((a, k) => (a[k.store] = k.kind, a), { cg_settings: 'settings' });
+
+const SYNC = {
+  listeners: new Set(),
+  running: false,
+  timer: null,
+
+  /* ── 저장소 ── */
+  cfg()  { try { return JSON.parse(localStorage.getItem('cg_sync_cfg') || '{}'); } catch { return {}; } },
+  ses()  { try { return JSON.parse(localStorage.getItem('cg_sync_session') || 'null'); } catch { return null; } },
+  st()   { try { return JSON.parse(localStorage.getItem('cg_sync_state') || '{}'); } catch { return {}; } },
+  saveCfg(c) { localStorage.setItem('cg_sync_cfg', JSON.stringify(c)); this.emit(); },
+  saveSes(s) { s ? localStorage.setItem('cg_sync_session', JSON.stringify(s)) : localStorage.removeItem('cg_sync_session'); this.emit(); },
+  saveSt(patch) { localStorage.setItem('cg_sync_state', JSON.stringify({ ...this.st(), ...patch })); this.emit(); },
+
+  configured() { const c = this.cfg(); return !!(c.url && c.key); },
+  loggedIn()   { const s = this.ses(); return !!(s && s.access_token); },
+  active()     { return this.configured() && this.loggedIn(); },
+
+  /* ── 상태 변경 알림 (UI 갱신용) ── */
+  on(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); },
+  emit(dataChanged) { this.listeners.forEach(fn => { try { fn(!!dataChanged); } catch {} }); },
+
+  /* ── 아직 서버에 못 올린 변경 목록 (정확한 증분 전송용) ──
+     시각 비교 대신 "무엇이 바뀌었는지"를 직접 들고 갑니다.
+     → 같은 밀리초 저장 누락도 없고, 이미 올린 옛 값이 다시 올라가 최신본을 덮는 사고도 없습니다. */
+  dirty() { try { return JSON.parse(localStorage.getItem('cg_dirty') || '[]'); } catch { return []; } },
+  markDirty(store, ids) {
+    const kind = KIND_OF_STORE[store];
+    if (!kind) return;
+    const set = new Set(this.dirty());
+    ids.forEach(id => set.add(kind + '|' + id));
+    localStorage.setItem('cg_dirty', JSON.stringify([...set]));
+  },
+  clearDirty(keys) {
+    const done = new Set(keys);
+    localStorage.setItem('cg_dirty', JSON.stringify(this.dirty().filter(k => !done.has(k))));
+  },
+  markAllDirty() {
+    const keys = this.localRecords().map(r => r.kind + '|' + r.id);
+    localStorage.setItem('cg_dirty', JSON.stringify(keys));
+  },
+
+  /* ── 삭제 표식 ── */
+  tombstones() { try { return JSON.parse(localStorage.getItem('cg_tombstones') || '[]'); } catch { return []; } },
+  addTombstones(store, ids) {
+    const kind = KIND_OF_STORE[store];
+    if (!kind) return;
+    const t = now();
+    const list = this.tombstones();
+    const seen = new Set(list.map(x => x.kind + '|' + x.id));
+    ids.forEach(id => { if (!seen.has(kind + '|' + id)) list.push({ kind, id, at: t }); });
+    localStorage.setItem('cg_tombstones', JSON.stringify(list));
+  },
+  clearTombstones(done) {
+    const gone = new Set(done.map(x => x.kind + '|' + x.id));
+    localStorage.setItem('cg_tombstones', JSON.stringify(this.tombstones().filter(x => !gone.has(x.kind + '|' + x.id))));
+  },
+
+  /* ── 저장이 일어나면 잠시 뒤 자동 동기화 ── */
+  touch() {
+    if (!this.active()) return;
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.run('auto'), 2500);
+  },
+
+  /* ── HTTP 공통 ── */
+  async api(path, opts = {}, withAuth = true) {
+    const c = this.cfg();
+    const s = this.ses();
+    const headers = { apikey: c.key, 'Content-Type': 'application/json', ...(opts.headers || {}) };
+    if (withAuth && s && s.access_token) headers.Authorization = 'Bearer ' + s.access_token;
+    const res = await fetch(c.url.replace(/\/+$/, '') + path, { ...opts, headers });
+    return res;
+  },
+
+  async parseErr(res) {
+    let body = '';
+    try { body = await res.text(); } catch {}
+    try { const j = JSON.parse(body); return j.msg || j.message || j.error_description || j.error || body; } catch { return body || ('HTTP ' + res.status); }
+  },
+
+  /* ── 로그인 / 로그아웃 ── */
+  async signIn(url, key, email, password) {
+    const clean = (url || '').trim().replace(/\/+$/, '');
+    localStorage.setItem('cg_sync_cfg', JSON.stringify({ url: clean, key: (key || '').trim() }));
+    const res = await this.api('/auth/v1/token?grant_type=password', {
+      method: 'POST',
+      body: JSON.stringify({ email: (email || '').trim(), password: password || '' }),
+    }, false);
+    if (!res.ok) throw new Error(await this.parseErr(res));
+    const d = await res.json();
+    this.saveSes({
+      access_token: d.access_token,
+      refresh_token: d.refresh_token,
+      expires_at: Date.now() + (d.expires_in || 3600) * 1000,
+      email: (d.user && d.user.email) || email,
+    });
+    return true;
+  },
+
+  async refresh() {
+    const s = this.ses();
+    if (!s || !s.refresh_token) throw new Error('로그인이 필요해요');
+    const res = await this.api('/auth/v1/token?grant_type=refresh_token', {
+      method: 'POST',
+      body: JSON.stringify({ refresh_token: s.refresh_token }),
+    }, false);
+    if (!res.ok) { this.saveSes(null); throw new Error('로그인이 만료됐어요. 다시 로그인해 주세요'); }
+    const d = await res.json();
+    this.saveSes({ ...s, access_token: d.access_token, refresh_token: d.refresh_token || s.refresh_token, expires_at: Date.now() + (d.expires_in || 3600) * 1000 });
+  },
+
+  async ensureSession() {
+    const s = this.ses();
+    if (!s) throw new Error('로그인이 필요해요');
+    if (!s.expires_at || s.expires_at - Date.now() < 60000) await this.refresh();
+  },
+
+  signOut() {
+    this.saveSes(null);
+    this.saveSt({ cursor: null, lastSyncAt: null, lastError: null });
+  },
+
+  /* ── 로컬 → 서버 (변경분만) ── */
+  localRecords() {
+    const out = [];
+    SYNC_KINDS.forEach(({ kind, store }) => {
+      DB.getAll(store).forEach(r => { if (r && r.id) out.push({ kind, id: String(r.id), data: r, updatedAt: r.updatedAt || '' }); });
+    });
+    const set = DB.getSettings();
+    if (set && Object.keys(set).length) out.push({ kind: 'settings', id: 'main', data: set, updatedAt: set._updatedAt || '' });
+    return out;
+  },
+
+  async push() {
+    const wanted = new Set(this.dirty());
+    const rows = this.localRecords()
+      .filter(r => wanted.has(r.kind + '|' + r.id))
+      .map(r => ({ kind: r.kind, id: r.id, data: r.data, deleted: false }));
+    // 로컬에서 이미 사라진 dirty 항목은 툼스톤이 처리하므로 여기서 정리
+    const sentKeys = rows.map(r => r.kind + '|' + r.id);
+    const tombs = this.tombstones();
+    tombs.forEach(t => rows.push({ kind: t.kind, id: String(t.id), data: {}, deleted: true }));
+
+    for (let i = 0; i < rows.length; i += 20) {
+      const chunk = rows.slice(i, i + 20);
+      const res = await this.api('/rest/v1/cg_records?on_conflict=user_id,kind,id', {
+        method: 'POST',
+        headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+        body: JSON.stringify(chunk),
+      });
+      if (!res.ok) throw new Error(await this.parseErr(res));
+    }
+    if (tombs.length) this.clearTombstones(tombs);
+    this.clearDirty([...wanted]);   // 올린 것 + 이미 삭제된 잔여 항목 정리 (전송 중 생긴 새 변경은 남음)
+    this.saveSt({ pushedAt: now() });
+    return sentKeys.length + tombs.length;
+  },
+
+  /* ── 서버 → 로컬 (커서 이후 변경분만) ── */
+  async pull() {
+    const cursor = this.st().cursor;
+    const q = new URLSearchParams({ select: 'kind,id,data,deleted,updated_at', order: 'updated_at.asc', limit: '500' });
+    if (cursor) q.set('updated_at', 'gt.' + cursor);
+    let applied = 0, maxTs = cursor || null, page = 0;
+
+    while (page < 40) {
+      const qs = new URLSearchParams(q);
+      if (maxTs) qs.set('updated_at', 'gt.' + maxTs);
+      const res = await this.api('/rest/v1/cg_records?' + qs.toString(), { method: 'GET' });
+      if (!res.ok) throw new Error(await this.parseErr(res));
+      const rows = await res.json();
+      if (!rows.length) break;
+      applied += this.applyRemote(rows);
+      maxTs = rows[rows.length - 1].updated_at;
+      if (rows.length < 500) break;
+      page++;
+    }
+    if (maxTs) this.saveSt({ cursor: maxTs });
+    return applied;
+  },
+
+  applyRemote(rows) {
+    const buckets = {};
+    SYNC_KINDS.forEach(({ kind, store }) => { buckets[kind] = DB.getAll(store); });
+    let settings = DB.getSettings();
+    let changed = 0, settingsChanged = false;
+    const dirty = new Set();
+
+    rows.forEach(row => {
+      if (row.kind === 'settings') {
+        if (row.deleted) return;
+        const incoming = row.data || {};
+        let same = false;
+        try { same = JSON.stringify(settings) === JSON.stringify(incoming); } catch {}
+        if (!same) { settings = incoming; settingsChanged = true; changed++; }
+        return;
+      }
+      const list = buckets[row.kind];
+      if (!list) return;
+      const idx = list.findIndex(r => r && String(r.id) === String(row.id));
+      if (row.deleted) {
+        if (idx >= 0) { list.splice(idx, 1); dirty.add(row.kind); changed++; }
+        return;
+      }
+      const incoming = row.data || {};
+      if (!incoming.id) incoming.id = row.id;
+      if (idx < 0) { list.push(incoming); dirty.add(row.kind); changed++; return; }
+      let same = false;
+      try { same = JSON.stringify(list[idx]) === JSON.stringify(incoming); } catch {}
+      if (!same) { list[idx] = incoming; dirty.add(row.kind); changed++; }
+    });
+
+    // 서버가 개체를 지웠다면 그 개체의 기록도 함께 정리
+    if (dirty.has('individual')) {
+      const alive = new Set(buckets.individual.map(i => String(i.id)));
+      const before = buckets.event.length;
+      buckets.event = buckets.event.filter(e => !e.individualId || alive.has(String(e.individualId)));
+      if (buckets.event.length !== before) dirty.add('event');
+    }
+
+    dirty.forEach(kind => DB._raw(STORE_OF_KIND[kind], buckets[kind]));
+    if (settingsChanged) DB._rawSettings(settings);
+    return changed;
+  },
+
+  /* ── 한 번의 동기화 사이클 ── */
+  async run(reason = 'manual') {
+    if (this.running || !this.active()) return { skipped: true };
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      this.saveSt({ lastError: '오프라인 상태예요. 연결되면 자동으로 올려드릴게요' });
+      return { skipped: true };
+    }
+    this.running = true;
+    this.emit();
+    try {
+      await this.ensureSession();
+      const sent = await this.push();
+      const got = await this.pull();
+      this.saveSt({ lastSyncAt: now(), lastError: null });
+      this.running = false;
+      this.emit(got > 0);
+      return { sent, got };
+    } catch (e) {
+      this.running = false;
+      this.saveSt({ lastError: (e && e.message) || '동기화 실패' });
+      this.emit();
+      return { error: (e && e.message) || '동기화 실패' };
+    }
+  },
+
+  /* ── 첫 연결: 서버가 비어 있으면 로컬 전체를 올림 ── */
+  async firstSync() {
+    this.saveSt({ cursor: null, pushedAt: null, lastError: null });
+    this.markAllDirty();
+    return this.run('first');
+  },
+
+  /* ── 이 기기 데이터를 서버 내용으로 완전히 맞추기 (새 기기용) ── */
+  async pullReplace() {
+    await this.ensureSession();
+    const res = await this.api('/rest/v1/cg_records?select=kind,id,data,deleted&limit=10000', { method: 'GET' });
+    if (!res.ok) throw new Error(await this.parseErr(res));
+    const rows = await res.json();
+    SYNC_KINDS.forEach(({ store }) => DB._raw(store, []));
+    this.applyRemote(rows);
+    localStorage.setItem('cg_tombstones', '[]');
+    localStorage.setItem('cg_dirty', '[]');
+    this.saveSt({ cursor: null, pushedAt: now(), lastSyncAt: now(), lastError: null });
+    await this.pull();
+    this.emit(true);
+    return rows.filter(r => !r.deleted).length;
+  },
+};
 const localISO = (d) => { const t = new Date(d.getTime() - d.getTimezoneOffset() * 60000); return t.toISOString().slice(0, 10); };
 const todayStr = () => localISO(new Date());
 const daysUntil = (ds) => Math.ceil((new Date(ds) - new Date(todayStr())) / 86400000);
@@ -606,6 +936,20 @@ function App() {
   const refreshIndividuals = () => setIndividuals(DB.getIndividuals());
   const refreshReminders = () => setRemVer(v => v + 1);
 
+  // 서버 동기화: 앱을 켤 때 / 다시 앱으로 돌아올 때 / 인터넷이 다시 연결될 때
+  useEffect(() => {
+    if (!SYNC.active()) return;
+    SYNC.run('start');
+    const off = SYNC.on((dataChanged) => {
+      if (dataChanged) { setIndividuals(DB.getIndividuals()); setRemVer(v => v + 1); }
+    });
+    const onVisible = () => { if (document.visibilityState === 'visible') SYNC.run('resume'); };
+    const onOnline = () => SYNC.run('online');
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('online', onOnline);
+    return () => { off(); document.removeEventListener('visibilitychange', onVisible); window.removeEventListener('online', onOnline); };
+  }, []);
+
   const navigate = (name, props = {}) => {
     setScreen({ name, props });
     if (['home','calendar','reminders','settings'].includes(name)) setTab(name);
@@ -841,7 +1185,11 @@ function MatingView({ individuals, navigate, showToast }) {
           <div className="card" key={k}>
             <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', cursor:'pointer'}}
               onClick={() => { setOpen(open === k ? null : k); setEditingId(null); setConfirmDel(null); }}>
-              <div style={{fontSize:15, fontWeight:700}}>🔵 {p.male.name} × 🔴 {p.female.name}</div>
+              <div style={{fontSize:15, fontWeight:700}}>
+                <span style={{cursor:'pointer'}} onClick={e => { e.stopPropagation(); if (byId[p.male.id]) navigate('profile', { gecko: byId[p.male.id] }); }}>🔵 {p.male.name}</span>
+                {' × '}
+                <span style={{cursor:'pointer'}} onClick={e => { e.stopPropagation(); if (byId[p.female.id]) navigate('profile', { gecko: byId[p.female.id] }); }}>🔴 {p.female.name}</span>
+              </div>
               <div style={{fontSize:12, color:'var(--text3)'}}>메이팅 {mates.length}회 · 산란 {lays.length}회 {open === k ? '▲' : '▼'}</div>
             </div>
             {open === k && (
@@ -942,7 +1290,17 @@ function HatchView({ individuals, refreshIndividuals, showToast, navigate }) {
               <div style={{fontSize:12, color:'var(--text3)'}}>{fmtDate(b.hatchDate)} {open === b.id ? '▲' : '▼'}</div>
             </div>
             <div style={{fontSize:12, color:'var(--text3)', marginTop:4}}>
-              부 {byId[b.sireId] ? byId[b.sireId].name : '-'} · 모 {byId[b.damId] ? byId[b.damId].name : '-'} · {b.morph || '모프 미정'}{b.spots ? ` · 점: ${b.spots}` : ''}
+              부{' '}
+              {byId[b.sireId]
+                ? <span style={{color:'var(--accent2)', cursor:'pointer', textDecoration:'underline'}} onClick={e => { e.stopPropagation(); navigate('profile', { gecko: byId[b.sireId] }); }}>{byId[b.sireId].name}</span>
+                : '-'
+              }
+              {' · '}모{' '}
+              {byId[b.damId]
+                ? <span style={{color:'var(--accent2)', cursor:'pointer', textDecoration:'underline'}} onClick={e => { e.stopPropagation(); navigate('profile', { gecko: byId[b.damId] }); }}>{byId[b.damId].name}</span>
+                : '-'
+              }
+              {' · '}{b.morph || '모프 미정'}{b.spots ? ` · 점: ${b.spots}` : ''}
             </div>
           </div>
           {open === b.id && (
@@ -1363,6 +1721,11 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       const clean = w => (w || '').replace(/(이에요|입니다|이야|이고|예요|이다|야|고|임)$/, '');
       const sw = clean(sireM && sireM[1]);
       const dw = clean(damM && damM[1]);
+      // 부/모로 언급된 이름을 제외한 나머지를 혈통 대상(주체)으로 재결정
+      // (예: "크범이 아들 크범5호 어미는 크범이야" → 크범이가 앞에 나와도 대상은 크범5호)
+      const parentNames = [sw, dw].filter(Boolean);
+      const subjectCandidates = names.filter(n => !parentNames.includes(n.name));
+      if (subjectCandidates.length) { target = subjectCandidates[0]; setTarget(subjectCandidates[0]); }
       if (/누구|뭐|몰라/.test(sw + dw)) {
         const fresh0 = DB.getIndividuals();
         const sire = fresh0.find(i => i.id === target.sireId);
@@ -2323,6 +2686,137 @@ function ReminderCard({ r, onDelete, past }) {
   );
 }
 
+/* ══════════════════════════════════════════
+   설정 · 서버 동기화 카드
+   ══════════════════════════════════════════ */
+function SyncCard({ showToast, refreshIndividuals }) {
+  const [, bump] = useState(0);
+  const [form, setForm] = useState(() => { const c = SYNC.cfg(); return { url: c.url || '', key: c.key || '', email: '', password: '' }; });
+  const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [confirmPull, setConfirmPull] = useState(false);
+
+  useEffect(() => SYNC.on(() => bump(v => v + 1)), []);
+
+  const st = SYNC.st();
+  const ses = SYNC.ses();
+  const active = SYNC.active();
+
+  const fmtSync = (iso) => {
+    if (!iso) return '아직 없음';
+    const d = new Date(iso), diff = Math.floor((Date.now() - d.getTime()) / 1000);
+    if (diff < 60) return '방금 전';
+    if (diff < 3600) return `${Math.floor(diff / 60)}분 전`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}시간 전`;
+    return d.toLocaleString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  };
+
+  const doLogin = async () => {
+    if (!form.url.trim() || !form.key.trim()) return showToast('⚠️ 서버 주소와 키를 넣어주세요');
+    if (!form.email.trim() || !form.password) return showToast('⚠️ 이메일과 비밀번호를 넣어주세요');
+    setBusy(true);
+    try {
+      await SYNC.signIn(form.url, form.key, form.email, form.password);
+      showToast('✅ 연결됐어요! 데이터를 올리는 중...');
+      const r = await SYNC.firstSync();
+      showToast(r && r.error ? '⚠️ ' + r.error : '☁️ 동기화 완료!');
+      refreshIndividuals();
+      setForm(f => ({ ...f, password: '' }));
+      setOpen(false);
+    } catch (e) {
+      showToast('⚠️ ' + ((e && e.message) || '연결 실패'));
+    }
+    setBusy(false);
+  };
+
+  const doSync = async () => {
+    setBusy(true);
+    const r = await SYNC.run('manual');
+    showToast(r && r.error ? '⚠️ ' + r.error : '☁️ 동기화 완료!');
+    refreshIndividuals();
+    setBusy(false);
+  };
+
+  const doPullReplace = async () => {
+    setBusy(true);
+    setConfirmPull(false);
+    try {
+      const n = await SYNC.pullReplace();
+      refreshIndividuals();
+      showToast(`📥 서버 데이터 ${n}건 불러왔어요`);
+    } catch (e) {
+      showToast('⚠️ ' + ((e && e.message) || '불러오기 실패'));
+    }
+    setBusy(false);
+  };
+
+  const doLogout = () => {
+    SYNC.signOut();
+    showToast('연결을 끊었어요 (이 기기 데이터는 그대로예요)');
+  };
+
+  return (
+    <div className="card" style={{margin:0}}>
+      <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:6}}>
+        <div style={{fontSize:13, fontWeight:700, color:'var(--text2)'}}>☁️ 서버 동기화</div>
+        <div style={{fontSize:11, fontWeight:700, color: active ? '#2E7D46' : 'var(--text3)'}}>
+          {SYNC.running ? '동기화 중…' : active ? '● 연결됨' : '○ 로컬 저장만'}
+        </div>
+      </div>
+
+      {active ? (
+        <>
+          <div style={{fontSize:12, color:'var(--text3)', lineHeight:1.7, marginBottom:10}}>
+            계정: {(ses && ses.email) || '-'}<br/>
+            마지막 동기화: {fmtSync(st.lastSyncAt)}
+            {st.lastError && <><br/><span style={{color:'#B3261E'}}>⚠️ {st.lastError}</span></>}
+          </div>
+          <div style={{display:'flex', flexDirection:'column', gap:8}}>
+            <button className="btn btn-primary" disabled={busy} onClick={doSync}>{busy ? '진행 중…' : '🔄 지금 동기화'}</button>
+            {confirmPull ? (
+              <div style={{background:'var(--bg3)', borderRadius:10, padding:12}}>
+                <div style={{fontSize:12, color:'var(--text2)', marginBottom:8, lineHeight:1.6}}>
+                  이 기기의 데이터를 지우고 서버 내용으로 통째로 바꿔요.<br/>새 폰·새 PC에서 처음 설치했을 때만 쓰세요.
+                </div>
+                <div style={{display:'flex', gap:6}}>
+                  <button className="btn btn-primary btn-sm" style={{flex:1}} onClick={doPullReplace}>서버 내용으로 바꾸기</button>
+                  <button className="btn btn-secondary btn-sm" style={{flex:1}} onClick={() => setConfirmPull(false)}>취소</button>
+                </div>
+              </div>
+            ) : (
+              <button className="btn btn-secondary" disabled={busy} onClick={() => setConfirmPull(true)}>📥 서버 내용 통째로 받기 (새 기기)</button>
+            )}
+            <button className="btn btn-secondary" disabled={busy} onClick={doLogout}>연결 끊기</button>
+          </div>
+        </>
+      ) : open ? (
+        <div style={{display:'flex', flexDirection:'column', gap:8}}>
+          <div style={{fontSize:12, color:'var(--text3)', lineHeight:1.6, marginBottom:2}}>
+            Supabase 프로젝트 정보를 넣으면 폰·PC가 같은 데이터를 봅니다.<br/>
+            (Supabase → Settings → API 에서 복사)
+          </div>
+          <input className="input" placeholder="서버 주소 (https://xxxx.supabase.co)" value={form.url} onChange={e => setForm({ ...form, url: e.target.value })} />
+          <input className="input" placeholder="anon public key" value={form.key} onChange={e => setForm({ ...form, key: e.target.value })} />
+          <input className="input" type="email" autoComplete="username" placeholder="이메일" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} />
+          <input className="input" type="password" autoComplete="current-password" placeholder="비밀번호" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} />
+          <div style={{display:'flex', gap:6}}>
+            <button className="btn btn-primary" style={{flex:1}} disabled={busy} onClick={doLogin}>{busy ? '연결 중…' : '연결하기'}</button>
+            <button className="btn btn-secondary" style={{flex:1}} disabled={busy} onClick={() => setOpen(false)}>취소</button>
+          </div>
+          {st.lastError && <div style={{fontSize:12, color:'#B3261E'}}>⚠️ {st.lastError}</div>}
+        </div>
+      ) : (
+        <>
+          <div style={{fontSize:12, color:'var(--text3)', lineHeight:1.7, marginBottom:10}}>
+            지금은 이 기기에만 저장돼요. 서버에 연결하면 폰에서 적은 기록이 PC에도 그대로 나타나요.
+          </div>
+          <button className="btn btn-primary" onClick={() => setOpen(true)}>서버 연결하기</button>
+        </>
+      )}
+    </div>
+  );
+}
+
 function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
   const [settings, setSettings] = useState(() => DB.getSettings());
   const setNaming = (v) => {
@@ -2379,6 +2873,7 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
     <div className="screen">
       <div className="header"><h1>⚙️ 설정</h1></div>
       <div style={{padding:'16px', display:'flex', flexDirection:'column', gap:12}}>
+        <SyncCard showToast={showToast} refreshIndividuals={refreshIndividuals} />
         <div className="card" style={{margin:0}}>
           <div style={{fontSize:13, fontWeight:700, marginBottom:12, color:'var(--text2)'}}>데이터</div>
           <div style={{display:'flex', flexDirection:'column', gap:8}}>
@@ -2411,11 +2906,12 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
         <div className="card" style={{margin:0}}>
           <div style={{fontSize:13, fontWeight:700, marginBottom:6, color:'var(--text2)'}}>앱 정보</div>
           <div style={{fontSize:13, color:'var(--text3)', lineHeight:1.7}}>
-            크레건설 브리딩 비서 v1.7<br/>
+            크레건설 브리딩 비서 v1.8<br/>
             축양·분양·메이팅·해칭 · 즐겨찾기 · 캘린더(날짜별 추가·수정)<br/>
             사진 첨부 · 예정일 대비 차이 기록 · 백업 복원 · 비속어 필터<br/>
+            ☁️ 서버 동기화(Supabase) — 폰·PC 같은 데이터<br/>
             테마: 아이보리 × 버건디 (크레건설 아이덴티티)<br/>
-            현재: 로컬 저장 모드 · 예정: Supabase 동기화 + AI 상담
+            예정: AI 상담 연결
           </div>
         </div>
         <div className="card" style={{margin:0}}>
