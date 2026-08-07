@@ -1261,7 +1261,7 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals }) {
         )}
 
         {individuals.length > 0 && (
-          <div style={{display:'flex', gap:6, padding:'10px 16px 0', overflowX:'auto', flexWrap:'nowrap', WebkitOverflowScrolling:'touch'}}>
+          <div className="chip-row" style={{padding:'10px 16px 2px', marginTop:0}}>
             {[['own','🏠 축양'],['sale','🏷️ 분양'],['mating','💞 메이팅'],['laying','🥚 산란'],['hatch','🐣 해칭']].map(([k, l]) => (
               <button key={k} className="chip-btn"
                 style={{flexShrink:0, whiteSpace:'nowrap', ...(view === k ? {background:'var(--accent-soft)', fontWeight:700} : {})}}
