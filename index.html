@@ -45,7 +45,7 @@
     .screen::-webkit-scrollbar { display: none; }
 
     /* 상단 헤더 */
-    .header { background: var(--bg2); padding: 16px 20px 12px; border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 10; }
+    .header { background: var(--bg2); padding: 12px 20px 10px; border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 10; }
     .header h1 { font-size: 18px; font-weight: 700; color: var(--accent2); }
     .header-row { display: flex; align-items: center; justify-content: space-between; }
     .header-sub { font-size: 12px; color: var(--text3); margin-top: 2px; }
@@ -85,7 +85,10 @@
     .chat-input-row { display: flex; gap: 8px; align-items: flex-end; }
     .chat-input-row .input { flex: 1; }
     .send-btn { background: var(--accent); border: none; border-radius: 10px; padding: 13px 14px; cursor: pointer; color: var(--on-accent); font-size: 16px; flex-shrink: 0; }
-    .chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: -6px; }
+    /* 탭 칩: 좁은 화면에서 글자가 줄바꿈되어 깨지지 않도록 한 줄 가로 스크롤 */
+    .chip-row { display: flex; flex-wrap: nowrap; gap: 6px; margin-top: -6px; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; padding-bottom: 2px; }
+    .chip-row::-webkit-scrollbar { display: none; }
+    .chip-row > .chip-btn { flex: 0 0 auto; white-space: nowrap; }
     .pending-bar { padding: 6px 16px 8px; cursor: pointer; }
 
     /* 선택 옵션 */
@@ -93,13 +96,13 @@
     .option-grid.cols3 { grid-template-columns: 1fr 1fr 1fr; }
     .option-btn { padding: 12px 8px; background: var(--card); border: 1px solid var(--border); border-radius: 10px; color: var(--text2); font-size: 13px; cursor: pointer; text-align: center; transition: all .15s; }
     .option-btn:active, .option-btn.selected { background: var(--accent-soft); border-color: var(--accent-dim); color: var(--accent2); }
-    .chip-btn { padding: 9px 14px; background: var(--card); border: 1px solid var(--accent-dim); border-radius: 20px; color: var(--accent2); font-size: 13px; cursor: pointer; transition: all .15s; box-shadow: var(--shadow); }
+    .chip-btn { padding: 8px 13px; background: var(--card); border: 1px solid var(--accent-dim); border-radius: 20px; color: var(--accent2); font-size: 13px; line-height: 1.2; cursor: pointer; transition: all .15s; box-shadow: var(--shadow); }
     .chip-btn:active { background: var(--accent-soft); }
 
     /* 개체 카드 */
-    .gecko-card { display: flex; align-items: center; gap: 14px; background: var(--card); border-radius: var(--radius); padding: 14px 16px; margin: 0 16px 10px; border: 1px solid var(--border); cursor: pointer; transition: border-color .15s; box-shadow: var(--shadow); }
+    .gecko-card { display: flex; align-items: center; gap: 12px; background: var(--card); border-radius: var(--radius); padding: 11px 14px; margin: 0 16px 8px; border: 1px solid var(--border); cursor: pointer; transition: border-color .15s; box-shadow: var(--shadow); }
     .gecko-card:active { border-color: var(--accent-dim); }
-    .gecko-avatar { width: 48px; height: 48px; border-radius: 50%; background: var(--bg3); display: flex; align-items: center; justify-content: center; font-size: 22px; flex-shrink: 0; border: 2px solid var(--border); }
+    .gecko-avatar { width: 42px; height: 42px; border-radius: 50%; background: var(--bg3); display: flex; align-items: center; justify-content: center; font-size: 19px; flex-shrink: 0; border: 2px solid var(--border); }
     .gecko-info { flex: 1; min-width: 0; }
     .gecko-name { font-size: 16px; font-weight: 700; color: var(--text); }
     .gecko-meta { font-size: 12px; color: var(--text3); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1114,10 +1117,28 @@ function App() {
     return () => { off(); document.removeEventListener('visibilitychange', onVisible); window.removeEventListener('online', onOnline); };
   }, []);
 
+  /* 화면 이동 기록 — 안드로이드 뒤로가기(◁)로 앱이 꺼지지 않고 이전 화면으로 가게 합니다.
+     화면을 옮길 때마다 브라우저 방문기록에 한 칸을 쌓고, 뒤로가기가 오면 한 칸 되돌립니다.
+     홈에서 한 번 더 누르면 그때는 정상적으로 앱이 닫힙니다. */
+  const stackRef = useRef([{ name: 'home', props: {} }]);
   const navigate = (name, props = {}) => {
+    stackRef.current.push({ name, props });
+    try { window.history.pushState({ cgDepth: stackRef.current.length }, ''); } catch {}
     setScreen({ name, props });
     if (['home','calendar','reminders','settings'].includes(name)) setTab(name);
   };
+
+  useEffect(() => {
+    const onPop = () => {
+      if (stackRef.current.length <= 1) return;   // 홈이면 그대로 두어 앱이 닫히게
+      stackRef.current.pop();
+      const prev = stackRef.current[stackRef.current.length - 1] || { name: 'home', props: {} };
+      setScreen(prev);
+      if (['home','calendar','reminders','settings'].includes(prev.name)) setTab(prev.name);
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
 
   // 배지: D-1·당일이면서 아직 확인하지 않은 알림만
   const readIds = DB.getReadReminderIds();
@@ -1228,24 +1249,23 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals }) {
         )}
 
         {individuals.length > 0 && (
-          <div className="stat-grid" style={{paddingTop:12}}>
-            <div className="stat-card">
-              <div className="stat-val">{stats.total}</div>
-              <div className="stat-label">전체 개체</div>
-            </div>
-            <div className="stat-card"
-              onClick={() => { setView('own'); setFavOnly(f => !f); }}
-              style={{cursor:'pointer', ...(favOnly ? {borderColor:'var(--accent-dim)', background:'var(--accent-soft)'} : {})}}>
-              <div className="stat-val" style={{color:'var(--gold)'}}>⭐ {stats.fav}</div>
-              <div className="stat-label">{favOnly ? '즐겨찾기만 보는 중 · 눌러 해제' : '즐겨찾기 · 눌러서 모아보기'}</div>
-            </div>
+          <div style={{display:'flex', alignItems:'center', gap:10, padding:'10px 16px 0', fontSize:13, color:'var(--text3)'}}>
+            <span><b style={{fontSize:16, color:'var(--accent2)'}}>{stats.total}</b> 마리</span>
+            <span style={{color:'var(--border)'}}>|</span>
+            <button onClick={() => { setView('own'); setFavOnly(f => !f); }}
+              style={{background:'none', border:'none', padding:0, cursor:'pointer', fontSize:13,
+                      color: favOnly ? 'var(--accent2)' : 'var(--text3)', fontWeight: favOnly ? 700 : 400}}>
+              ⭐ {stats.fav} {favOnly ? '· 해제' : '즐겨찾기'}
+            </button>
           </div>
         )}
 
         {individuals.length > 0 && (
-          <div style={{display:'flex', gap:6, padding:'12px 16px 0', overflowX:'auto'}}>
-            {[['own','🏠 축양리스트'],['sale','🏷️ 분양리스트'],['mating','💞 메이팅기록'],['laying','🥚 산란기록'],['hatch','🐣 해칭기록']].map(([k, l]) => (
-              <button key={k} className="chip-btn" style={view === k ? {background:'var(--accent-soft)', fontWeight:700} : {}} onClick={() => setView(k)}>{l}</button>
+          <div style={{display:'flex', gap:6, padding:'10px 16px 0', overflowX:'auto', flexWrap:'nowrap', WebkitOverflowScrolling:'touch'}}>
+            {[['own','🏠 축양'],['sale','🏷️ 분양'],['mating','💞 메이팅'],['laying','🥚 산란'],['hatch','🐣 해칭']].map(([k, l]) => (
+              <button key={k} className="chip-btn"
+                style={{flexShrink:0, whiteSpace:'nowrap', ...(view === k ? {background:'var(--accent-soft)', fontWeight:700} : {})}}
+                onClick={() => setView(k)}>{l}</button>
             ))}
           </div>
         )}
@@ -2436,6 +2456,20 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
   const [confirmDelEvent, setConfirmDelEvent] = useState(null);
   const [photoView, setPhotoView] = useState(null); // {src, date}
   const eventPhotoRef = useRef(null);
+  const avatarFileRef = useRef(null);
+
+  // 프로필 원형 사진 탭 → 대표사진 지정 (사진 기록으로도 남겨서 나중에 다시 고를 수 있게)
+  const onAvatarPick = (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    compressImage(file, (src) => {
+      DB.addEvent({ individualId: gecko.id, type: 'photo', date: todayStr(), data: { photo: src } });
+      DB.updateIndividual(gecko.id, { avatar: src });
+      refreshLocal();
+      showToast('📷 대표사진을 바꿨어요');
+    });
+  };
 
   const onEventPhoto = (e) => {
     const file = e.target.files && e.target.files[0];
@@ -2482,8 +2516,19 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
         <div className="card">
           <div style={{display:'flex', alignItems:'center', gap:14}}>
             {(() => { const av = avatarSrc(gecko); return (
-              <div style={{width:64, height:64, borderRadius:'50%', flexShrink:0, border:'2px solid var(--border)', background: av ? `url(${av}) center/cover` : 'var(--bg3)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:34}}>{av ? '' : genderEmoji(gecko.gender)}</div>
+              <button onClick={() => avatarFileRef.current && avatarFileRef.current.click()}
+                title="사진 바꾸기"
+                style={{width:64, height:64, borderRadius:'50%', flexShrink:0, border:'2px solid var(--border)', padding:0, cursor:'pointer',
+                        background: av ? `url(${av}) center/cover` : 'var(--bg3)', position:'relative',
+                        display:'flex', alignItems:'center', justifyContent:'center', fontSize:34}}>
+                {av ? '' : genderEmoji(gecko.gender)}
+                <span style={{position:'absolute', right:-2, bottom:-2, width:22, height:22, borderRadius:'50%',
+                              background:'var(--accent)', color:'#fff', fontSize:11, lineHeight:'22px',
+                              border:'2px solid var(--card)'}}>📷</span>
+              </button>
             ); })()}
+            <input ref={avatarFileRef} type="file" accept="image/*" capture={undefined}
+              style={{display:'none'}} onChange={onAvatarPick} />
             <div style={{flex:1}}>
               <div style={{display:'flex', alignItems:'center', gap:8, flexWrap:'wrap'}}>
                 <div style={{fontSize:22, fontWeight:800}}>{gecko.name}</div>
@@ -3379,7 +3424,7 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
         <div className="card" style={{margin:0}}>
           <div style={{fontSize:13, fontWeight:700, marginBottom:6, color:'var(--text2)'}}>앱 정보</div>
           <div style={{fontSize:13, color:'var(--text3)', lineHeight:1.7}}>
-            크레건설 브리딩 비서 v1.9<br/>
+            크레건설 브리딩 비서 v2.0<br/>
             축양·분양·<b>산란</b>·메이팅·해칭 · 즐겨찾기 · 캘린더(날짜별 추가·수정)<br/>
             사진 첨부 · 예정일 대비 차이 기록 · 백업 복원 · 비속어 필터<br/>
             ☁️ 서버 동기화 — 회원가입·로그인, 폰·PC 같은 데이터<br/>

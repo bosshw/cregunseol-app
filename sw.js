@@ -1,4 +1,4 @@
-const CACHE = 'creg-v12';
+const CACHE = 'creg-v13';
 const ASSETS = ['./index.html', './manifest.json'];
 
 self.addEventListener('install', e => {
@@ -21,4 +21,4 @@ self.addEventListener('fetch', e => {
     caches.match(e.request).then(r => r || fetch(e.request))
   );
 });
-// redeploy trigger 2026-08-06 (pages deploy timeout retry)
+// v2.0 deploy 2026-08-07
