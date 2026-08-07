@@ -1,4 +1,4 @@
-const CACHE = 'creg-v14';
+const CACHE = 'creg-v15';
 const ASSETS = ['./index.html', './manifest.json'];
 
 self.addEventListener('install', e => {
@@ -21,4 +21,4 @@ self.addEventListener('fetch', e => {
     caches.match(e.request).then(r => r || fetch(e.request))
   );
 });
-// v2.0.1 deploy 2026-08-07
+// v2.1 deploy 2026-08-07

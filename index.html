@@ -3065,6 +3065,144 @@ function ReminderCard({ r, onDelete, past }) {
 }
 
 /* ══════════════════════════════════════════
+   엑셀 내보내기 — 대표님 원본 「(주)크레건설 메인」 시트와 같은 모양으로
+   시트 이름·제목행·4행 헤더·B열부터 시작까지 원본 그대로 맞춥니다.
+   데이터가 있는 4시트만 넣습니다: 애기들 리스트 · 메이팅기록 · 해칭기록 · 분양리스트
+   엑셀 도구(SheetJS)는 버튼을 누를 때만 불러옵니다(앱 시작 속도에 영향 없음).
+   ══════════════════════════════════════════ */
+function loadXLSX() {
+  if (window.XLSX) return Promise.resolve(window.XLSX);
+  return new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+    s.onload = () => (window.XLSX ? res(window.XLSX) : rej(new Error('엑셀 도구 로드 실패')));
+    s.onerror = () => rej(new Error('엑셀 도구를 못 불러왔어요 (인터넷 확인)'));
+    document.head.appendChild(s);
+  });
+}
+
+// 2025-05-11 → 25.05.11
+const xlDate = (iso) => {
+  if (!iso) return '';
+  const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? `${m[1].slice(2)}.${m[2]}.${m[3]}` : String(iso);
+};
+const xlGender = (g) => (g === 'female' ? '암' : g === 'male' ? '숫' : '미구분');
+
+// 메모 한 줄을 원본 엑셀의 각 칸으로 되돌립니다. 없는 항목은 빈칸으로 둡니다.
+function splitMemo(indId) {
+  const out = { feat: '', source: '', blood: '', price: '', birthRaw: '', note: '' };
+  const etc = [];
+  DB.getEventsFor(indId).filter(e => e.type === 'memo').forEach(e => {
+    String((e.data && e.data.notes) || '').split('·').map(s => s.trim()).filter(Boolean).forEach(p => {
+      let m;
+      if ((m = p.match(/^모프\s*특징\s*:\s*(.+)$/))) { out.feat = out.feat || m[1]; }
+      else if ((m = p.match(/^입양처\s*:\s*(.+)$/))) { out.source = out.source || m[1]; }
+      else if ((m = p.match(/^혈통\s*:\s*(.+)$/))) { out.blood = out.blood || m[1]; }
+      else if ((m = p.match(/^입양가\s*([\d.]+)\s*만원$/))) { out.price = out.price || m[1]; }
+      else if (/^입양가\s*0\b/.test(p)) { out.price = out.price || '0'; }
+      else if ((m = p.match(/^출생\s+(\S+)/))) { out.birthRaw = out.birthRaw || m[1]; }
+      else if (/^분양처\s*:/.test(p)) { /* 분양리스트에서 따로 처리 */ }
+      else etc.push(p);
+    });
+  });
+  out.note = etc.join(' · ');
+  return out;
+}
+
+// 분양 기록에서 입양자·분양가(만원) 뽑기
+function saleInfo(ind) {
+  const ev = DB.getEventsFor(ind.id).filter(e => e.type === 'distribution')
+    .sort((a, b) => (a.date < b.date ? 1 : -1))[0];
+  const notes = (ev && ev.data && ev.data.notes) || '';
+  const buyer = (notes.match(/분양처\s*:\s*([^·]+)/) || [])[1];
+  const won = ev && ev.data ? Number(ev.data.price || 0) : Number(ind.salePrice || 0);
+  const rest = notes.split('·').map(s => s.trim()).filter(s => s && !/^분양처\s*:/.test(s)).join(' · ');
+  return { buyer: (buyer || '').trim(), man: won ? String(won / 10000) : (ev ? '0' : ''), note: rest };
+}
+
+function buildWorkbook(XLSX) {
+  const inds = DB.getIndividuals();
+  const nameOf = id => { const i = inds.find(x => x.id === id); return i ? i.name : ''; };
+  const wb = XLSX.utils.book_new();
+  const add = (title, aoa, widths) => {
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    if (widths) ws['!cols'] = widths.map(w => ({ wch: w }));
+    XLSX.utils.book_append_sheet(wb, ws, title);
+  };
+  const blank = n => new Array(n).fill('');
+
+  /* ── 1. 애기들 리스트 (축양) ── */
+  const own = inds.filter(i => (i.status || 'own') !== 'sold' && !i.isExternal);
+  const a1 = [['', '크레건설 축양리스트'], [], [],
+    ['', '넘버', '이름', '생년원일', '성별', '모프', '모프 특징사항', '점여부', '입양처', '부/모', '입양가', '특이사항']];
+  let priceSum = 0;
+  own.forEach((i, n) => {
+    const m = splitMemo(i.id);
+    if (m.price) priceSum += parseFloat(m.price) || 0;
+    a1.push(['', n + 1, i.name, xlDate(i.hatchDate) || m.birthRaw, xlGender(i.gender), i.morph || '',
+             m.feat, i.spots || '', m.source, m.blood, m.price, m.note]);
+  });
+  // 원본과 같은 자리(O4·P4·Q4)에 합계
+  a1[3][14] = '분양가 합'; a1[3][15] = priceSum ? Math.round(priceSum * 100) / 100 : ''; a1[3][16] = '만원';
+  add('애기들 리스트', a1, [3, 6, 10, 10, 7, 16, 14, 9, 14, 14, 8, 24]);
+
+  /* ── 2. 메이팅기록 (페어별 N차 산란) ── */
+  const evs = DB.getEvents();
+  const matings = evs.filter(e => e.type === 'mating').sort((a, b) => (a.date < b.date ? -1 : 1));
+  const layings = evs.filter(e => e.type === 'laying').sort((a, b) => (a.date < b.date ? -1 : 1));
+  const a2 = [['', '', '', '', '크레건설'], [], [],
+    ['', '넘버', '메이팅 날짜', '수컷', '암컷',
+     ...Array.from({ length: 12 }, (_, k) => `${k + 1}차 산란확인일`), '특이사항']];
+  matings.forEach((m, n) => {
+    const femId = m.individualId;
+    // 이 메이팅 이후 ~ 같은 암컷의 다음 메이팅 이전에 나온 산란만 이 줄에 붙입니다
+    const next = matings.find(x => x.individualId === femId && x.date > m.date);
+    const mine = layings.filter(l => l.individualId === femId && l.date >= m.date && (!next || l.date < next.date));
+    const cells = mine.slice(0, 12).map(l => {
+      const eg = l.data && l.data.eggCount;
+      const nt = (l.data && l.data.notes) || '';
+      const tag = eg ? `(${eg}개)` : nt ? `(${nt})` : '';
+      return xlDate(l.date) + tag;
+    });
+    a2.push(['', n + 1, xlDate(m.date), (m.data && m.data.partnerName) || nameOf(m.data && m.data.partnerId),
+             nameOf(femId), ...cells, ...blank(12 - cells.length), '']);
+  });
+  add('메이팅기록', a2, [3, 6, 12, 14, 14, ...new Array(12).fill(15), 20]);
+
+  /* ── 3. 해칭기록 (부·모가 연결된 개체) ── */
+  const babies = inds.filter(i => (i.sireId || i.damId) && !i.isExternal)
+    .sort((a, b) => ((a.hatchDate || '') < (b.hatchDate || '') ? -1 : 1));
+  const a3 = [['', '', '', '', '', '크레건설'], [], [],
+    ['', '넘버', '이름', '생년원일', '부', '모', '모프', '점여부', '분양자', '분양가', '특이사항']];
+  babies.forEach((b, n) => {
+    const m = splitMemo(b.id);
+    const s = b.status === 'sold' ? saleInfo(b) : { buyer: '', man: '', note: '' };
+    a3.push(['', n + 1, b.name, xlDate(b.hatchDate) || m.birthRaw, nameOf(b.sireId), nameOf(b.damId),
+             b.morph || '', b.spots || '', s.buyer, s.man, [m.note, s.note].filter(Boolean).join(' · ')]);
+  });
+  add('해칭기록', a3, [3, 6, 12, 10, 12, 12, 16, 9, 14, 8, 22]);
+
+  /* ── 4. 분양리스트 ── */
+  const soldDate = i => { const e = DB.getEventsFor(i.id).filter(x => x.type === 'distribution')[0]; return (e && e.date) || ''; };
+  const sold = inds.filter(i => i.status === 'sold').sort((a, b) => (soldDate(a) < soldDate(b) ? -1 : soldDate(a) > soldDate(b) ? 1 : a.name.localeCompare(b.name)));
+  const a6 = [['', '', '', '', '크레건설 분양리스트'], [], [],
+    ['', '넘버', '이름', '생년원일', '성별', '모프', '점여부', '입양자', '분양가', '특이사항']];
+  let saleSum = 0;
+  sold.forEach((i, n) => {
+    const m = splitMemo(i.id), s = saleInfo(i);
+    saleSum += parseFloat(s.man || 0) || 0;
+    a6.push(['', n + 1, i.name, xlDate(i.hatchDate) || m.birthRaw, xlGender(i.gender), i.morph || '',
+             i.spots || '', s.buyer, s.man, s.note]);
+  });
+  // 원본과 같은 자리(M4·N4·O4)에 합계
+  a6[3][12] = '분양가 합'; a6[3][13] = saleSum ? Math.round(saleSum * 100) / 100 : ''; a6[3][14] = '만원';
+  add('분양리스트', a6, [3, 6, 12, 10, 8, 16, 9, 16, 8, 22]);
+
+  return wb;
+}
+
+/* ══════════════════════════════════════════
    설정 · 중복 개체 정리 카드
    같은 이름이 두 개 이상일 때만 나타납니다.
    고르는 건 "프로필"뿐이고, 기록·사진은 어느 쪽을 골라도 전부 합쳐집니다.
@@ -3370,6 +3508,20 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
     refreshIndividuals();
     showToast('✅ 백업 복원 완료!');
   };
+  const [xlBusy, setXlBusy] = useState(false);
+  const exportExcel = async () => {
+    setXlBusy(true);
+    try {
+      const XLSX = await loadXLSX();
+      const wb = buildWorkbook(XLSX);
+      XLSX.writeFile(wb, `크레건설_브리딩_${todayStr()}.xlsx`);
+      showToast('📊 엑셀 파일 다운로드');
+    } catch (e) {
+      showToast('⚠️ ' + ((e && e.message) || '엑셀 만들기 실패'));
+    }
+    setXlBusy(false);
+  };
+
   const exportData = () => {
     const data = {
       individuals: DB.getIndividuals(),
@@ -3395,6 +3547,12 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
         <div className="card" style={{margin:0}}>
           <div style={{fontSize:13, fontWeight:700, marginBottom:12, color:'var(--text2)'}}>데이터</div>
           <div style={{display:'flex', flexDirection:'column', gap:8}}>
+            <button className="btn btn-primary" disabled={xlBusy} onClick={exportExcel}>
+              {xlBusy ? '엑셀 만드는 중…' : '📊 엑셀로 내려받기 (원본 양식)'}
+            </button>
+            <div style={{fontSize:11, color:'var(--text3)', margin:'-2px 2px 4px', lineHeight:1.5}}>
+              애기들 리스트 · 메이팅기록 · 해칭기록 · 분양리스트 4시트
+            </div>
             <button className="btn btn-secondary" onClick={exportData}>📦 데이터 백업 (JSON)</button>
             {importData ? (
               <div style={{background:'var(--bg3)', borderRadius:10, padding:12}}>
@@ -3424,11 +3582,12 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
         <div className="card" style={{margin:0}}>
           <div style={{fontSize:13, fontWeight:700, marginBottom:6, color:'var(--text2)'}}>앱 정보</div>
           <div style={{fontSize:13, color:'var(--text3)', lineHeight:1.7}}>
-            크레건설 브리딩 비서 v2.0<br/>
+            크레건설 브리딩 비서 v2.1<br/>
             축양·분양·<b>산란</b>·메이팅·해칭 · 즐겨찾기 · 캘린더(날짜별 추가·수정)<br/>
             사진 첨부 · 예정일 대비 차이 기록 · 백업 복원 · 비속어 필터<br/>
             ☁️ 서버 동기화 — 회원가입·로그인, 폰·PC 같은 데이터<br/>
             🔀 같은 이름 개체 합치기 · 기록 주인 바로잡기<br/>
+            📊 엑셀 내려받기(원본 양식 4시트) · 프로필 사진<br/>
             테마: 아이보리 × 버건디 (크레건설 아이덴티티)<br/>
             예정: AI 상담 연결
           </div>
