@@ -262,6 +262,64 @@ const DB = {
   deleteIndividual(id) {
     this.saveIndividuals(this.getIndividuals().filter(i => i.id !== id));
     this.saveEvents(this.getEvents().filter(e => e.individualId !== id));
+  },
+
+  /* ── 같은 이름 개체 찾기 (기기별로 따로 만들어진 같은 아이) ── */
+  findDuplicateNames() {
+    const map = new Map();
+    this.getIndividuals().forEach(i => {
+      const k = (i.name || '').trim();
+      if (!k) return;
+      if (!map.has(k)) map.set(k, []);
+      map.get(k).push(i);
+    });
+    return [...map.entries()]
+      .filter(([, v]) => v.length > 1)
+      .map(([name, items]) => ({ name, items }));
+  },
+
+  /* ── 개체 병합 ──
+     keepId 로 dropId 를 흡수합니다. 기록·사진·알림은 하나도 버리지 않고 전부 옮깁니다.
+     profileFrom 으로 성별·모프·출생일 같은 "프로필"을 어느 쪽 것으로 할지만 고릅니다.
+     빈 값이면 반대쪽 값으로 채웁니다(고른 쪽이 비었다고 정보가 사라지지 않게). */
+  mergeIndividuals(keepId, dropId, profileFrom = 'keep') {
+    if (!keepId || !dropId || keepId === dropId) return null;
+    const list = this.getIndividuals();
+    const keep = list.find(i => i.id === keepId);
+    const drop = list.find(i => i.id === dropId);
+    if (!keep || !drop) return null;
+
+    const PROFILE = ['gender', 'morph', 'spots', 'hatchDate', 'status', 'salePrice',
+                     'avatar', 'isExternal', 'isFromCreGunseol', 'favorite', 'babyNotes', 'shareCode'];
+    const src = profileFrom === 'drop' ? drop : keep;
+    const alt = profileFrom === 'drop' ? keep : drop;
+    const blank = v => v === undefined || v === null || v === '' || v === 'unknown' || v === false;
+    const merged = { ...keep };
+    PROFILE.forEach(k => { merged[k] = blank(src[k]) ? (blank(alt[k]) ? src[k] : alt[k]) : src[k]; });
+    merged.sireId = keep.sireId || drop.sireId || null;
+    merged.damId  = keep.damId  || drop.damId  || null;
+
+    // 기록 이동 + 메이팅 파트너 참조 정정
+    const events = this.getEvents().map(e => {
+      let x = e;
+      if (x.individualId === dropId) x = { ...x, individualId: keepId };
+      if (x.data && x.data.partnerId === dropId) x = { ...x, data: { ...x.data, partnerId: keepId } };
+      return x;
+    });
+    // 개체 교체 + 자식들의 부모 참조 정정
+    const inds = list.filter(i => i.id !== dropId).map(i => {
+      let x = i.id === keepId ? merged : i;
+      if (x.sireId === dropId) x = { ...x, sireId: keepId };
+      if (x.damId === dropId) x = { ...x, damId: keepId };
+      return x;
+    });
+    const rems = this.getReminders().map(r =>
+      r.individualId === dropId ? { ...r, individualId: keepId, geckoName: merged.name } : r);
+
+    this.saveIndividuals(inds);
+    this.saveEvents(events);
+    this.saveReminders(rems);
+    return merged;
   }
 };
 
@@ -286,13 +344,21 @@ const SYNC_KINDS = [
 const STORE_OF_KIND = SYNC_KINDS.reduce((a, k) => (a[k.kind] = k.store, a), {});
 const KIND_OF_STORE = SYNC_KINDS.reduce((a, k) => (a[k.store] = k.kind, a), { cg_settings: 'settings' });
 
+/* 서버 접속 정보 — 사용자가 입력할 필요 없이 앱에 내장합니다.
+   publishable key 는 공개돼도 안전한 키입니다(행 수준 보안 RLS 로 본인 데이터만 접근 가능).
+   ⚠️ service_role(sb_secret_) 키는 절대 여기 넣지 마세요. */
+const SERVER = {
+  url: 'https://yginjnqwwvsvhysboiqv.supabase.co',
+  key: 'sb_publishable_FXQ8f-T6LdImrKUWFvW8jw_6_1IJ7AI',
+};
+
 const SYNC = {
   listeners: new Set(),
   running: false,
   timer: null,
 
   /* ── 저장소 ── */
-  cfg()  { try { return JSON.parse(localStorage.getItem('cg_sync_cfg') || '{}'); } catch { return {}; } },
+  cfg()  { return SERVER; },
   ses()  { try { return JSON.parse(localStorage.getItem('cg_sync_session') || 'null'); } catch { return null; } },
   st()   { try { return JSON.parse(localStorage.getItem('cg_sync_state') || '{}'); } catch { return {}; } },
   saveCfg(c) { localStorage.setItem('cg_sync_cfg', JSON.stringify(c)); this.emit(); },
@@ -366,23 +432,62 @@ const SYNC = {
     try { const j = JSON.parse(body); return j.msg || j.message || j.error_description || j.error || body; } catch { return body || ('HTTP ' + res.status); }
   },
 
-  /* ── 로그인 / 로그아웃 ── */
-  async signIn(url, key, email, password) {
-    const clean = (url || '').trim().replace(/\/+$/, '');
-    localStorage.setItem('cg_sync_cfg', JSON.stringify({ url: clean, key: (key || '').trim() }));
-    const res = await this.api('/auth/v1/token?grant_type=password', {
-      method: 'POST',
-      body: JSON.stringify({ email: (email || '').trim(), password: password || '' }),
-    }, false);
-    if (!res.ok) throw new Error(await this.parseErr(res));
-    const d = await res.json();
+  /* ── 로그인 / 회원가입 / 비밀번호 재설정 ── */
+  _store(d, email) {
     this.saveSes({
       access_token: d.access_token,
       refresh_token: d.refresh_token,
       expires_at: Date.now() + (d.expires_in || 3600) * 1000,
       email: (d.user && d.user.email) || email,
     });
+  },
+
+  async signIn(email, password) {
+    const res = await this.api('/auth/v1/token?grant_type=password', {
+      method: 'POST',
+      body: JSON.stringify({ email: (email || '').trim(), password: password || '' }),
+    }, false);
+    if (!res.ok) throw new Error(this.krErr(await this.parseErr(res)));
+    this._store(await res.json(), email);
     return true;
+  },
+
+  // 회원가입. 이메일 확인이 켜져 있으면 세션 없이 돌아옵니다 → 메일 확인 안내
+  async signUp(email, password) {
+    const res = await this.api('/auth/v1/signup', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: (email || '').trim(), password: password || '',
+        options: { email_redirect_to: location.origin + location.pathname },
+      }),
+    }, false);
+    if (!res.ok) throw new Error(this.krErr(await this.parseErr(res)));
+    const d = await res.json();
+    if (d.access_token) { this._store(d, email); return { signedIn: true }; }
+    return { signedIn: false, needsConfirm: true };
+  },
+
+  async resetPassword(email) {
+    const back = encodeURIComponent(location.origin + location.pathname);
+    const res = await this.api('/auth/v1/recover?redirect_to=' + back, {
+      method: 'POST',
+      body: JSON.stringify({ email: (email || '').trim() }),
+    }, false);
+    if (!res.ok) throw new Error(this.krErr(await this.parseErr(res)));
+    return true;
+  },
+
+  // 서버 영문 오류를 알아볼 수 있는 말로
+  krErr(msg) {
+    const m = String(msg || '');
+    if (/Invalid login credentials/i.test(m)) return '이메일이나 비밀번호가 맞지 않아요';
+    if (/Email not confirmed/i.test(m)) return '메일함에서 인증 메일을 먼저 확인해주세요';
+    if (/User already registered|already been registered/i.test(m)) return '이미 가입된 이메일이에요. 로그인해주세요';
+    if (/Password should be at least/i.test(m)) return '비밀번호는 6자 이상이어야 해요';
+    if (/Unable to validate email|invalid format/i.test(m)) return '이메일 형식이 올바르지 않아요';
+    if (/rate limit|too many/i.test(m)) return '잠시 후 다시 시도해주세요 (요청이 많았어요)';
+    if (/Failed to fetch|NetworkError/i.test(m)) return '인터넷 연결을 확인해주세요';
+    return m;
   },
 
   async refresh() {
@@ -775,6 +880,65 @@ const isBadName = (n) => PROFANITY_RE.test((n || '').replace(/\s/g, ''));
 const BAD_NAME_MSG = '귀여운 아이들에게 비속어는 좋은 선택이 아닌 것 같아요 🙂\n예쁜 이름으로 다시 알려주시겠어요?';
 
 // "이름은/이름이 ○○(이)야" 명시 선언 패턴에서 이름 추출
+/* 대화 중 주인 정정·대상 전환 문장 인식
+   "사진은 밤울2호야" → 방금 담은 사진의 주인을 바꿈
+   "이건 크순이 거야"  → 방금 담은 기록의 주인을 바꿈
+   "이제 크순이 얘기할게" → 대상만 전환 (기록은 그대로) */
+// "크순이야" 는 이름이 "크순이"일 수도 "크순"일 수도 있습니다.
+// 여기서는 후보를 순서대로 내놓고, 실제 등록된 이름과 대조해 고릅니다.
+// (게코 이름은 대부분 '이'로 끝나므로 '크순이'를 먼저 시도합니다)
+function rtNameCandidates(raw) {
+  let s = (raw || '').trim().replace(/[.!~?]+$/, '');
+  s = s.replace(/\s*(?:거|꺼|것)(?:야|예요|이에요|입니다|임)?$/, '');   // "크범이 거야"
+  s = s.replace(/\s*(?:기록|사진)$/, '');
+  s = s.trim();
+  if (/\s/.test(s) || s.length > 14) return { cands: [], explicit: false };
+  const out = [];
+  let explicit = false;
+  const m = s.match(/^(.+?)(이야|이에요|예요|입니다|이다|임|야|이라고|라고)$/);
+  if (m) {
+    explicit = true;
+    if (m[2] === '이야') out.push(m[1] + '이');
+    out.push(m[1]);
+  }
+  out.push(s);
+  const cands = [...new Set(out)].filter(x => /^[가-힣A-Za-z0-9]{1,12}$/.test(x));
+  return { cands, explicit };
+}
+
+/* 대화 중 주인 정정·대상 전환 문장 인식
+   "사진은 밤울2호야" → 방금 담은 사진의 주인을 바꿈
+   "이건 크순이 거야"  → 방금 담은 기록의 주인을 바꿈
+   "이제 크순이 얘기할게" → 대상만 전환 (기록은 그대로) */
+function extractRetarget(text) {
+  const t = (text || '').trim().replace(/[\s]+$/, '');
+  const shots = [
+    [/^(?:이|그|저|방금|아까)?\s*사진(?:은|는|이|가)?\s+(.+)$/, 'photo'],
+    [/^(.+?)\s*사진(?:이야|이에요|예요|야|임)$/, 'photo'],
+    [/^(?:이건|이거|이것|그건|그거|저건|방금\s*건|방금거|아까\s*건)(?:은|는)?\s+(.+)$/, 'last'],
+  ];
+  for (const [re, scope] of shots) {
+    const m = t.match(re);
+    if (!m) continue;
+    const { cands, explicit } = rtNameCandidates(m[1]);
+    if (!cands.length) continue;
+    // 서술 어미가 없으면(예: "사진 찍었어") 등록된 이름일 때만 인정
+    const known = DB.getIndividuals().map(i => i.name);
+    const hit = cands.find(c => known.includes(c));
+    if (!explicit && !hit) continue;
+    return { name: hit || cands[0], scope };
+  }
+  const sw = t.match(/^(?:이제|지금부터|다음은|이번엔)\s*(.+?)\s*(?:얘기|이야기|차례)/);
+  if (sw) {
+    const { cands } = rtNameCandidates(sw[1]);
+    if (cands.length) {
+      const known = DB.getIndividuals().map(i => i.name);
+      return { name: cands.find(c => known.includes(c)) || cands[0], scope: 'switch' };
+    }
+  }
+  return null;
+}
+
 function extractNameDecl(text) {
   const m = text.match(/이름(?:은|이|:)?\s*([가-힣A-Za-z0-9]{1,10}?)(?:이야|이에요|예요|입니다|이래|라고\s*해|라고|이다|임|야|고)?[\s.!?~]*$/);
   return m ? m[1] : null;
@@ -1080,7 +1244,7 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals }) {
 
         {individuals.length > 0 && (
           <div style={{display:'flex', gap:6, padding:'12px 16px 0', overflowX:'auto'}}>
-            {[['own','🏠 축양리스트'],['sale','🏷️ 분양리스트'],['mating','💞 메이팅기록'],['hatch','🐣 해칭기록']].map(([k, l]) => (
+            {[['own','🏠 축양리스트'],['sale','🏷️ 분양리스트'],['mating','💞 메이팅기록'],['laying','🥚 산란기록'],['hatch','🐣 해칭기록']].map(([k, l]) => (
               <button key={k} className="chip-btn" style={view === k ? {background:'var(--accent-soft)', fontWeight:700} : {}} onClick={() => setView(k)}>{l}</button>
             ))}
           </div>
@@ -1124,6 +1288,7 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals }) {
         )}
 
         {view === 'mating' && <MatingView individuals={individuals} navigate={navigate} showToast={showToast} />}
+        {view === 'laying' && <LayingView individuals={individuals} navigate={navigate} showToast={showToast} />}
         {view === 'hatch' && <HatchView individuals={individuals} refreshIndividuals={refreshIndividuals} showToast={showToast} navigate={navigate} />}
 
         <div style={{height: 16}} />
@@ -1256,6 +1421,105 @@ function MatingView({ individuals, navigate, showToast }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/* ── 산란기록 뷰: 클러치(알 묶음) 일정 중심 ──
+   메이팅기록이 "누가 누구랑"이라면, 여기는 "알이 언제 부화하나"를 봅니다.
+   부화 임박한 것부터 위로 올라옵니다. ── */
+function LayingView({ individuals, navigate }) {
+  const byId = {};
+  individuals.forEach(i => { byId[i.id] = i; });
+  const events = DB.getEvents();
+  const matings = events.filter(e => e.type === 'mating').sort((a, b) => (a.date < b.date ? 1 : -1));
+  const hatchings = events.filter(e => e.type === 'hatching');
+
+  const rows = events.filter(e => e.type === 'laying').map(e => {
+    const mom = byId[e.individualId];
+    const notes = (e.data && e.data.notes) || '';
+    const eggs = e.data && e.data.eggCount;
+    // 부(父): 이 산란일 이전의 가장 최근 메이팅 상대
+    const m = matings.find(x => x.individualId === e.individualId && x.date <= e.date);
+    const dadName = m && m.data ? (m.data.partnerName || (byId[m.data.partnerId] || {}).name || null) : null;
+    const expDate = new Date(new Date(e.date).getTime() + HATCH_AFTER_LAYING * 86400000);
+    const expISO = localISO(expDate);
+    const d = daysUntil(expISO);
+    const infertile = /무정/.test(notes);
+    const hatched = hatchings.find(h => h.individualId === e.individualId &&
+      new Date(h.date) >= new Date(e.date) &&
+      Math.abs((new Date(h.date) - expDate) / 86400000) <= 45);
+
+    let state = `D-${d}`, tone = d <= 7 ? '#B3261E' : 'var(--accent2)';
+    if (infertile) { state = '무정'; tone = '#8A8177'; }
+    else if (hatched) { state = '부화완료'; tone = '#2E7D46'; }
+    else if (d < -14) { state = '경과'; tone = '#8A8177'; }
+    else if (d < 0) { state = `지연 ${-d}일`; tone = '#C87F2F'; }
+    else if (d === 0) { state = '오늘 예정'; tone = '#B3261E'; }
+    const waiting = !infertile && !hatched && d >= -14;
+    return { e, mom, dadName, eggs, notes, expISO, state, tone, waiting, d };
+  });
+
+  // 부화 대기 중인 것부터 임박순 → 나머지는 최신 산란순
+  rows.sort((a, b) => {
+    if (a.waiting !== b.waiting) return a.waiting ? -1 : 1;
+    if (a.waiting) return a.d - b.d;
+    return a.e.date < b.e.date ? 1 : -1;
+  });
+
+  const waitCnt = rows.filter(r => r.waiting).length;
+  const eggSum = rows.filter(r => r.waiting).reduce((s, r) => s + (r.eggs || 0), 0);
+  const soon = rows.filter(r => r.waiting && r.d >= 0 && r.d <= 7).length;
+
+  if (!rows.length) return (
+    <div className="empty" style={{padding:'40px 20px'}}>
+      <div className="empty-icon">🥚</div>
+      <p>{'아직 산란 기록이 없어요.\n＋ 버튼에서 "크범이 알 낳았어" 처럼 말씀해보세요.'}</p>
+    </div>
+  );
+
+  return (
+    <div style={{padding:'0 16px'}}>
+      <div className="card" style={{margin:'0 0 12px', display:'flex', justifyContent:'space-around', textAlign:'center'}}>
+        <div>
+          <div style={{fontSize:20, fontWeight:800, color:'var(--accent2)'}}>{waitCnt}</div>
+          <div style={{fontSize:11, color:'var(--text3)'}}>부화 대기</div>
+        </div>
+        <div>
+          <div style={{fontSize:20, fontWeight:800, color:'var(--accent2)'}}>{eggSum || '—'}</div>
+          <div style={{fontSize:11, color:'var(--text3)'}}>알 수(확인분)</div>
+        </div>
+        <div>
+          <div style={{fontSize:20, fontWeight:800, color: soon ? '#B3261E' : 'var(--text3)'}}>{soon}</div>
+          <div style={{fontSize:11, color:'var(--text3)'}}>7일 내 부화</div>
+        </div>
+      </div>
+
+      {rows.map(r => (
+        <div className="card" key={r.e.id} style={{margin:'0 0 8px', cursor: r.mom ? 'pointer' : 'default'}}
+          onClick={() => r.mom && navigate('profile', { gecko: r.mom })}>
+          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', gap:8}}>
+            <div style={{minWidth:0}}>
+              <div style={{fontSize:14, fontWeight:700}}>
+                🥚 {r.mom ? r.mom.name : '(삭제된 개체)'}
+                {r.dadName && <span style={{fontSize:12, fontWeight:500, color:'var(--text3)'}}> × {r.dadName}</span>}
+              </div>
+              <div style={{fontSize:12, color:'var(--text3)', marginTop:3}}>
+                {fmtDate(r.e.date)} 산란
+                {r.eggs ? ` · 알 ${r.eggs}개` : ''}
+                {r.notes ? ` · ${r.notes}` : ''}
+              </div>
+              <div style={{fontSize:11, color:'var(--text3)', marginTop:2}}>
+                부화 예정 {fmtDate(r.expISO)}
+              </div>
+            </div>
+            <span style={{fontSize:12, fontWeight:700, color:r.tone, whiteSpace:'nowrap'}}>{r.state}</span>
+          </div>
+        </div>
+      ))}
+      <div style={{fontSize:11, color:'var(--text3)', textAlign:'center', padding:'6px 0 2px'}}>
+        부화 예정일은 산란일 +{HATCH_AFTER_LAYING}일 기준이에요 · 알 개수 수정은 메이팅기록 탭에서
+      </div>
     </div>
   );
 }
@@ -1455,6 +1719,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
   const heldGenderRef = useRef(null);               // 대상 미정 성별
   const heldExternalRef = useRef(false);             // 외부 개체 등록 플래그
   const pendingNameRef = useRef(null);               // 새 이름 등록 확인 대기
+  const pendingRetargetRef = useRef(null);           // 등록 후 옮길 기록 (주인 정정 대기)
   const pendingBabyRef = useRef(null);               // 해칭 베이비 이름 답변 대기
   const pendingRef = useRef([]);                     // 담긴 기록 (ref 미러)
 
@@ -1491,6 +1756,25 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     ]);
   };
 
+  /* ── 담긴 기록의 주인 정정 ──
+     대화 도중 다른 아이 얘기가 섞여도 그 기록만 옮길 수 있게 합니다. */
+  const applyRetarget = (ind, scope) => {
+    setTarget(ind);
+    if (scope === 'switch') { bot(`네, 이제 ${ind.name} 얘기로 넘어갈게요 🦎`); return; }
+    const cur = pendingRef.current;
+    let idx = -1;
+    if (scope === 'photo') {
+      for (let i = cur.length - 1; i >= 0; i--) if (cur[i].type === 'photo') { idx = i; break; }
+    }
+    if (idx < 0) idx = cur.length - 1;
+    if (idx < 0) { bot(`네, 이제 ${ind.name} 얘기로 할게요 🦎`); return; }
+    const moved = cur[idx];
+    updatePending(p => p.map((x, i) => i === idx ? { ...x, targetId: ind.id, targetName: ind.name } : x));
+    bot(`알겠어요, 방금 "${factLabel(moved)}"은(는) ${ind.name} 기록으로 옮겼어요 ✅\n계속 말씀하세요.`, [
+      { label: '💾 이제 저장할래', kind: 'save' },
+    ]);
+  };
+
   /* ── 모프 프로필 반영 ── */
   const applyMorph = (target, morph) => {
     DB.updateIndividual(target.id, { morph });
@@ -1514,6 +1798,14 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     });
     refreshIndividuals();
     setTarget(saved);
+    // 주인 정정 대기 중이었다면(예: "사진은 밤울2호야" → 등록) 그 기록을 새 개체로 옮기고 끝냅니다
+    if (pendingRetargetRef.current) {
+      const scope = pendingRetargetRef.current.scope;
+      pendingRetargetRef.current = null;
+      bot(`🦎 ${name}, 우리 식구가 됐어요!`);
+      applyRetarget(saved, scope);
+      return;
+    }
     let morphLine = '';
     if (heldMorphRef.current) {
       morphLine = '\n' + applyMorph(saved, heldMorphRef.current);
@@ -1594,7 +1886,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     if (pendingNameRef.current) {
       if (/^(응|네|넵|예|어|그래|맞아|등록|ㅇㅇ|ㅇ)/.test(text)) { doRegister(pendingNameRef.current); return; }
       if (/^(아니|노|취소|ㄴㄴ|ㄴ)/.test(text)) {
-        pendingNameRef.current = null; heldRef.current = []; heldMorphRef.current = null; heldGenderRef.current = null; heldExternalRef.current = false;
+        pendingNameRef.current = null; pendingRetargetRef.current = null; heldRef.current = []; heldMorphRef.current = null; heldGenderRef.current = null; heldExternalRef.current = false;
         bot('알겠습니다. 등록하려는 아이 이름을 다시 알려주세요. 🦎');
         return;
       }
@@ -1621,6 +1913,23 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
         }
       }
       bot('네, 자동 이름으로 등록할게요 🙂 계속 말씀해주세요.');
+      return;
+    }
+
+    // 2.9) 주인 정정 / 대상 전환 — "사진은 밤울2호야", "이건 크순이 거야", "이제 크순이 얘기할게"
+    const rt = extractRetarget(text);
+    if (rt) {
+      const all = DB.getIndividuals();
+      const strip = s => (s || '').replace(/이$/, '');
+      const found = all.find(i => i.name === rt.name) || all.find(i => strip(i.name) === strip(rt.name));
+      if (found) { applyRetarget(found, rt.scope); return; }
+      if (isBadName(rt.name)) { bot(BAD_NAME_MSG); return; }
+      pendingRetargetRef.current = rt;
+      pendingNameRef.current = rt.name;
+      bot(`"${rt.name}"(은)는 처음 보는 이름이네요. 새로 등록하고 그 기록을 옮길까요?`, [
+        { label: '🦎 네, 등록해주세요', kind: 'register-yes' },
+        { label: '아니요, 다시 입력할게요', kind: 'register-no' },
+      ]);
       return;
     }
 
@@ -1985,6 +2294,15 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
   };
 
   const removePending = (f) => updatePending(p => p.filter(x => x !== f));
+  // 담긴 기록의 주인 바꾸기 — 대화 중에 다른 아이 얘기가 섞였을 때 저장 전에 바로잡습니다
+  const [retarget, setRetarget] = useState(null);
+  const retargetTo = (f, indId) => {
+    const ind = DB.getIndividuals().find(i => i.id === indId);
+    if (!ind) return;
+    updatePending(p => p.map(x => x === f ? { ...x, targetId: ind.id, targetName: ind.name } : x));
+    setRetarget(null);
+    showToast(`🦎 ${ind.name}(으)로 옮겼어요`);
+  };
 
   // 확인 화면: 개체별 그룹
   const grouped = {};
@@ -2061,12 +2379,27 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
               <div style={{fontSize:15, fontWeight:700, marginBottom:4}}>🦎 {name}</div>
               <div className="confirm-list">
                 {fs.map((f, i) => (
-                  <div className="confirm-row" key={i}>
-                    <span className="confirm-key">{factLabel(f)}</span>
-                    <span className="confirm-val">
-                      {fmtDate(f.date)}
-                      <button onClick={() => removePending(f)} style={{background:'none', border:'none', color:'var(--text3)', cursor:'pointer', fontSize:15}}>✕</button>
-                    </span>
+                  <div key={i}>
+                    <div className="confirm-row">
+                      <span className="confirm-key">{factLabel(f)}</span>
+                      <span className="confirm-val">
+                        {fmtDate(f.date)}
+                        <button title="주인 바꾸기" onClick={() => setRetarget(retarget === f ? null : f)}
+                          style={{background:'none', border:'none', color: retarget === f ? 'var(--accent2)' : 'var(--text3)', cursor:'pointer', fontSize:14}}>🦎</button>
+                        <button onClick={() => removePending(f)} style={{background:'none', border:'none', color:'var(--text3)', cursor:'pointer', fontSize:15}}>✕</button>
+                      </span>
+                    </div>
+                    {retarget === f && (
+                      <div style={{padding:'4px 0 10px'}}>
+                        <div style={{fontSize:11, color:'var(--text3)', marginBottom:4}}>이 기록의 주인을 누구로 할까요?</div>
+                        <select className="input" style={{padding:'8px 10px', fontSize:13}}
+                          value={f.targetId || ''} onChange={e => retargetTo(f, e.target.value)}>
+                          {DB.getIndividuals().map(g => (
+                            <option key={g.id} value={g.id}>{g.name}{g.morph ? ` (${g.morph})` : ''}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -2687,13 +3020,108 @@ function ReminderCard({ r, onDelete, past }) {
 }
 
 /* ══════════════════════════════════════════
+   설정 · 중복 개체 정리 카드
+   같은 이름이 두 개 이상일 때만 나타납니다.
+   고르는 건 "프로필"뿐이고, 기록·사진은 어느 쪽을 골라도 전부 합쳐집니다.
+   ══════════════════════════════════════════ */
+function DupMergeCard({ showToast, refreshIndividuals }) {
+  const [ver, setVer] = useState(0);
+  const [choice, setChoice] = useState({});
+  const [busy, setBusy] = useState(false);
+  const groups = DB.findDuplicateNames();
+  if (!groups.length) return null;
+
+  // 정보가 더 알찬 쪽을 기본 선택 (채워진 항목 수 → 기록 수 순)
+  const score = (i) => ['gender', 'morph', 'spots', 'hatchDate', 'avatar'].filter(k => {
+    const v = i[k]; return v && v !== 'unknown';
+  }).length;
+  const best = (items) => [...items].sort((a, b) =>
+    score(b) - score(a) || DB.getEventsFor(b.id).length - DB.getEventsFor(a.id).length)[0];
+
+  const summary = (i) => {
+    const bits = [];
+    bits.push(genderLabel(i.gender));
+    if (i.morph) bits.push(i.morph);
+    bits.push(i.hatchDate ? fmtDate(i.hatchDate) + ' 출생' : '출생일 없음');
+    if ((i.status || 'own') !== 'own') bits.push(STATUS[i.status].label);
+    return bits.join(' · ');
+  };
+
+  const mergeOne = (g) => {
+    const keep = choice[g.name] || best(g.items).id;
+    g.items.forEach(i => { if (i.id !== keep) DB.mergeIndividuals(keep, i.id, 'keep'); });
+    return g.items.length - 1;
+  };
+
+  const doOne = (g) => {
+    setBusy(true);
+    const n = mergeOne(g);
+    refreshIndividuals(); setVer(v => v + 1); setBusy(false);
+    showToast(`✅ ${g.name} 합쳤어요 (${n}건 정리)`);
+  };
+
+  const doAll = () => {
+    setBusy(true);
+    let n = 0;
+    groups.forEach(g => { n += mergeOne(g); });
+    refreshIndividuals(); setVer(v => v + 1); setBusy(false);
+    showToast(`✅ 중복 ${n}건 정리 완료`);
+  };
+
+  return (
+    <div className="card" style={{margin:0, border:'1px solid var(--accent-dim)'}}>
+      <div style={{fontSize:13, fontWeight:700, marginBottom:4, color:'var(--accent2)'}}>
+        🔀 같은 이름 개체 {groups.length}건
+      </div>
+      <div style={{fontSize:12, color:'var(--text3)', lineHeight:1.6, marginBottom:10}}>
+        기기마다 따로 등록돼서 같은 아이가 둘로 나뉘었어요.<br/>
+        <b>어느 정보를 쓸지만 고르시면 됩니다. 기록과 사진은 전부 합쳐져요.</b>
+      </div>
+
+      {groups.map(g => {
+        const sel = choice[g.name] || best(g.items).id;
+        const total = g.items.reduce((s, i) => s + DB.getEventsFor(i.id).length, 0);
+        return (
+          <div key={g.name} style={{background:'var(--bg3)', borderRadius:10, padding:12, marginBottom:10}}>
+            <div style={{fontSize:14, fontWeight:700, marginBottom:8}}>🦎 {g.name}</div>
+            <div style={{display:'flex', flexDirection:'column', gap:6}}>
+              {g.items.map(i => (
+                <button key={i.id}
+                  className={`option-btn ${sel === i.id ? 'selected' : ''}`}
+                  style={{textAlign:'left', fontSize:12, lineHeight:1.5}}
+                  onClick={() => setChoice(c => ({ ...c, [g.name]: i.id }))}>
+                  {sel === i.id ? '◉ ' : '○ '}{summary(i)}
+                  <span style={{color:'var(--text3)'}}> · 기록 {DB.getEventsFor(i.id).length}건</span>
+                </button>
+              ))}
+            </div>
+            <div style={{fontSize:11, color:'var(--text3)', margin:'8px 0 8px'}}>
+              → 기록 {total}건은 어느 쪽을 고르셔도 전부 남습니다
+            </div>
+            <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => doOne(g)}>합치기</button>
+          </div>
+        );
+      })}
+
+      {groups.length > 1 && (
+        <button className="btn btn-secondary" disabled={busy} onClick={doAll}>
+          전부 합치기 ({groups.length}건)
+        </button>
+      )}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════
    설정 · 서버 동기화 카드
    ══════════════════════════════════════════ */
 function SyncCard({ showToast, refreshIndividuals }) {
   const [, bump] = useState(0);
-  const [form, setForm] = useState(() => { const c = SYNC.cfg(); return { url: c.url || '', key: c.key || '', email: '', password: '' }; });
+  const [form, setForm] = useState({ email: '', password: '' });
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(false);
+  const [mode, setMode] = useState('signin');   // signin | signup | reset
+  const [note, setNote] = useState('');
   const [confirmPull, setConfirmPull] = useState(false);
 
   useEffect(() => SYNC.on(() => bump(v => v + 1)), []);
@@ -2711,20 +3139,43 @@ function SyncCard({ showToast, refreshIndividuals }) {
     return d.toLocaleString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
   };
 
-  const doLogin = async () => {
-    if (!form.url.trim() || !form.key.trim()) return showToast('⚠️ 서버 주소와 키를 넣어주세요');
-    if (!form.email.trim() || !form.password) return showToast('⚠️ 이메일과 비밀번호를 넣어주세요');
+  const afterAuth = async () => {
+    showToast('✅ 연결됐어요! 기록을 맞추는 중...');
+    const r = await SYNC.firstSync();
+    const dup = DB.findDuplicateNames();
+    showToast(r && r.error ? '⚠️ ' + r.error
+      : dup.length ? `☁️ 동기화 완료 · 같은 이름 ${dup.length}건은 아래에서 합쳐주세요`
+      : '☁️ 동기화 완료!');
+    refreshIndividuals();
+    setForm({ email: '', password: '' });
+    setOpen(false); setNote('');
+  };
+
+  const doSubmit = async () => {
+    const email = form.email.trim();
+    if (!email) return showToast('⚠️ 이메일을 넣어주세요');
+    if (mode === 'reset') {
+      setBusy(true);
+      try { await SYNC.resetPassword(email); setNote('📧 비밀번호 재설정 메일을 보냈어요. 메일함을 확인해주세요.'); }
+      catch (e) { showToast('⚠️ ' + ((e && e.message) || '실패')); }
+      setBusy(false); return;
+    }
+    if (!form.password) return showToast('⚠️ 비밀번호를 넣어주세요');
+    if (mode === 'signup' && form.password.length < 6) return showToast('⚠️ 비밀번호는 6자 이상이어야 해요');
     setBusy(true);
     try {
-      await SYNC.signIn(form.url, form.key, form.email, form.password);
-      showToast('✅ 연결됐어요! 데이터를 올리는 중...');
-      const r = await SYNC.firstSync();
-      showToast(r && r.error ? '⚠️ ' + r.error : '☁️ 동기화 완료!');
-      refreshIndividuals();
-      setForm(f => ({ ...f, password: '' }));
-      setOpen(false);
+      if (mode === 'signup') {
+        const r = await SYNC.signUp(email, form.password);
+        if (!r.signedIn) {
+          setNote('📧 인증 메일을 보냈어요. 메일의 링크를 누른 뒤 로그인해주세요.');
+          setMode('signin'); setBusy(false); return;
+        }
+      } else {
+        await SYNC.signIn(email, form.password);
+      }
+      await afterAuth();
     } catch (e) {
-      showToast('⚠️ ' + ((e && e.message) || '연결 실패'));
+      showToast('⚠️ ' + ((e && e.message) || '실패'));
     }
     setBusy(false);
   };
@@ -2792,25 +3243,46 @@ function SyncCard({ showToast, refreshIndividuals }) {
       ) : open ? (
         <div style={{display:'flex', flexDirection:'column', gap:8}}>
           <div style={{fontSize:12, color:'var(--text3)', lineHeight:1.6, marginBottom:2}}>
-            Supabase 프로젝트 정보를 넣으면 폰·PC가 같은 데이터를 봅니다.<br/>
-            (Supabase → Settings → API 에서 복사)
+            {mode === 'signup' ? '이메일과 비밀번호만 정하면 됩니다. 기록은 본인만 볼 수 있어요.'
+             : mode === 'reset' ? '가입하신 이메일을 넣으면 재설정 링크를 보내드려요.'
+             : '로그인하면 폰·PC가 같은 기록을 봅니다.'}
           </div>
-          <input className="input" placeholder="서버 주소 (https://xxxx.supabase.co)" value={form.url} onChange={e => setForm({ ...form, url: e.target.value })} />
-          <input className="input" placeholder="anon public key" value={form.key} onChange={e => setForm({ ...form, key: e.target.value })} />
-          <input className="input" type="email" autoComplete="username" placeholder="이메일" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} />
-          <input className="input" type="password" autoComplete="current-password" placeholder="비밀번호" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} />
+          <input className="input" type="email" autoComplete="username" placeholder="이메일"
+            value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} />
+          {mode !== 'reset' && (
+            <input className="input" type="password"
+              autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+              placeholder={mode === 'signup' ? '비밀번호 (6자 이상)' : '비밀번호'}
+              value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} />
+          )}
+          {note && <div style={{fontSize:12, color:'var(--accent2)', lineHeight:1.6}}>{note}</div>}
           <div style={{display:'flex', gap:6}}>
-            <button className="btn btn-primary" style={{flex:1}} disabled={busy} onClick={doLogin}>{busy ? '연결 중…' : '연결하기'}</button>
-            <button className="btn btn-secondary" style={{flex:1}} disabled={busy} onClick={() => setOpen(false)}>취소</button>
+            <button className="btn btn-primary" style={{flex:1}} disabled={busy} onClick={doSubmit}>
+              {busy ? '진행 중…' : mode === 'signup' ? '가입하고 시작하기' : mode === 'reset' ? '재설정 메일 보내기' : '로그인'}
+            </button>
+            <button className="btn btn-secondary" style={{flex:1}} disabled={busy}
+              onClick={() => { setOpen(false); setNote(''); setMode('signin'); }}>취소</button>
           </div>
-          {st.lastError && <div style={{fontSize:12, color:'#B3261E'}}>⚠️ {st.lastError}</div>}
+          <div style={{display:'flex', justifyContent:'space-between', fontSize:12, paddingTop:2}}>
+            {mode === 'signin' ? (
+              <>
+                <button onClick={() => { setMode('signup'); setNote(''); }} style={{background:'none', border:'none', color:'var(--accent2)', cursor:'pointer', padding:0}}>처음이세요? 회원가입</button>
+                <button onClick={() => { setMode('reset'); setNote(''); }} style={{background:'none', border:'none', color:'var(--text3)', cursor:'pointer', padding:0}}>비밀번호를 잊었어요</button>
+              </>
+            ) : (
+              <button onClick={() => { setMode('signin'); setNote(''); }} style={{background:'none', border:'none', color:'var(--accent2)', cursor:'pointer', padding:0}}>← 로그인으로 돌아가기</button>
+            )}
+          </div>
         </div>
       ) : (
         <>
           <div style={{fontSize:12, color:'var(--text3)', lineHeight:1.7, marginBottom:10}}>
-            지금은 이 기기에만 저장돼요. 서버에 연결하면 폰에서 적은 기록이 PC에도 그대로 나타나요.
+            지금은 이 기기에만 저장돼요. 로그인하면 폰에서 적은 기록이 PC에도 그대로 나타나요.
           </div>
-          <button className="btn btn-primary" onClick={() => setOpen(true)}>서버 연결하기</button>
+          <div style={{display:'flex', gap:6}}>
+            <button className="btn btn-primary" style={{flex:1}} onClick={() => { setMode('signin'); setOpen(true); }}>로그인</button>
+            <button className="btn btn-secondary" style={{flex:1}} onClick={() => { setMode('signup'); setOpen(true); }}>회원가입</button>
+          </div>
         </>
       )}
     </div>
@@ -2873,6 +3345,7 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
     <div className="screen">
       <div className="header"><h1>⚙️ 설정</h1></div>
       <div style={{padding:'16px', display:'flex', flexDirection:'column', gap:12}}>
+        <DupMergeCard showToast={showToast} refreshIndividuals={refreshIndividuals} />
         <SyncCard showToast={showToast} refreshIndividuals={refreshIndividuals} />
         <div className="card" style={{margin:0}}>
           <div style={{fontSize:13, fontWeight:700, marginBottom:12, color:'var(--text2)'}}>데이터</div>
@@ -2906,10 +3379,11 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
         <div className="card" style={{margin:0}}>
           <div style={{fontSize:13, fontWeight:700, marginBottom:6, color:'var(--text2)'}}>앱 정보</div>
           <div style={{fontSize:13, color:'var(--text3)', lineHeight:1.7}}>
-            크레건설 브리딩 비서 v1.8<br/>
-            축양·분양·메이팅·해칭 · 즐겨찾기 · 캘린더(날짜별 추가·수정)<br/>
+            크레건설 브리딩 비서 v1.9<br/>
+            축양·분양·<b>산란</b>·메이팅·해칭 · 즐겨찾기 · 캘린더(날짜별 추가·수정)<br/>
             사진 첨부 · 예정일 대비 차이 기록 · 백업 복원 · 비속어 필터<br/>
-            ☁️ 서버 동기화(Supabase) — 폰·PC 같은 데이터<br/>
+            ☁️ 서버 동기화 — 회원가입·로그인, 폰·PC 같은 데이터<br/>
+            🔀 같은 이름 개체 합치기 · 기록 주인 바로잡기<br/>
             테마: 아이보리 × 버건디 (크레건설 아이덴티티)<br/>
             예정: AI 상담 연결
           </div>
