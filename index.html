@@ -40,7 +40,9 @@
       --safe-bottom: env(safe-area-inset-bottom, 0px);
     }
 
-    .app { display: flex; flex-direction: column; height: 100vh; max-width: 430px; margin: 0 auto; position: relative; background: var(--bg); }
+    /* 100vh 는 안드로이드 크롬에서 "주소창이 숨겨졌을 때" 높이라 실제 보이는 영역보다 큽니다.
+       그래서 채팅 입력줄이 화면 아래로 밀려 스크롤해야 보였습니다. dvh 로 실제 보이는 높이를 씁니다. */
+    .app { display: flex; flex-direction: column; height: 100vh; height: 100dvh; max-width: 430px; margin: 0 auto; position: relative; background: var(--bg); }
     .screen { flex: 1; overflow-y: auto; padding-bottom: calc(70px + var(--safe-bottom)); }
     .screen::-webkit-scrollbar { display: none; }
 
@@ -1112,9 +1114,13 @@ function App() {
     });
     const onVisible = () => { if (document.visibilityState === 'visible') SYNC.run('resume'); };
     const onOnline = () => SYNC.run('online');
+    // 앱을 켜둔 채 가만히 있어도 다른 기기 변경이 들어오도록 1분마다 확인
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') SYNC.run('poll');
+    }, 60000);
     document.addEventListener('visibilitychange', onVisible);
     window.addEventListener('online', onOnline);
-    return () => { off(); document.removeEventListener('visibilitychange', onVisible); window.removeEventListener('online', onOnline); };
+    return () => { off(); clearInterval(timer); document.removeEventListener('visibilitychange', onVisible); window.removeEventListener('online', onOnline); };
   }, []);
 
   /* 화면 이동 기록 — 안드로이드 뒤로가기(◁)로 앱이 꺼지지 않고 이전 화면으로 가게 합니다.
@@ -1150,7 +1156,10 @@ function App() {
   return (
     <div className="app">
       {screen.name === 'home' && (
-        <HomeScreen individuals={individuals} navigate={navigate} showToast={showToast} refreshIndividuals={refreshIndividuals} />
+        <HomeScreen key={screen.props.view || 'own'} {...screen.props} individuals={individuals} navigate={navigate} showToast={showToast} refreshIndividuals={refreshIndividuals} />
+      )}
+      {screen.name === 'clutch' && (
+        <ClutchScreen {...screen.props} navigate={navigate} showToast={showToast} refreshIndividuals={refreshIndividuals} />
       )}
       {screen.name === 'chat' && (
         <SmartChatScreen {...screen.props} navigate={navigate} showToast={showToast} refreshIndividuals={refreshIndividuals} />
@@ -1199,9 +1208,9 @@ function App() {
 /* ══════════════════════════════════════════
    홈 화면
    ══════════════════════════════════════════ */
-function HomeScreen({ individuals, navigate, showToast, refreshIndividuals }) {
+function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view: initialView }) {
   const [search, setSearch] = useState('');
-  const [view, setView] = useState('own'); // own | sale | mating | hatch
+  const [view, setView] = useState(initialView || 'own'); // own | sale | mating | laying | hatch
   const [saleFilter, setSaleFilter] = useState('available');
   const [favOnly, setFavOnly] = useState(false);
   const activeInds = individuals.filter(i => (i.status || 'own') !== 'sold' && !i.isExternal);
@@ -1516,8 +1525,8 @@ function LayingView({ individuals, navigate }) {
       </div>
 
       {rows.map(r => (
-        <div className="card" key={r.e.id} style={{margin:'0 0 8px', cursor: r.mom ? 'pointer' : 'default'}}
-          onClick={() => r.mom && navigate('profile', { gecko: r.mom })}>
+        <div className="card" key={r.e.id} style={{margin:'0 0 8px', cursor:'pointer'}}
+          onClick={() => navigate('clutch', { layingId: r.e.id })}>
           <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', gap:8}}>
             <div style={{minWidth:0}}>
               <div style={{fontSize:14, fontWeight:700}}>
@@ -1539,6 +1548,189 @@ function LayingView({ individuals, navigate }) {
       ))}
       <div style={{fontSize:11, color:'var(--text3)', textAlign:'center', padding:'6px 0 2px'}}>
         부화 예정일은 산란일 +{HATCH_AFTER_LAYING}일 기준이에요 · 알 개수 수정은 메이팅기록 탭에서
+      </div>
+    </div>
+  );
+}
+
+/* ── 클러치(알) 상세 — 알 묶음을 개체처럼 들여다보는 화면 ──
+   알 사진 · 부/모 · 산란일 · 해칭 예정일, 그리고 [해칭했어요] 한 번으로 베이비 등록까지. ── */
+function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals }) {
+  const [ver, setVer] = useState(0);
+  const [hatchOpen, setHatchOpen] = useState(false);
+  const [count, setCount] = useState('');
+  const [eggEdit, setEggEdit] = useState(false);
+  const [eggVal, setEggVal] = useState('');
+  const fileRef = useRef(null);
+  const bump = () => { setVer(v => v + 1); refreshIndividuals(); };
+
+  const ev = DB.getEvents().find(e => e.id === layingId);
+  if (!ev) return (
+    <div className="screen"><div className="header"><button className="back-btn" onClick={() => navigate('home', { view: 'laying' })}>‹ 산란기록</button></div>
+      <div className="empty"><div className="empty-icon">🥚</div><p>기록을 찾을 수 없어요.</p></div></div>
+  );
+
+  const inds = DB.getIndividuals();
+  const mom = inds.find(i => i.id === ev.individualId);
+  const evs = DB.getEvents();
+  const mate = evs.filter(e => e.type === 'mating' && e.individualId === ev.individualId && e.date <= ev.date)
+    .sort((a, b) => (a.date < b.date ? 1 : -1))[0];
+  const dadId = (ev.data && ev.data.sireId) || (mate && mate.data && mate.data.partnerId) || null;
+  const dad = inds.find(i => i.id === dadId) || null;
+  const dadName = (dad && dad.name) || (mate && mate.data && mate.data.partnerName) || '';
+
+  const eggs = ev.data && ev.data.eggCount;
+  const notes = (ev.data && ev.data.notes) || '';
+  const photo = ev.data && ev.data.photo;
+  const expDate = new Date(new Date(ev.date).getTime() + HATCH_AFTER_LAYING * 86400000);
+  const expISO = localISO(expDate);
+  const d = daysUntil(expISO);
+  const infertile = /무정/.test(notes);
+  const hatched = evs.find(h => h.type === 'hatching' && h.individualId === ev.individualId &&
+    new Date(h.date) >= new Date(ev.date) && Math.abs((new Date(h.date) - expDate) / 86400000) <= 45);
+  const babies = hatched ? inds.filter(i => i.damId === ev.individualId && i.hatchDate === hatched.date) : [];
+
+  let state = `부화까지 D-${d}`, tone = d <= 7 ? '#B3261E' : 'var(--accent2)';
+  if (infertile) { state = '무정란'; tone = '#8A8177'; }
+  else if (hatched) { state = '부화 완료'; tone = '#2E7D46'; }
+  else if (d < 0) { state = `예정일 ${-d}일 지남`; tone = '#C87F2F'; }
+  else if (d === 0) { state = '오늘이 예정일'; tone = '#B3261E'; }
+
+  const patch = (p) => { DB.updateEvent(ev.id, { data: { ...(ev.data || {}), ...p } }); bump(); };
+
+  const onPhoto = (e) => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    compressImage(f, (src) => { patch({ photo: src }); showToast('📷 알 사진을 넣었어요'); });
+  };
+
+  const doHatch = () => {
+    const n = parseInt(count || eggs || 1, 10);
+    if (!n || n < 1) return showToast('⚠️ 몇 마리 나왔는지 알려주세요');
+    const date = todayStr();
+    const all = DB.getIndividuals();
+    const mode = DB.getSettings().babyNaming || 'combo';
+    let made = 0;
+    if (mode !== 'off') {
+      const names = makeBabyNames(mom ? mom.name : '', dadName, n, all.map(i => i.name));
+      names.slice(0, n).forEach(nm => {
+        DB.addIndividual({
+          name: nm, gender: 'unknown', morph: '', hatchDate: date,
+          isFromCreGunseol: true, status: 'own', sireId: dadId, damId: ev.individualId,
+          shareCode: Math.random().toString(36).slice(2, 8).toUpperCase(),
+        });
+        made++;
+      });
+    }
+    DB.addEvent({ individualId: ev.individualId, type: 'hatching', date, data: { count: n } });
+    // 이 클러치는 부화 완료로 표시
+    DB.saveReminders(DB.getReminders().filter(r => !(r.individualId === ev.individualId && r.type === 'hatching_expected')));
+    bump();
+    showToast(made ? `🐣 ${n}마리 부화 · 베이비 ${made}마리 등록` : `🐣 ${n}마리 부화 기록`);
+    navigate('home', { view: 'hatch' });
+  };
+
+  const Parent = ({ label, g, name }) => (
+    <button onClick={() => g && navigate('profile', { gecko: g })}
+      style={{flex:1, background:'var(--bg3)', border:'1px solid var(--border)', borderRadius:10, padding:'10px 8px',
+              cursor: g ? 'pointer' : 'default', textAlign:'center'}}>
+      <div style={{fontSize:11, color:'var(--text3)'}}>{label}</div>
+      <div style={{fontSize:14, fontWeight:700, marginTop:2}}>
+        {name ? `${g ? genderEmoji(g.gender) + ' ' : ''}${name}` : '—'}
+      </div>
+      {g && g.morph && <div style={{fontSize:11, color:'var(--text3)', marginTop:2}}>{g.morph}</div>}
+    </button>
+  );
+
+  return (
+    <div className="screen">
+      <div className="header">
+        <div className="header-row">
+          <button className="back-btn" onClick={() => navigate('home', { view: 'laying' })}>‹ 산란기록</button>
+          <span style={{fontSize:13, fontWeight:700, color:tone}}>{state}</span>
+        </div>
+      </div>
+
+      <div style={{padding:16}}>
+        <div className="card" style={{margin:'0 0 12px', textAlign:'center'}}>
+          <button onClick={() => fileRef.current && fileRef.current.click()} title="알 사진"
+            style={{width:'100%', height:170, borderRadius:12, border:'1px solid var(--border)', cursor:'pointer',
+                    background: photo ? `url(${photo}) center/cover` : 'var(--bg3)',
+                    display:'flex', alignItems:'center', justifyContent:'center', flexDirection:'column', gap:6}}>
+            {!photo && <><span style={{fontSize:46}}>🥚</span><span style={{fontSize:12, color:'var(--text3)'}}>눌러서 알 사진 넣기</span></>}
+          </button>
+          <input ref={fileRef} type="file" accept="image/*" style={{display:'none'}} onChange={onPhoto} />
+
+          <div style={{fontSize:19, fontWeight:800, marginTop:12}}>
+            {eggs ? `알 ${eggs}개` : '알 (개수 미기록)'}
+          </div>
+          <div style={{fontSize:13, color:'var(--text3)', marginTop:2}}>{fmtDate(ev.date)} 산란</div>
+          {notes && <div style={{fontSize:12, color:'var(--accent2)', marginTop:4}}>{notes}</div>}
+
+          {eggEdit ? (
+            <div style={{display:'flex', gap:6, marginTop:10}}>
+              <input className="input" type="number" min="0" placeholder="알 개수" value={eggVal}
+                onChange={e => setEggVal(e.target.value)} style={{padding:'8px 10px', fontSize:13}} />
+              <button className="btn btn-primary btn-sm" style={{width:'auto'}}
+                onClick={() => { patch({ eggCount: parseInt(eggVal || '0', 10) || undefined }); setEggEdit(false); showToast('알 개수 저장'); }}>저장</button>
+            </div>
+          ) : (
+            <button className="btn btn-secondary btn-sm" style={{marginTop:10}}
+              onClick={() => { setEggVal(eggs ? String(eggs) : ''); setEggEdit(true); }}>알 개수 {eggs ? '수정' : '입력'}</button>
+          )}
+        </div>
+
+        <div className="card" style={{margin:'0 0 12px'}}>
+          <div style={{fontSize:12, fontWeight:700, color:'var(--text2)', marginBottom:8}}>🧬 부모</div>
+          <div style={{display:'flex', gap:8}}>
+            <Parent label="아빠" g={dad} name={dadName} />
+            <Parent label="엄마" g={mom} name={mom ? mom.name : ''} />
+          </div>
+        </div>
+
+        <div className="card" style={{margin:'0 0 12px'}}>
+          <div className="confirm-row"><span className="confirm-key">산란일</span><span className="confirm-val">{fmtDate(ev.date)}</span></div>
+          <div className="confirm-row"><span className="confirm-key">해칭 예정일</span><span className="confirm-val">{fmtDate(expISO)}</span></div>
+          <div className="confirm-row"><span className="confirm-key">상태</span><span className="confirm-val" style={{color:tone, fontWeight:700}}>{state}</span></div>
+        </div>
+
+        {hatched ? (
+          <div className="card" style={{margin:'0 0 12px'}}>
+            <div style={{fontSize:12, fontWeight:700, color:'var(--text2)', marginBottom:8}}>🐣 부화한 아이들</div>
+            {babies.length ? babies.map(b => (
+              <button key={b.id} className="option-btn" style={{textAlign:'left', width:'100%', marginBottom:6}}
+                onClick={() => navigate('profile', { gecko: b })}>{genderEmoji(b.gender)} {b.name}{b.morph ? ` · ${b.morph}` : ''}</button>
+            )) : <div style={{fontSize:12, color:'var(--text3)'}}>{fmtDate(hatched.date)} · {(hatched.data && hatched.data.count) || 0}마리</div>}
+            <button className="btn btn-secondary btn-sm" style={{marginTop:4}} onClick={() => navigate('home', { view: 'hatch' })}>해칭기록으로 이동</button>
+          </div>
+        ) : hatchOpen ? (
+          <div className="card" style={{margin:'0 0 12px'}}>
+            <div style={{fontSize:13, fontWeight:700, marginBottom:8}}>🐣 몇 마리 나왔나요?</div>
+            <input className="input" type="number" min="1" placeholder={eggs ? `기본 ${eggs}마리` : '마릿수'}
+              value={count} onChange={e => setCount(e.target.value)} />
+            <div style={{fontSize:11, color:'var(--text3)', margin:'8px 2px'}}>
+              베이비가 자동 등록되고 부모(아빠 {dadName || '미상'} · 엄마 {mom ? mom.name : '미상'})가 연결돼요.
+            </div>
+            <div style={{display:'flex', gap:6}}>
+              <button className="btn btn-primary" style={{flex:1}} onClick={doHatch}>부화 기록하기</button>
+              <button className="btn btn-secondary" style={{flex:1}} onClick={() => setHatchOpen(false)}>취소</button>
+            </div>
+          </div>
+        ) : (
+          <div style={{display:'flex', flexDirection:'column', gap:8}}>
+            <button className="btn btn-primary" onClick={() => { setCount(eggs ? String(eggs) : ''); setHatchOpen(true); }}>🐣 해칭했어요</button>
+            {!infertile && (
+              <button className="btn btn-secondary"
+                onClick={() => { patch({ notes: (notes ? notes + ' · ' : '') + '무정' }); showToast('무정란으로 표시했어요'); }}>
+                무정란이었어요
+              </button>
+            )}
+            <button className="btn btn-secondary" onClick={() => mom && navigate('profile', { gecko: mom })}>
+              {mom ? `${mom.name} 프로필 보기` : '엄마 프로필'}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -2383,6 +2575,15 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && send()}
+              name="cgChat"
+              type="text"
+              inputMode="text"
+              enterKeyHint="send"
+              autoComplete="off"
+              autoCorrect="off"
+              spellCheck={false}
+              data-lpignore="true"
+              data-form-type="other"
             />
             <button className="send-btn" onClick={send}>→</button>
             <input ref={fileRef} type="file" accept="image/*" style={{display:'none'}} onChange={onPhotoPick} />
@@ -3582,12 +3783,12 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
         <div className="card" style={{margin:0}}>
           <div style={{fontSize:13, fontWeight:700, marginBottom:6, color:'var(--text2)'}}>앱 정보</div>
           <div style={{fontSize:13, color:'var(--text3)', lineHeight:1.7}}>
-            크레건설 브리딩 비서 v2.1<br/>
+            크레건설 브리딩 비서 v2.2<br/>
             축양·분양·<b>산란</b>·메이팅·해칭 · 즐겨찾기 · 캘린더(날짜별 추가·수정)<br/>
             사진 첨부 · 예정일 대비 차이 기록 · 백업 복원 · 비속어 필터<br/>
             ☁️ 서버 동기화 — 회원가입·로그인, 폰·PC 같은 데이터<br/>
             🔀 같은 이름 개체 합치기 · 기록 주인 바로잡기<br/>
-            📊 엑셀 내려받기(원본 양식 4시트) · 프로필 사진<br/>
+            📊 엑셀 내려받기(원본 양식) · 프로필 사진 · 🥚 알 상세·해칭<br/>
             테마: 아이보리 × 버건디 (크레건설 아이덴티티)<br/>
             예정: AI 상담 연결
           </div>
