@@ -1,4 +1,4 @@
-const CACHE = 'creg-v16';
+const CACHE = 'creg-v17';
 const ASSETS = ['./index.html', './manifest.json'];
 
 self.addEventListener('install', e => {
