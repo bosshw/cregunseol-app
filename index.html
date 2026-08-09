@@ -1535,8 +1535,10 @@ function MatingView({ individuals, navigate, showToast }) {
                   const eta = hatchETA(l.date);
                   const d = daysUntil(eta);
                   const infertile = /무정/.test((l.data && l.data.notes) || '');
-                  const hatched = evs.some(h => h.type === 'hatching' && h.individualId === l.individualId &&
-                    h.date >= l.date && Math.abs((new Date(h.date) - new Date(eta)) / 86400000) <= 45);
+                  const hatched = evs.some(h => h.type === 'hatching' && (
+                    (h.data && h.data.layingId === l.id) ||
+                    (!(h.data && h.data.layingId) && h.individualId === l.individualId &&
+                      h.date >= l.date && Math.abs((new Date(h.date) - new Date(eta)) / 86400000) <= 45)));
                   const state = infertile ? { t: '무정', c: '#8A8177' }
                     : hatched ? { t: '부화완료', c: '#2E7D46' }
                     : d < -14 ? { t: '경과', c: '#8A8177' }
@@ -1669,6 +1671,7 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals }) {
   const [ver, setVer] = useState(0);
   const [hatchOpen, setHatchOpen] = useState(false);
   const [count, setCount] = useState('');
+  const [hDate, setHDate] = useState(todayStr());   // 부화한 날 — 오늘 확인했다고 오늘로 잡지 않습니다
   const [eggEdit, setEggEdit] = useState(false);
   const [eggVal, setEggVal] = useState('');
   const fileRef = useRef(null);
@@ -1696,8 +1699,12 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals }) {
   const expISO = localISO(expDate);
   const d = daysUntil(expISO);
   const infertile = /무정/.test(notes);
-  const hatched = evs.find(h => h.type === 'hatching' && h.individualId === ev.individualId &&
-    new Date(h.date) >= new Date(ev.date) && Math.abs((new Date(h.date) - expDate) / 86400000) <= 45);
+  // 부화 기록은 layingId로 이 알과 직접 연결합니다(날짜를 직접 적으면 예정일과 멀어질 수 있어서).
+  // layingId가 없는 예전 기록은 종전대로 날짜 근사로 찾습니다.
+  const hatched = evs.find(h => h.type === 'hatching' && (
+    (h.data && h.data.layingId === ev.id) ||
+    (!(h.data && h.data.layingId) && h.individualId === ev.individualId &&
+      new Date(h.date) >= new Date(ev.date) && Math.abs((new Date(h.date) - expDate) / 86400000) <= 45)));
   const babies = hatched ? inds.filter(i => i.damId === ev.individualId && i.hatchDate === hatched.date) : [];
 
   let state = `부화까지 D-${d}`, tone = d <= 7 ? '#B3261E' : 'var(--accent2)';
@@ -1718,7 +1725,9 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals }) {
   const doHatch = () => {
     const n = parseInt(count || eggs || 1, 10);
     if (!n || n < 1) return showToast('⚠️ 몇 마리 나왔는지 알려주세요');
-    const date = todayStr();
+    const date = hDate || todayStr();
+    if (date < ev.date) return showToast('⚠️ 부화일이 산란일보다 빠를 수 없어요');
+    if (date > todayStr()) return showToast('⚠️ 아직 오지 않은 날짜예요');
     const all = DB.getIndividuals();
     const mode = DB.getSettings().babyNaming || 'combo';
     let made = 0;
@@ -1733,7 +1742,7 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals }) {
         made++;
       });
     }
-    DB.addEvent({ individualId: ev.individualId, type: 'hatching', date, data: { count: n } });
+    DB.addEvent({ individualId: ev.individualId, type: 'hatching', date, data: { count: n, layingId: ev.id } });
     // 이 클러치는 부화 완료로 표시
     DB.saveReminders(DB.getReminders().filter(r => !(r.individualId === ev.individualId && r.type === 'hatching_expected')));
     bump();
@@ -1816,10 +1825,26 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals }) {
           </div>
         ) : hatchOpen ? (
           <div className="card" style={{margin:'0 0 12px'}}>
-            <div style={{fontSize:13, fontWeight:700, marginBottom:8}}>🐣 몇 마리 나왔나요?</div>
+            <div style={{fontSize:13, fontWeight:700, marginBottom:8}}>🐣 언제, 몇 마리 나왔나요?</div>
+            <div style={{fontSize:11, color:'var(--text3)', margin:'0 2px 4px'}}>부화한 날</div>
+            <input className="input" type="date" value={hDate} min={ev.date} max={todayStr()}
+              onChange={e => setHDate(e.target.value)} />
+            <div style={{display:'flex', gap:6, margin:'6px 0 10px'}}>
+              {[0, -1, -2, -3].map(k => {
+                const dv = localISO(new Date(new Date(todayStr()).getTime() + k * 86400000));
+                if (dv < ev.date) return null;
+                return (
+                  <button key={k} className="btn btn-secondary btn-sm" style={{flex:1, padding:'6px 0', fontSize:12,
+                    borderColor: hDate === dv ? 'var(--accent)' : 'var(--border)', color: hDate === dv ? 'var(--accent)' : undefined}}
+                    onClick={() => setHDate(dv)}>{k === 0 ? '오늘' : k === -1 ? '어제' : `${-k}일 전`}</button>
+                );
+              })}
+            </div>
+            <div style={{fontSize:11, color:'var(--text3)', margin:'0 2px 4px'}}>몇 마리</div>
             <input className="input" type="number" min="1" placeholder={eggs ? `기본 ${eggs}마리` : '마릿수'}
               value={count} onChange={e => setCount(e.target.value)} />
             <div style={{fontSize:11, color:'var(--text3)', margin:'8px 2px'}}>
+              {hDate !== todayStr() ? `${fmtDate(hDate)}로 기록됩니다. ` : ''}
               베이비가 자동 등록되고 부모(아빠 {dadName || '미상'} · 엄마 {mom ? mom.name : '미상'})가 연결돼요.
             </div>
             <div style={{display:'flex', gap:6}}>
@@ -1829,7 +1854,7 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals }) {
           </div>
         ) : (
           <div style={{display:'flex', flexDirection:'column', gap:8}}>
-            <button className="btn btn-primary" onClick={() => { setCount(eggs ? String(eggs) : ''); setHatchOpen(true); }}>🐣 해칭했어요</button>
+            <button className="btn btn-primary" onClick={() => { setCount(eggs ? String(eggs) : ''); setHDate(todayStr()); setHatchOpen(true); }}>🐣 해칭했어요</button>
             {!infertile && (
               <button className="btn btn-secondary"
                 onClick={() => { patch({ notes: (notes ? notes + ' · ' : '') + '무정' }); showToast('무정란으로 표시했어요'); }}>
@@ -4002,7 +4027,7 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
         <div className="card" style={{margin:0}}>
           <div style={{fontSize:13, fontWeight:700, marginBottom:6, color:'var(--text2)'}}>앱 정보</div>
           <div style={{fontSize:13, color:'var(--text3)', lineHeight:1.7}}>
-            크레건설 브리딩 비서 v2.5<br/>
+            크레건설 브리딩 비서 v2.6<br/>
             축양·분양·<b>산란</b>·메이팅·해칭 · 즐겨찾기 · 캘린더(날짜별 추가·수정)<br/>
             사진 첨부 · 예정일 대비 차이 기록 · 백업 복원 · 비속어 필터<br/>
             ☁️ 서버 동기화 — 회원가입·로그인, 폰·PC 같은 데이터<br/>
