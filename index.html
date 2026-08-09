@@ -40,9 +40,11 @@
       --safe-bottom: env(safe-area-inset-bottom, 0px);
     }
 
-    /* 100vh 는 안드로이드 크롬에서 "주소창이 숨겨졌을 때" 높이라 실제 보이는 영역보다 큽니다.
-       그래서 채팅 입력줄이 화면 아래로 밀려 스크롤해야 보였습니다. dvh 로 실제 보이는 높이를 씁니다. */
-    .app { display: flex; flex-direction: column; height: 100vh; height: 100dvh; max-width: 430px; margin: 0 auto; position: relative; background: var(--bg); }
+    /* 화면 높이 문제:
+       - 100vh 는 "주소창이 숨겨졌을 때" 높이라 실제 보이는 영역보다 큼
+       - 100dvh 는 주소창엔 반응하지만 "키보드"에는 반응하지 않음 (키보드가 입력줄을 덮음)
+       그래서 JS 가 실제 보이는 높이(visualViewport)를 재서 --vh 에 넣어줍니다. */
+    .app { display: flex; flex-direction: column; height: var(--vh, 100dvh); max-width: 430px; margin: 0 auto; position: relative; background: var(--bg); overflow: hidden; }
     .screen { flex: 1; overflow-y: auto; padding-bottom: calc(70px + var(--safe-bottom)); }
     .screen::-webkit-scrollbar { display: none; }
 
@@ -674,8 +676,17 @@ const todayStr = () => localISO(new Date());
 const daysUntil = (ds) => Math.ceil((new Date(ds) - new Date(todayStr())) / 86400000);
 const NOTIFY_WINDOW = 1; // 알림·배지는 D-1과 당일부터
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('ko-KR', { year:'numeric', month:'short', day:'numeric' }) : '-';
-const genderLabel = g => g === 'female' ? '♀ 암컷' : g === 'male' ? '♂ 수컷' : '미구분';
-const genderEmoji = g => g === 'female' ? '🔴' : g === 'male' ? '🔵' : '⚪';
+const genderLabel = g => g === 'female' ? '♀ 암컷' : g === 'male' ? '♂ 수컷' : '? 미구분';
+// 국제 통용 기호 — 사진을 넣어도 성별이 보이도록 이름 옆에도 함께 씁니다
+const GENDER_MARK = { female: '♀', male: '♂', unknown: '?' };
+const GENDER_COLOR = { female: '#D6455B', male: '#3B82F6', unknown: '#9A9189' };
+const genderMark = g => GENDER_MARK[g] || '?';
+const genderColor = g => GENDER_COLOR[g] || GENDER_COLOR.unknown;
+// 이름 옆 성별 기호 (색 포함)
+function GenderTag({ g, size = 13 }) {
+  return <span style={{ color: genderColor(g), fontWeight: 800, fontSize: size }}>{genderMark(g)}</span>;
+}
+const genderEmoji = g => genderMark(g);
 
 const EVENT_TYPES = [
   { key: 'growth',       label: '성장',   emoji: '📏', color: '#8E3B45' },
@@ -696,9 +707,31 @@ const STATUS = {
   sold:      { label: '🤝 분양완료', color: '#8A64A8' },
 };
 
+/* 캘린더에 띄울 종류 — 날짜가 의미 있는 "일정"만.
+   메모·사진·성장(무게)·탈피는 개체 프로필의 활동 기록에서 봅니다. */
+const CALENDAR_TYPES = ['mating', 'laying', 'hatching', 'feeding'];
+
 // 예정일 자동 계산 기준 (일)
 const LAYING_AFTER_MATING = 30;   // 메이팅 → 산란 예정
-const HATCH_AFTER_LAYING = 75;    // 산란 → 해칭 예정
+const LAYING_INTERVAL = 30;       // 산란 → 다음 산란 (보통 3~5주 간격)
+const HATCH_AFTER_LAYING = 75;    // 기본값(24°C 기준). 실제 계산은 hatchDays() 사용
+
+/* 인큐베이팅 온도 → 부화까지 걸리는 날수
+   크레스티드 게코는 22~26°C에서 60~90일. 온도가 낮을수록 길어집니다.
+   22°C=90일 · 24°C=75일 · 26°C=60일 (1도당 약 7.5일)
+   28°C를 넘으면 알이 상할 수 있어 상한을 둡니다. */
+const INCUBATE_MIN = 18, INCUBATE_MAX = 28, INCUBATE_DEFAULT = 24;
+function hatchDays(temp) {
+  const t = Math.min(INCUBATE_MAX, Math.max(INCUBATE_MIN, Number(temp) || INCUBATE_DEFAULT));
+  return Math.min(130, Math.max(50, Math.round(90 - (t - 22) * 7.5)));
+}
+function incubateTemp() {
+  const v = Number((DB.getSettings() || {}).incubateTemp);
+  return v >= INCUBATE_MIN && v <= INCUBATE_MAX ? v : INCUBATE_DEFAULT;
+}
+const hatchDaysNow = () => hatchDays(incubateTemp());
+// 산란일 + 부화일수 = 부화 예정일
+const hatchETA = (layDate) => localISO(new Date(new Date(layDate).getTime() + hatchDaysNow() * 86400000));
 
 // 공유 기능: 서버(Supabase) 연동 전까지 UI 숨김 (shareCode 데이터는 유지)
 const SHOW_SHARE = false;
@@ -998,6 +1031,42 @@ function answerQuery(target, text) {
     return d === 0 ? '오늘' : d === 1 ? '어제' : `${d}일 전`;
   };
   const none = (what, emoji) => `${target.name}는 아직 ${what} 기록이 없어요 ${emoji}`;
+  const inDays = (iso) => {
+    const d = daysUntil(iso);
+    return d > 0 ? `${d}일 뒤` : d === 0 ? '오늘' : `${-d}일 지남`;
+  };
+
+  /* ── 앞으로의 예정 (다음 산란 / 해칭 예정) ── */
+  const asksNext = /(다음|담|언제쯤|예정|예상)/.test(text);
+
+  if (asksNext && /산란|알/.test(text)) {
+    const e = last('laying');
+    const m = last('mating');
+    if (e) {
+      const eta = localISO(new Date(new Date(e.date).getTime() + LAYING_INTERVAL * 86400000));
+      return `${target.name}의 다음 산란은 ${fmtDate(eta)}쯤으로 보여요 🥚 (${inDays(eta)})\n`
+        + `마지막 산란 ${fmtDate(e.date)} 기준 약 ${LAYING_INTERVAL}일 간격으로 잡은 예상이에요.`;
+    }
+    if (m) {
+      const eta = localISO(new Date(new Date(m.date).getTime() + LAYING_AFTER_MATING * 86400000));
+      return `${target.name}는 아직 산란 기록이 없어요.\n메이팅(${fmtDate(m.date)}) 기준으로는 ${fmtDate(eta)}쯤 예상돼요 🥚 (${inDays(eta)})`;
+    }
+    return none('산란', '🥚');
+  }
+
+  if (asksNext && /해칭|부화/.test(text)) {
+    const lays = evs.filter(e => e.type === 'laying')
+      .filter(e => !/무정/.test((e.data && e.data.notes) || ''))
+      .sort((a, b) => (a.date < b.date ? 1 : -1));
+    if (!lays.length) return none('산란', '🥚');
+    const pending = lays.map(e => ({ e, eta: hatchETA(e.date) })).filter(x => daysUntil(x.eta) >= -14);
+    if (!pending.length) return `${target.name}의 알은 부화 예정일이 모두 지났어요. 산란기록 탭에서 확인해보세요 🐣`;
+    pending.sort((a, b) => daysUntil(a.eta) - daysUntil(b.eta));
+    const x = pending[0];
+    return `${target.name}의 알은 ${fmtDate(x.eta)}쯤 부화 예정이에요 🐣 (${inDays(x.eta)})\n`
+      + `${fmtDate(x.e.date)} 산란 · 인큐 ${incubateTemp()}°C 기준 ${hatchDaysNow()}일`
+      + (pending.length > 1 ? `\n부화 대기 중인 알 묶음이 ${pending.length}개 있어요.` : '');
+  }
 
   if (/산란|알\s*(낳|난|났|몇)/.test(text)) {
     const e = last('laying');
@@ -1471,7 +1540,7 @@ function LayingView({ individuals, navigate }) {
     // 부(父): 이 산란일 이전의 가장 최근 메이팅 상대
     const m = matings.find(x => x.individualId === e.individualId && x.date <= e.date);
     const dadName = m && m.data ? (m.data.partnerName || (byId[m.data.partnerId] || {}).name || null) : null;
-    const expDate = new Date(new Date(e.date).getTime() + HATCH_AFTER_LAYING * 86400000);
+    const expDate = new Date(new Date(e.date).getTime() + hatchDaysNow() * 86400000);
     const expISO = localISO(expDate);
     const d = daysUntil(expISO);
     const infertile = /무정/.test(notes);
@@ -1547,7 +1616,7 @@ function LayingView({ individuals, navigate }) {
         </div>
       ))}
       <div style={{fontSize:11, color:'var(--text3)', textAlign:'center', padding:'6px 0 2px'}}>
-        부화 예정일은 산란일 +{HATCH_AFTER_LAYING}일 기준이에요 · 알 개수 수정은 메이팅기록 탭에서
+        부화 예정일은 인큐 {incubateTemp()}°C 기준 산란일 +{hatchDaysNow()}일이에요 · 온도는 설정에서 바꿀 수 있어요
       </div>
     </div>
   );
@@ -1582,7 +1651,7 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals }) {
   const eggs = ev.data && ev.data.eggCount;
   const notes = (ev.data && ev.data.notes) || '';
   const photo = ev.data && ev.data.photo;
-  const expDate = new Date(new Date(ev.date).getTime() + HATCH_AFTER_LAYING * 86400000);
+  const expDate = new Date(new Date(ev.date).getTime() + hatchDaysNow() * 86400000);
   const expISO = localISO(expDate);
   const d = daysUntil(expISO);
   const infertile = /무정/.test(notes);
@@ -1807,10 +1876,12 @@ function GeckoCard({ gecko, onClick, onToggleFav }) {
   const av = avatarSrc(gecko);
   return (
     <div className="gecko-card" onClick={onClick}>
-      <div className="gecko-avatar" style={av ? {backgroundImage:`url(${av})`, backgroundSize:'cover', backgroundPosition:'center'} : {}}>{av ? '' : genderEmoji(gecko.gender)}</div>
+      <div className="gecko-avatar"
+        style={av ? {backgroundImage:`url(${av})`, backgroundSize:'cover', backgroundPosition:'center'}
+                  : {color: genderColor(gecko.gender), fontWeight:800}}>{av ? '' : genderMark(gecko.gender)}</div>
       <div className="gecko-info">
         <div style={{display:'flex', alignItems:'center', gap:6, flexWrap:'wrap'}}>
-          <div className="gecko-name">{gecko.name}</div>
+          <div className="gecko-name">{gecko.name} <GenderTag g={gecko.gender} size={14} /></div>
           {gecko.isFromCreGunseol && <span className="badge badge-gold" style={{fontSize:10}}>CG</span>}
           {gecko.isExternal && <span className="badge badge-blue" style={{fontSize:10}}>외부</span>}
           {stKey !== 'own' && (
@@ -2490,7 +2561,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       }
       if (f.type === 'laying' && layingReminder) {
         const d = new Date(f.date || todayStr());
-        d.setDate(d.getDate() + HATCH_AFTER_LAYING);
+        d.setDate(d.getDate() + hatchDaysNow());
         const rs = DB.getReminders();
         rs.push({ id: uuid(), individualId: f.targetId, geckoName: f.targetName, type: 'hatching_expected', date: localISO(d), message: `${f.targetName} 부화 예정일` });
         DB.saveReminders(rs);
@@ -2565,22 +2636,19 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
 
           <div style={{padding:'10px 16px', paddingBottom:'calc(12px + var(--safe-bottom))', borderTop:'1px solid var(--border)', background:'var(--bg2)', display:'flex', gap:8}}>
             <button className="send-btn" style={{background:'var(--card)', color:'var(--text2)', border:'1px solid var(--border)'}} onClick={() => fileRef.current && fileRef.current.click()}>📷</button>
-            <input
+            <textarea
               className="input"
-              style={{flex:1}}
+              rows={1}
+              style={{flex:1, minHeight:0, height:46, resize:'none', lineHeight:'20px', paddingTop:12, paddingBottom:12, overflow:'hidden'}}
               placeholder='예: 크한이 12그램 / 저장'
               value={input}
               onChange={e => setInput(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && send()}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
               name="cgChat"
-              type="text"
-              inputMode="text"
               enterKeyHint="send"
               autoComplete="off"
               autoCorrect="off"
               spellCheck={false}
-              data-lpignore="true"
-              data-form-type="other"
             />
             <button className="send-btn" onClick={send}>→</button>
             <input ref={fileRef} type="file" accept="image/*" style={{display:'none'}} onChange={onPhotoPick} />
@@ -2729,7 +2797,7 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
               style={{display:'none'}} onChange={onAvatarPick} />
             <div style={{flex:1}}>
               <div style={{display:'flex', alignItems:'center', gap:8, flexWrap:'wrap'}}>
-                <div style={{fontSize:22, fontWeight:800}}>{gecko.name}</div>
+                <div style={{fontSize:22, fontWeight:800}}>{gecko.name} <GenderTag g={gecko.gender} size={20} /></div>
                 <button onClick={() => { DB.updateIndividual(gecko.id, { favorite: !gecko.favorite }); refreshLocal(); showToast(gecko.favorite ? '즐겨찾기 해제' : '⭐ 즐겨찾기 추가'); }}
                   aria-label="즐겨찾기" style={{background:'none', border:'none', cursor:'pointer', fontSize:22, lineHeight:1, padding:0, color: gecko.favorite ? 'var(--gold)' : 'var(--text3)'}}>
                   {gecko.favorite ? '⭐' : '☆'}
@@ -2969,7 +3037,9 @@ function CalendarScreen({ navigate, individuals, showToast, onRemindersChanged }
       : { emoji: '🔔', label: r.message || '알림' };
     add(r.date, { ...base, name: r.geckoName || '', planned: true, reminder: r });
   });
+  // 캘린더에는 "일정"만 — 개체별 메모·사진·무게 같은 기록은 각 개체 프로필에서 봅니다
   DB.getEvents().forEach(e => {
+    if (!CALENDAR_TYPES.includes(e.type)) return;
     const t = EVENT_TYPES.find(x => x.key === e.type) || {};
     add(e.date, { emoji: t.emoji || '📌', label: t.label || e.type, name: (byId[e.individualId] || {}).name || '', event: e });
   });
@@ -3078,7 +3148,10 @@ function CalendarScreen({ navigate, individuals, showToast, onRemindersChanged }
           </div>
         </div>
 
-        <div style={{fontSize:12, color:'var(--text3)', margin:'8px 4px 4px'}}>🥚 산란 · 🐣 해칭 · 💞 메이팅 · 흐린 아이콘은 예정일 · 날짜를 누르면 추가/수정</div>
+        <div style={{fontSize:12, color:'var(--text3)', margin:'8px 4px 4px', lineHeight:1.6}}>
+          💞 메이팅 · 🥚 산란 · 🐣 해칭 · 🍽️ 먹이 · <span style={{opacity:.55}}>흐린 아이콘은 예정일</span><br/>
+          메모·사진·몸무게는 각 개체 프로필에서 볼 수 있어요 · 날짜를 누르면 추가/수정
+        </div>
 
         {/* ── 선택된 날짜 패널 ── */}
         {selected && (
@@ -3678,6 +3751,11 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
     setSettings(s);
     showToast('설정 저장 완료');
   };
+  const setTemp = (v) => {
+    const s = { ...settings, incubateTemp: Number(v) };
+    DB.saveSettings(s);
+    setSettings(s);
+  };
   const importRef = useRef(null);
   const [importData, setImportData] = useState(null);
   const onImportPick = (e) => {
@@ -3769,6 +3847,27 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
           </div>
         </div>
         <div className="card" style={{margin:0}}>
+          <div style={{fontSize:13, fontWeight:700, marginBottom:4, color:'var(--text2)'}}>🌡️ 인큐베이팅 온도</div>
+          <div style={{fontSize:12, color:'var(--text3)', marginBottom:10, lineHeight:1.6}}>
+            알을 몇 도로 품고 계신가요? 이 온도로 <b>부화 예정일</b>을 계산해요.<br/>
+            낮을수록 오래 걸립니다 (22°C 90일 · 24°C 75일 · 26°C 60일)
+          </div>
+          <div style={{display:'flex', alignItems:'center', gap:10}}>
+            <input type="range" min={INCUBATE_MIN} max={INCUBATE_MAX} step="0.5"
+              value={settings.incubateTemp || INCUBATE_DEFAULT}
+              onChange={e => setTemp(e.target.value)}
+              style={{flex:1, accentColor:'var(--accent)'}} />
+            <div style={{minWidth:96, textAlign:'right'}}>
+              <div style={{fontSize:18, fontWeight:800, color:'var(--accent2)'}}>{settings.incubateTemp || INCUBATE_DEFAULT}°C</div>
+              <div style={{fontSize:11, color:'var(--text3)'}}>부화 {hatchDays(settings.incubateTemp || INCUBATE_DEFAULT)}일</div>
+            </div>
+          </div>
+          {(settings.incubateTemp || INCUBATE_DEFAULT) >= 27 && (
+            <div style={{fontSize:11, color:'#B3261E', marginTop:8}}>⚠️ 28°C를 넘으면 알이 상할 수 있어요</div>
+          )}
+        </div>
+
+        <div className="card" style={{margin:0}}>
           <div style={{fontSize:13, fontWeight:700, marginBottom:4, color:'var(--text2)'}}>🐣 해칭 베이비 이름 규칙</div>
           <div style={{fontSize:12, color:'var(--text3)', marginBottom:10}}>해칭 기록 시 베이비를 자동 등록하는 방식이에요</div>
           <div style={{display:'flex', flexDirection:'column', gap:6}}>
@@ -3780,12 +3879,13 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
         <div className="card" style={{margin:0}}>
           <div style={{fontSize:13, fontWeight:700, marginBottom:6, color:'var(--text2)'}}>앱 정보</div>
           <div style={{fontSize:13, color:'var(--text3)', lineHeight:1.7}}>
-            크레건설 브리딩 비서 v2.3<br/>
+            크레건설 브리딩 비서 v2.4<br/>
             축양·분양·<b>산란</b>·메이팅·해칭 · 즐겨찾기 · 캘린더(날짜별 추가·수정)<br/>
             사진 첨부 · 예정일 대비 차이 기록 · 백업 복원 · 비속어 필터<br/>
             ☁️ 서버 동기화 — 회원가입·로그인, 폰·PC 같은 데이터<br/>
             🔀 같은 이름 개체 합치기 · 기록 주인 바로잡기<br/>
             📊 엑셀 내려받기(원본 양식) · 프로필 사진 · 🥚 알 상세·해칭<br/>
+            🌡️ 인큐 온도로 부화 예정일 계산 · ♀♂? 성별 표시<br/>
             테마: 아이보리 × 버건디 (크레건설 아이덴티티)<br/>
             예정: AI 상담 연결
           </div>
@@ -3798,6 +3898,23 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
     </div>
   );
 }
+
+/* 키보드가 올라와도 입력줄이 가려지지 않도록, 실제 보이는 높이를 --vh 에 계속 반영합니다.
+   (안드로이드 크롬은 키보드가 떠도 dvh 가 줄지 않아 아래쪽이 덮입니다) */
+(function keepViewportHeight() {
+  const vv = window.visualViewport;
+  const apply = () => {
+    const h = vv ? vv.height : window.innerHeight;
+    document.documentElement.style.setProperty('--vh', h + 'px');
+  };
+  apply();
+  if (vv) {
+    vv.addEventListener('resize', apply);
+    vv.addEventListener('scroll', apply);
+  }
+  window.addEventListener('resize', apply);
+  window.addEventListener('orientationchange', () => setTimeout(apply, 200));
+})();
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(<App />);
