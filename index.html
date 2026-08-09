@@ -242,6 +242,21 @@ const DB = {
   updateEvent(id, patch) {
     this.saveEvents(this.getEvents().map(e => e.id === id ? { ...e, ...patch } : e));
   },
+  /* 부화일 옮기기 — 부화 기록과 그날 태어난 베이비들의 생일을 한 번에 맞춥니다.
+     (같은 알에서 나온 형제는 같은 날이 맞으므로 통째로 움직입니다) */
+  moveHatchDate(damId, oldDate, newDate) {
+    if (!oldDate || !newDate || oldDate === newDate) return { events: 0, babies: 0 };
+    let events = 0, babies = 0;
+    this.saveEvents(this.getEvents().map(e => {
+      if (e.type === 'hatching' && e.individualId === damId && e.date === oldDate) { events++; return { ...e, date: newDate }; }
+      return e;
+    }));
+    this.saveIndividuals(this.getIndividuals().map(i => {
+      if (i.damId === damId && i.hatchDate === oldDate) { babies++; return { ...i, hatchDate: newDate }; }
+      return i;
+    }));
+    return { events, babies };
+  },
   deleteEvent(id) {
     this.saveEvents(this.getEvents().filter(e => e.id !== id));
   },
@@ -1672,6 +1687,8 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals }) {
   const [hatchOpen, setHatchOpen] = useState(false);
   const [count, setCount] = useState('');
   const [hDate, setHDate] = useState(todayStr());   // 부화한 날 — 오늘 확인했다고 오늘로 잡지 않습니다
+  const [dateEdit, setDateEdit] = useState(false);  // 이미 적은 부화일 고치기
+  const [dateVal, setDateVal] = useState('');
   const [eggEdit, setEggEdit] = useState(false);
   const [eggVal, setEggVal] = useState('');
   const fileRef = useRef(null);
@@ -1817,10 +1834,37 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals }) {
         {hatched ? (
           <div className="card" style={{margin:'0 0 12px'}}>
             <div style={{fontSize:12, fontWeight:700, color:'var(--text2)', marginBottom:8}}>🐣 부화한 아이들</div>
+
+            {/* 부화일 수정 — 날짜를 잘못 적었을 때 여기서 바로 고칩니다 */}
+            <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', gap:8, marginBottom:8}}>
+              <span style={{fontSize:13, color:'var(--text3)'}}>부화일</span>
+              {dateEdit ? (
+                <div style={{display:'flex', gap:6, flex:1, justifyContent:'flex-end'}}>
+                  <input className="input" type="date" style={{padding:'6px 8px', fontSize:13, width:'auto'}}
+                    value={dateVal} min={ev.date} max={todayStr()} onChange={e => setDateVal(e.target.value)} />
+                  <button className="btn btn-primary btn-sm" style={{width:'auto'}} onClick={() => {
+                    if (!dateVal) return showToast('⚠️ 날짜를 골라주세요');
+                    if (dateVal < ev.date) return showToast('⚠️ 부화일이 산란일보다 빠를 수 없어요');
+                    if (dateVal > todayStr()) return showToast('⚠️ 아직 오지 않은 날짜예요');
+                    const r = DB.moveHatchDate(ev.individualId, hatched.date, dateVal);
+                    setDateEdit(false); bump();
+                    showToast(r.babies ? `📅 ${fmtDate(dateVal)}로 옮겼어요 · 베이비 ${r.babies}마리 생일도 함께` : `📅 ${fmtDate(dateVal)}로 옮겼어요`);
+                  }}>저장</button>
+                  <button className="btn btn-secondary btn-sm" style={{width:'auto'}} onClick={() => setDateEdit(false)}>취소</button>
+                </div>
+              ) : (
+                <span style={{display:'flex', alignItems:'center', gap:8}}>
+                  <span style={{fontSize:13, fontWeight:700}}>{fmtDate(hatched.date)}</span>
+                  <button className="btn btn-secondary btn-sm" style={{width:'auto', padding:'4px 10px', fontSize:12}}
+                    onClick={() => { setDateVal(hatched.date); setDateEdit(true); }}>수정</button>
+                </span>
+              )}
+            </div>
+
             {babies.length ? babies.map(b => (
               <button key={b.id} className="option-btn" style={{textAlign:'left', width:'100%', marginBottom:6}}
                 onClick={() => navigate('profile', { gecko: b })}>{genderEmoji(b.gender)} {b.name}{b.morph ? ` · ${b.morph}` : ''}</button>
-            )) : <div style={{fontSize:12, color:'var(--text3)'}}>{fmtDate(hatched.date)} · {(hatched.data && hatched.data.count) || 0}마리</div>}
+            )) : <div style={{fontSize:12, color:'var(--text3)'}}>{(hatched.data && hatched.data.count) || 0}마리</div>}
             <button className="btn btn-secondary btn-sm" style={{marginTop:4}} onClick={() => navigate('home', { view: 'hatch' })}>해칭기록으로 이동</button>
           </div>
         ) : hatchOpen ? (
@@ -1890,7 +1934,7 @@ function HatchView({ individuals, refreshIndividuals, showToast, navigate }) {
         <div className="card" key={b.id}>
           <div style={{cursor:'pointer'}} onClick={() => {
             if (open === b.id) { setOpen(null); return; }
-            setVals({ morph: b.morph || '', spots: b.spots || '', notes: b.babyNotes || '' });
+            setVals({ morph: b.morph || '', spots: b.spots || '', notes: b.babyNotes || '', hatchDate: b.hatchDate || '' });
             setOpen(b.id);
           }}>
             <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
@@ -1913,13 +1957,35 @@ function HatchView({ individuals, refreshIndividuals, showToast, navigate }) {
           </div>
           {open === b.id && (
             <div style={{marginTop:10, borderTop:'1px solid var(--border)', paddingTop:10, display:'flex', flexDirection:'column', gap:6}}>
+              <div style={{fontSize:11, color:'var(--text3)', margin:'0 2px -2px'}}>부화일 (생일)</div>
+              <input className="input" type="date" style={{padding:'8px 10px', fontSize:13}} max={todayStr()}
+                value={vals.hatchDate} onChange={e => setVals(v => ({ ...v, hatchDate: e.target.value }))} />
+              {vals.hatchDate && vals.hatchDate !== b.hatchDate && (() => {
+                const sibs = individuals.filter(x => x.damId === b.damId && x.hatchDate === b.hatchDate).length;
+                return (
+                  <div style={{fontSize:11, color:'var(--accent2)', margin:'-2px 2px 2px'}}>
+                    {fmtDate(vals.hatchDate)}로 옮깁니다{sibs > 1 ? ` · 같이 나온 ${sibs}마리와 부화 기록도 함께` : ''}
+                  </div>
+                );
+              })()}
               <input className="input" style={{padding:'8px 10px', fontSize:13}} placeholder="모프 (예: 릴리화이트)" value={vals.morph} onChange={e => setVals(v => ({ ...v, morph: e.target.value }))} />
               <input className="input" style={{padding:'8px 10px', fontSize:13}} placeholder="점여부 (예: 꼬리점 2개 / 무점)" value={vals.spots} onChange={e => setVals(v => ({ ...v, spots: e.target.value }))} />
               <input className="input" style={{padding:'8px 10px', fontSize:13}} placeholder="특이사항" value={vals.notes} onChange={e => setVals(v => ({ ...v, notes: e.target.value }))} />
               <div style={{display:'flex', gap:6}}>
                 <button className="btn btn-primary btn-sm" style={{flex:1}} onClick={() => {
+                  const nd = vals.hatchDate;
+                  if (nd && nd > todayStr()) return showToast('⚠️ 아직 오지 않은 날짜예요');
                   DB.updateIndividual(b.id, { morph: vals.morph.trim(), spots: vals.spots.trim(), babyNotes: vals.notes.trim() });
-                  refreshIndividuals(); showToast('베이비 정보 저장 완료'); setOpen(null);
+                  let moved = null;
+                  if (nd && nd !== b.hatchDate) {
+                    const r = DB.moveHatchDate(b.damId, b.hatchDate, nd);
+                    // 엄마 기록이 없는 아이(수동 등록 등)는 이 아이만 옮깁니다
+                    if (!r.babies) DB.updateIndividual(b.id, { hatchDate: nd });
+                    moved = r.babies || 1;
+                  }
+                  refreshIndividuals();
+                  showToast(moved ? `📅 부화일을 ${fmtDate(nd)}로 옮겼어요 (${moved}마리)` : '베이비 정보 저장 완료');
+                  setOpen(null);
                 }}>저장</button>
                 <button className="btn btn-secondary btn-sm" style={{flex:1}} onClick={() => navigate('profile', { gecko: b })}>프로필 보기</button>
               </div>
@@ -4027,7 +4093,7 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
         <div className="card" style={{margin:0}}>
           <div style={{fontSize:13, fontWeight:700, marginBottom:6, color:'var(--text2)'}}>앱 정보</div>
           <div style={{fontSize:13, color:'var(--text3)', lineHeight:1.7}}>
-            크레건설 브리딩 비서 v2.6<br/>
+            크레건설 브리딩 비서 v2.7<br/>
             축양·분양·<b>산란</b>·메이팅·해칭 · 즐겨찾기 · 캘린더(날짜별 추가·수정)<br/>
             사진 첨부 · 예정일 대비 차이 기록 · 백업 복원 · 비속어 필터<br/>
             ☁️ 서버 동기화 — 회원가입·로그인, 폰·PC 같은 데이터<br/>
