@@ -1215,12 +1215,11 @@ function App() {
     return () => window.removeEventListener('popstate', onPop);
   }, []);
 
-  // 배지: D-1·당일이면서 아직 확인하지 않은 알림만
+  // 배지: 오늘 해야 할 일 — 당일이거나 이미 날짜가 지난 것 중 아직 확인하지 않은 것
+  // (지난 일정도 배지에 넣습니다. 예전엔 D-1·당일만 세어서 3일 지난 부화 확인이 조용히 묻혔습니다)
   const readIds = DB.getReadReminderIds();
-  const badgeCount = DB.getReminders().filter(r => {
-    const d = daysUntil(r.date);
-    return d >= 0 && d <= NOTIFY_WINDOW && !readIds.includes(r.id);
-  }).length;
+  const badgeCount = DB.getReminders().filter(r =>
+    daysUntil(r.date) <= 0 && !readIds.includes(r.id)).length;
 
   return (
     <div className="app">
@@ -1418,16 +1417,36 @@ function MatingView({ individuals, navigate, showToast }) {
     }
     return { k: male.name + '|' + female.name, male, female };
   };
+  const mateIndex = [];   // 산란 귀속에 쓸 메이팅 색인
   evs.filter(e => e.type === 'mating').forEach(e => {
     const tName = (byId[e.individualId] || {}).name || '?';
     const pName = (e.data && e.data.partnerName) || '?';
     const { k, male, female } = orderPair(e.individualId, tName, e.data && e.data.partnerId, pName);
     (pairs[k] = pairs[k] || { male, female, matings: [], layings: [] }).matings.push(e);
+    mateIndex.push({ k, male, female, date: e.date, otherId: e.individualId, otherName: tName });
   });
-  evs.filter(e => e.type === 'laying' && e.data && e.data.sireName).forEach(e => {
+  mateIndex.sort((a, b) => (a.date < b.date ? 1 : -1));   // 최신순
+
+  /* 산란을 어느 페어에 붙일지 —
+     기록에 아빠 이름(sireName)이 박혀 있는 경우는 드뭅니다(엑셀에서 가져온 기록엔 아예 없음).
+     그래서 "이 암컷의 메이팅 중, 산란일 이전의 가장 최근 것"으로 귀속합니다.
+     산란기록 탭·엑셀 내보내기와 같은 규칙이라 어느 화면에서 봐도 숫자가 맞습니다. */
+  evs.filter(e => e.type === 'laying').forEach(e => {
     const momName = (byId[e.individualId] || {}).name || '?';
-    const k = e.data.sireName + '|' + momName;
-    if (!pairs[k]) pairs[k] = { male: { id: e.data.sireId, name: e.data.sireName }, female: { id: e.individualId, name: momName }, matings: [], layings: [] };
+    const before = mateIndex.filter(m => m.date <= e.date);
+    const mate = before.find(m => (m.female.id ? m.female.id === e.individualId : m.female.name === momName))
+              || before.find(m => m.male.id === e.individualId || m.otherId === e.individualId);
+    let k, male, female = { id: e.individualId, name: momName };
+    if (mate) {
+      k = mate.k; male = mate.male; female = mate.female;
+    } else if (e.data && e.data.sireName) {          // 메이팅 기록 없이 아빠만 적힌 경우
+      k = e.data.sireName + '|' + momName;
+      male = { id: e.data.sireId, name: e.data.sireName };
+    } else {                                          // 아빠를 모르는 산란도 버리지 않고 보여줍니다
+      k = '(부 미상)|' + momName;
+      male = { id: null, name: '부 미상' };
+    }
+    if (!pairs[k]) pairs[k] = { male, female, matings: [], layings: [] };
     pairs[k].layings.push(e);
   });
   const list = Object.entries(pairs);
@@ -1449,9 +1468,13 @@ function MatingView({ individuals, navigate, showToast }) {
             <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', cursor:'pointer'}}
               onClick={() => { setOpen(open === k ? null : k); setEditingId(null); setConfirmDel(null); }}>
               <div style={{fontSize:15, fontWeight:700}}>
-                <span style={{cursor:'pointer'}} onClick={e => { e.stopPropagation(); if (byId[p.male.id]) navigate('profile', { gecko: byId[p.male.id] }); }}>🔵 {p.male.name}</span>
+                <span style={{cursor:'pointer'}} onClick={e => { e.stopPropagation(); if (byId[p.male.id]) navigate('profile', { gecko: byId[p.male.id] }); }}>
+                  <GenderTag g={(byId[p.male.id] || {}).gender || 'male'} size={15} /> {p.male.name}
+                </span>
                 {' × '}
-                <span style={{cursor:'pointer'}} onClick={e => { e.stopPropagation(); if (byId[p.female.id]) navigate('profile', { gecko: byId[p.female.id] }); }}>🔴 {p.female.name}</span>
+                <span style={{cursor:'pointer'}} onClick={e => { e.stopPropagation(); if (byId[p.female.id]) navigate('profile', { gecko: byId[p.female.id] }); }}>
+                  <GenderTag g={(byId[p.female.id] || {}).gender || 'female'} size={15} /> {p.female.name}
+                </span>
               </div>
               <div style={{fontSize:12, color:'var(--text3)'}}>메이팅 {mates.length}회 · 산란 {lays.length}회 {open === k ? '▲' : '▼'}</div>
             </div>
@@ -1508,12 +1531,30 @@ function MatingView({ individuals, navigate, showToast }) {
                 })}
                 {lays.length === 0 ? (
                   <div style={{fontSize:12, color:'var(--text3)', paddingTop:5}}>아직 산란 기록이 없어요.</div>
-                ) : lays.map((l, i) => (
-                  <div key={l.id} style={{display:'flex', justifyContent:'space-between', fontSize:13, padding:'5px 0', borderBottom: i < lays.length - 1 ? '1px dashed var(--border)' : 'none'}}>
-                    <span style={{color:'var(--text)'}}>🥚 {i + 1}차 산란</span>
-                    <span style={{color:'var(--text3)'}}>{fmtDate(l.date)}{l.data.eggCount ? ` · ${l.data.eggCount}개` : ''}{l.data.notes ? ` · ${l.data.notes.slice(0, 14)}` : ''}</span>
-                  </div>
-                ))}
+                ) : lays.map((l, i) => {
+                  const eta = hatchETA(l.date);
+                  const d = daysUntil(eta);
+                  const infertile = /무정/.test((l.data && l.data.notes) || '');
+                  const hatched = evs.some(h => h.type === 'hatching' && h.individualId === l.individualId &&
+                    h.date >= l.date && Math.abs((new Date(h.date) - new Date(eta)) / 86400000) <= 45);
+                  const state = infertile ? { t: '무정', c: '#8A8177' }
+                    : hatched ? { t: '부화완료', c: '#2E7D46' }
+                    : d < -14 ? { t: '경과', c: '#8A8177' }
+                    : d < 0 ? { t: `지연 ${-d}일`, c: '#C87F2F' }
+                    : { t: `부화 D-${d}`, c: d <= 7 ? '#B3261E' : 'var(--accent2)' };
+                  return (
+                    <div key={l.id}
+                      onClick={() => navigate('clutch', { layingId: l.id })}
+                      style={{display:'flex', justifyContent:'space-between', alignItems:'center', gap:8, fontSize:13, padding:'6px 0', cursor:'pointer',
+                              borderBottom: i < lays.length - 1 ? '1px dashed var(--border)' : 'none'}}>
+                      <span style={{color:'var(--text)', whiteSpace:'nowrap'}}>🥚 {i + 1}차</span>
+                      <span style={{color:'var(--text3)', flex:1, textAlign:'right', minWidth:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
+                        {fmtDate(l.date)}{l.data.eggCount ? ` · ${l.data.eggCount}개` : ''}{l.data.notes ? ` · ${l.data.notes.slice(0, 10)}` : ''}
+                      </span>
+                      <span style={{color:state.c, fontWeight:700, whiteSpace:'nowrap', fontSize:12}}>{state.t}</span>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -1968,8 +2009,8 @@ function PedigreeCard({ gecko, navigate }) {
         <div style={{fontSize:13, fontWeight:700, color:'var(--text2)', marginBottom:8}}>🧬 혈통</div>
         {(sire || dam) && (
           <div style={{display:'flex', flexWrap:'wrap', gap:6}}>
-            {sire && <button className="chip-btn" onClick={() => navigate('profile', { gecko: sire })}>부 🔵 {sire.name}</button>}
-            {dam && <button className="chip-btn" onClick={() => navigate('profile', { gecko: dam })}>모 🔴 {dam.name}</button>}
+            {sire && <button className="chip-btn" onClick={() => navigate('profile', { gecko: sire })}>부 {genderEmoji(sire.gender || 'male')} {sire.name}</button>}
+            {dam && <button className="chip-btn" onClick={() => navigate('profile', { gecko: dam })}>모 {genderEmoji(dam.gender || 'female')} {dam.name}</button>}
           </div>
         )}
         {kids.length > 0 && (
@@ -3264,14 +3305,71 @@ function CalendarScreen({ navigate, individuals, showToast, onRemindersChanged }
 /* ══════════════════════════════════════════
    알림 화면
    ══════════════════════════════════════════ */
+const WEEK_WINDOW = 7;   // 예정일은 1주일 전부터 화면에 띄웁니다
+const FEED_DUE = 4;      // 마지막 급여로부터 이 일수가 지나면 "밥 줄 아이"
+
+/* 오늘 실제로 손이 가야 하는 일들을 뽑아냅니다.
+   D-day 나열이 아니라 "지금 하러 가는 버튼"이 되도록 만듭니다. */
+function buildTodo(reminders, navigateTo) {
+  const inds = DB.getIndividuals();
+  const byId = {}; inds.forEach(i => { byId[i.id] = i; });
+  const evs = DB.getEvents();
+  const todo = [];
+
+  // ① 부화·산란 예정일이 오늘이거나 지난 것 → 확인하러 가기
+  reminders.filter(r => daysUntil(r.date) <= 0).forEach(r => {
+    const late = -daysUntil(r.date);
+    const hatch = r.type === 'hatching_expected';
+    if (!hatch && r.type !== 'laying_expected') {
+      todo.push({ id: r.id, emoji: '🔔', title: r.geckoName || '알림', sub: r.message || '',
+        late, action: null });
+      return;
+    }
+    // 부화 예정이면 그 알(클러치) 화면으로 바로 보냅니다
+    const lay = hatch ? [...evs].filter(e => e.type === 'laying' && e.individualId === r.individualId && e.date <= r.date)
+      .sort((a, b) => (a.date < b.date ? 1 : -1))[0] : null;
+    todo.push({
+      id: r.id,
+      emoji: hatch ? '🐣' : '🥚',
+      title: r.geckoName || '',
+      sub: hatch ? '부화했는지 알을 확인해주세요' : '산란했는지 확인해주세요',
+      late,
+      action: hatch && lay ? { label: '알 보기', go: () => navigateTo('clutch', { layingId: lay.id }) }
+        : byId[r.individualId] ? { label: '기록하기', go: () => navigateTo('profile', { gecko: byId[r.individualId] }) } : null,
+    });
+  });
+
+  // ② 밥 줄 때가 된 아이들 (분양 완료한 아이는 제외)
+  const lastFeedBy = {};
+  evs.filter(e => e.type === 'feeding').forEach(e => {
+    if (!lastFeedBy[e.individualId] || lastFeedBy[e.individualId] < e.date) lastFeedBy[e.individualId] = e.date;
+  });
+  const hungry = inds.filter(i => (i.status || 'own') !== 'sold')
+    .map(i => ({ i, d: lastFeedBy[i.id] ? Math.floor((new Date(todayStr()) - new Date(lastFeedBy[i.id])) / 86400000) : null }))
+    .filter(x => x.d !== null && x.d >= FEED_DUE)
+    .sort((a, b) => b.d - a.d);
+  if (hungry.length) {
+    todo.push({
+      id: 'feed', emoji: '🦗', title: `밥 줄 아이 ${hungry.length}마리`,
+      sub: hungry.slice(0, 6).map(x => `${x.i.name}(${x.d}일)`).join(' · ') + (hungry.length > 6 ? ' 외' : ''),
+      late: 0, action: { label: '개체 보기', go: () => navigateTo('home') },
+    });
+  }
+  return todo.sort((a, b) => b.late - a.late);
+}
+
 function RemindersScreen({ navigate, onChanged }) {
   const [all, setAll] = useState(() => [...DB.getReminders()].sort((a,b) => a.date > b.date ? 1 : -1));
-  const imminent = all.filter(r => { const d = daysUntil(r.date); return d >= 0 && d <= NOTIFY_WINDOW; });
-  const upcoming = all.filter(r => daysUntil(r.date) > NOTIFY_WINDOW);
+  const todo = buildTodo(all, navigate);
+  const thisWeek = all.filter(r => { const d = daysUntil(r.date); return d > 0 && d <= WEEK_WINDOW; });
+  const later = all.filter(r => daysUntil(r.date) > WEEK_WINDOW);
   const past = all.filter(r => daysUntil(r.date) < 0);
+  const [showLater, setShowLater] = useState(false);
+  const [showPast, setShowPast] = useState(false);
 
   // 화면을 열면 임박 알림은 읽음 처리 → 배지 제거
   useEffect(() => {
+    const imminent = all.filter(r => daysUntil(r.date) <= 0);
     if (imminent.length) {
       DB.markRemindersRead(imminent.map(r => r.id));
       onChanged && onChanged();
@@ -3288,28 +3386,53 @@ function RemindersScreen({ navigate, onChanged }) {
   return (
     <div className="screen">
       <div className="header"><h1>🔔 알림</h1></div>
-      {all.length === 0 && (
-        <div className="empty">
-          <div className="empty-icon">🔔</div>
-          <p>설정된 알림이 없어요.{'\n'}산란 기록 시 부화 예정 알림을 설정할 수 있어요.</p>
+
+      <div className="section-title">✅ 오늘 할 일</div>
+      {todo.length === 0 ? (
+        <div className="card" style={{textAlign:'center', color:'var(--text3)', fontSize:13, padding:'18px 12px'}}>
+          오늘 급한 일은 없어요. 편히 쉬세요 🌿
         </div>
-      )}
-      {imminent.length > 0 && (
+      ) : todo.map(t => (
+        <div className="card" key={t.id} style={{borderLeft:`3px solid ${t.late > 0 ? 'var(--danger)' : 'var(--accent2)'}`}}>
+          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', gap:10}}>
+            <div style={{minWidth:0, flex:1}}>
+              <div style={{fontSize:15, fontWeight:700}}>
+                {t.emoji} {t.title}
+                {t.late > 0 && <span style={{fontSize:11, color:'var(--danger)', marginLeft:6}}>{t.late}일 지남</span>}
+                {t.late === 0 && t.id !== 'feed' && <span style={{fontSize:11, color:'var(--accent2)', marginLeft:6}}>오늘</span>}
+              </div>
+              <div style={{fontSize:12, color:'var(--text3)', marginTop:3, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{t.sub}</div>
+            </div>
+            {t.action && (
+              <button className="btn btn-secondary btn-sm" style={{width:'auto', whiteSpace:'nowrap'}}
+                onClick={t.action.go}>{t.action.label}</button>
+            )}
+          </div>
+        </div>
+      ))}
+
+      {thisWeek.length > 0 && (
         <>
-          <div className="section-title">🔔 알림 (임박)</div>
-          {imminent.map(r => <ReminderCard key={r.id} r={r} onDelete={deleteReminder} />)}
+          <div className="section-title">📅 이번 주 예정 (1주일 이내)</div>
+          {thisWeek.map(r => <ReminderCard key={r.id} r={r} onDelete={deleteReminder} />)}
         </>
       )}
-      {upcoming.length > 0 && (
+
+      {later.length > 0 && (
         <>
-          <div className="section-title">📅 다가오는 일정</div>
-          {upcoming.map(r => <ReminderCard key={r.id} r={r} onDelete={deleteReminder} />)}
+          <div className="section-title" style={{cursor:'pointer'}} onClick={() => setShowLater(v => !v)}>
+            🗓️ 나중 일정 {later.length}건 {showLater ? '▲' : '▼'}
+          </div>
+          {showLater && later.map(r => <ReminderCard key={r.id} r={r} onDelete={deleteReminder} />)}
         </>
       )}
+
       {past.length > 0 && (
         <>
-          <div className="section-title" style={{color:'var(--text3)'}}>지난 알림</div>
-          {past.map(r => <ReminderCard key={r.id} r={r} onDelete={deleteReminder} past />)}
+          <div className="section-title" style={{color:'var(--text3)', cursor:'pointer'}} onClick={() => setShowPast(v => !v)}>
+            지난 알림 {past.length}건 {showPast ? '▲' : '▼'}
+          </div>
+          {showPast && past.map(r => <ReminderCard key={r.id} r={r} onDelete={deleteReminder} past />)}
         </>
       )}
     </div>
@@ -3879,13 +4002,14 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
         <div className="card" style={{margin:0}}>
           <div style={{fontSize:13, fontWeight:700, marginBottom:6, color:'var(--text2)'}}>앱 정보</div>
           <div style={{fontSize:13, color:'var(--text3)', lineHeight:1.7}}>
-            크레건설 브리딩 비서 v2.4<br/>
+            크레건설 브리딩 비서 v2.5<br/>
             축양·분양·<b>산란</b>·메이팅·해칭 · 즐겨찾기 · 캘린더(날짜별 추가·수정)<br/>
             사진 첨부 · 예정일 대비 차이 기록 · 백업 복원 · 비속어 필터<br/>
             ☁️ 서버 동기화 — 회원가입·로그인, 폰·PC 같은 데이터<br/>
             🔀 같은 이름 개체 합치기 · 기록 주인 바로잡기<br/>
             📊 엑셀 내려받기(원본 양식) · 프로필 사진 · 🥚 알 상세·해칭<br/>
             🌡️ 인큐 온도로 부화 예정일 계산 · ♀♂? 성별 표시<br/>
+            ✅ 오늘 할 일 알림(지난 일정 포함) · 메이팅별 산란 이력<br/>
             테마: 아이보리 × 버건디 (크레건설 아이덴티티)<br/>
             예정: AI 상담 연결
           </div>
