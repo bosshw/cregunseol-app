@@ -912,6 +912,64 @@ const AFFECTION_RE = /특별|메인\s*개체|소중|아끼|예쁘|이쁘|귀엽|
 const HEALTH_RE = /아프|아파|병원|설사|무름|입마름|MBD|칼슘|식욕\s*부진|기운이?\s*없|안\s*먹|먹지\s*않|거식|토했|토를|상처|다쳤|꼬리\s*빠|절뚝/;
 const QUESTION_RE = /[?？]\s*$|어떻게\s|추천해|뭐가\s*좋|누가\s*좋|어떤\s*게\s*좋|해도\s*될까|괜찮을까/;
 
+/* ── 프로필 정정 감지 ──
+   "부화일이 8월 6일이야" 처럼 이미 저장된 값과 다른 정보가 들어오면,
+   말없이 덮어쓰지 않고 뭐가 맞는지 여쭤봅니다. */
+const PROFILE_LABEL = { hatchDate: '부화일(생일)', gender: '성별', morph: '모프' };
+function profileText(field, v) {
+  if (field === 'hatchDate') return fmtDate(v);
+  if (field === 'gender') return genderLabel(v);
+  return v;
+}
+// 문장에 '날짜가 분명히 적혀 있을 때만' 돌려줍니다.
+// (parseKDate는 없으면 오늘을 주기 때문에, 그대로 쓰면 엉뚱한 날로 고쳐질 수 있습니다)
+function explicitDate(text) {
+  if (/\d{4}[-./]\d{1,2}[-./]\d{1,2}/.test(text)) return parseKDate(text);
+  if (/\d{1,2}월\s*\d{1,2}일/.test(text)) return parseKDate(text);
+  if (/그저께|그제|어제/.test(text)) return parseKDate(text);
+  return null;
+}
+function detectProfileClaim(text) {
+  const birthWord = /(부화일|해칭일|생일|출생일|태어난\s*날)/.test(text);
+  const bornVerb = /태어(났|나)/.test(text);
+  if (birthWord || bornVerb) {
+    const dv = explicitDate(text);
+    if (dv) return { field: 'hatchDate', value: dv };
+  }
+  if (!/메이팅|짝짓기|붙였|합사/.test(text)) {
+    const gm = text.match(/(수컷|암컷)(?:이야|이에요|입니다|임|이래|같아|이다|이었|였|으로|이었어)/);
+    if (gm) return { field: 'gender', value: gm[1] === '수컷' ? 'male' : 'female' };
+  }
+  return null;
+}
+
+/* 무엇을 할지 정하는 판단부 (화면과 분리 — 그대로 테스트합니다)
+   null        → 평소대로 진행
+   future      → 아직 오지 않은 날짜
+   ask         → 기존 값과 달라서 여쭤봄
+   apply       → 비어 있던 칸이라 바로 채움 */
+function planProfileFix(cur, text, individuals, morph) {
+  const claim = detectProfileClaim(text) || (morph ? { field: 'morph', value: morph } : null);
+  if (!claim || !cur) return null;
+  if (claim.field === 'hatchDate' && claim.value > todayStr()) return { kind: 'future', value: claim.value };
+  // 성별 '미구분'은 아직 안 정한 상태라 "다른 값"으로 보지 않습니다
+  const from = (claim.field === 'gender' && cur.gender === 'unknown') ? '' : (cur[claim.field] || '');
+  if (from === claim.value) return null;
+  if (!from) return claim.field === 'hatchDate' ? { kind: 'apply', field: 'hatchDate', from: '', to: claim.value } : null;
+  const sibs = claim.field === 'hatchDate' && cur.damId
+    ? (individuals || []).filter(x => x.damId === cur.damId && x.hatchDate === from).length : 1;
+  return { kind: 'ask', field: claim.field, from, to: claim.value, sibs };
+}
+
+/* 실제로 고치는 실행부 — 부화일은 부화 기록·형제 생일까지 함께 옮깁니다 */
+function commitProfileFix(t, field, from, to) {
+  if (field !== 'hatchDate') { DB.updateIndividual(t.id, { [field]: to }); return { moved: 1 }; }
+  let moved = 0;
+  if (from) { moved = DB.moveHatchDate(t.damId, from, to).babies; }
+  if (!moved) { DB.updateIndividual(t.id, { hatchDate: to }); moved = 1; }
+  return { moved };
+}
+
 // 응답 문구 다양화
 const OPENERS = ['기록함에 담았어요 ✅', '잘 적어뒀어요 ✍️', '차곡차곡 담아뒀어요 📥', '기록해뒀어요 🙂'];
 const pickOpener = () => OPENERS[Math.floor(Math.random() * OPENERS.length)];
@@ -2195,6 +2253,19 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     return `모프가 ${morph}군요! ✨ ${target.name} 프로필에 적어뒀어요.`;
   };
 
+  /* ── 프로필 값 고치기 (부화일·성별·모프) ── */
+  const applyFix = (t, field, from, to) => {
+    const { moved } = commitProfileFix(t, field, from, to);
+    refreshIndividuals();
+    geckoRef.current = DB.getIndividuals().find(i => i.id === t.id) || { ...(geckoRef.current || t), [field]: to };
+    if (field === 'hatchDate') {
+      bot(`${t.name} 부화일을 ${fmtDate(to)}로 ${from ? '바꿨' : '적어뒀'}어요 🎂` +
+        (moved > 1 ? `\n같이 나온 ${moved}마리와 부화 기록도 함께 옮겼어요.` : ''));
+    } else {
+      bot(`${t.name} ${PROFILE_LABEL[field]}을(를) ${profileText(field, to)}로 바꿨어요 ✅`);
+    }
+  };
+
   /* ── 새 개체 등록 ── */
   const doRegister = (name) => {
     if (isBadName(name)) { pendingNameRef.current = null; bot(BAD_NAME_MSG); return; }
@@ -2287,6 +2358,11 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       updatePending(p => p.map(f => (f.type === 'mating' && f.data && f.data.partnerName === value.name && !f.data.partnerId)
         ? { ...f, data: { ...f.data, partnerId: partner.id } } : f));
       bot(`🦎 ${value.name}, 등록하고 파트너로 연결해뒀어요! 저장하면 혈통에도 반영돼요.`);
+    } else if (kind === 'fix' && value) {
+      const t = DB.getIndividuals().find(i => i.id === value.targetId);
+      if (t) applyFix(t, value.field, value.from, value.to);
+    } else if (kind === 'fix-no' && value) {
+      bot(`네, ${PROFILE_LABEL[value.field]}은(는) ${profileText(value.field, value.from)} 그대로 둘게요 🙂`);
     } else if (kind === 'memo-skip') {
       bot('네, 기록 없이 넘어갈게요 🙂 다른 이야기 들려주세요.');
     }
@@ -2434,6 +2510,30 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
 
     const qa = answerQuery(target, text);
     if (qa) { bot(qa); return; }
+
+    /* 5.54) 이미 적힌 값과 다른 정보가 들어온 경우 — 말없이 덮어쓰지 않고 여쭤봅니다.
+       "고쳐줘"라는 말이 없어도 됩니다. 값이 같거나 아직 비어 있으면 평소대로 흘려보냅니다. */
+    {
+      const cur = DB.getIndividuals().find(i => i.id === target.id) || target;
+      const plan = planProfileFix(cur, text, DB.getIndividuals(), morph);
+      if (plan && plan.kind === 'future') {
+        bot(`${fmtDate(plan.value)}은 아직 오지 않은 날짜예요 🙂 다시 알려주시겠어요?`);
+        return;
+      }
+      if (plan && plan.kind === 'apply') { applyFix(cur, plan.field, plan.from, plan.to); return; }
+      if (plan && plan.kind === 'ask') {
+        bot(`잠깐만요 — 지금 ${cur.name}의 ${PROFILE_LABEL[plan.field]}은(는) ` +
+          `${profileText(plan.field, plan.from)}로 적혀 있어요.\n` +
+          `${profileText(plan.field, plan.to)}로 고칠까요?` +
+          (plan.sibs > 1 ? `\n(고치면 같이 나온 ${plan.sibs}마리와 부화 기록도 함께 옮겨져요)` : ''), [
+            { label: `✅ ${profileText(plan.field, plan.to)}가 맞아요`, kind: 'fix',
+              value: { field: plan.field, from: plan.from, to: plan.to, targetId: cur.id } },
+            { label: `아니요, ${profileText(plan.field, plan.from)} 그대로`, kind: 'fix-no',
+              value: { field: plan.field, from: plan.from } },
+          ]);
+        return;
+      }
+    }
 
     // 5.55) 혈통
     const sireM = text.match(/(?:아빠|아비)(?:는|가|:)?\s*([가-힣A-Za-z0-9]+)/);
@@ -4093,7 +4193,7 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
         <div className="card" style={{margin:0}}>
           <div style={{fontSize:13, fontWeight:700, marginBottom:6, color:'var(--text2)'}}>앱 정보</div>
           <div style={{fontSize:13, color:'var(--text3)', lineHeight:1.7}}>
-            크레건설 브리딩 비서 v2.7<br/>
+            크레건설 브리딩 비서 v2.8<br/>
             축양·분양·<b>산란</b>·메이팅·해칭 · 즐겨찾기 · 캘린더(날짜별 추가·수정)<br/>
             사진 첨부 · 예정일 대비 차이 기록 · 백업 복원 · 비속어 필터<br/>
             ☁️ 서버 동기화 — 회원가입·로그인, 폰·PC 같은 데이터<br/>
@@ -4101,6 +4201,7 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
             📊 엑셀 내려받기(원본 양식) · 프로필 사진 · 🥚 알 상세·해칭<br/>
             🌡️ 인큐 온도로 부화 예정일 계산 · ♀♂? 성별 표시<br/>
             ✅ 오늘 할 일 알림(지난 일정 포함) · 메이팅별 산란 이력<br/>
+            ✏️ 부화일 수정 · 대화로 정보 정정("부화일 8월 6일이야")<br/>
             테마: 아이보리 × 버건디 (크레건설 아이덴티티)<br/>
             예정: AI 상담 연결
           </div>
