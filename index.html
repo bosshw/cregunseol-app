@@ -801,11 +801,75 @@ function clutchRows(individuals, events) {
   });
 }
 
-/* 화면에 띄울 알림 = 저장된 알림 + 산란기록에서 계산한 부화 예정
-   부화 예정은 저장하지 않으므로(온도 연동) 여기서 만들어 붙입니다. */
+/* ── 산란 주기 학습 ──
+   암컷마다 산란 간격이 다르므로, 그 아이가 실제로 낳은 간격을 보고 다음을 추정합니다.
+   기록이 없으면 다른 암컷들의 평균을, 그것도 없으면 기본값(30일)을 씁니다. */
+const median = (arr) => {
+  if (!arr.length) return null;
+  const a = [...arr].sort((x, y) => x - y);
+  const m = Math.floor(a.length / 2);
+  return a.length % 2 ? a[m] : Math.round((a[m - 1] + a[m]) / 2);
+};
+function layingGaps(layDates) {
+  const ds = [...layDates].sort();
+  const gaps = [];
+  for (let i = 1; i < ds.length; i++) {
+    const g = Math.round((new Date(ds[i]) - new Date(ds[i - 1])) / 86400000);
+    if (g >= 14 && g <= 90) gaps.push(g);   // 휴지기를 건너뛴 간격은 평균에서 뺍니다
+  }
+  return gaps;
+}
+/* 암컷별 다음 산란 예정 — 저장하지 않고 매번 계산합니다(기록이 쌓이면 저절로 정확해집니다) */
+function layingForecasts(individuals, events) {
+  const inds = individuals || DB.getIndividuals();
+  const evs = events || DB.getEvents();
+  const byId = {}; inds.forEach(i => { byId[i.id] = i; });
+  const laysBy = {}, matesBy = {};
+  evs.forEach(e => {
+    if (e.type === 'laying') (laysBy[e.individualId] = laysBy[e.individualId] || []).push(e);
+    if (e.type === 'mating') (matesBy[e.individualId] = matesBy[e.individualId] || []).push(e);
+  });
+  // 전체 평균(다른 암컷들의 간격) — 처음 낳는 아이에게 씁니다
+  const allGaps = [];
+  Object.values(laysBy).forEach(ls => allGaps.push(...layingGaps(ls.map(e => e.date))));
+  const herdAvg = median(allGaps);
+
+  const out = [];
+  inds.forEach(i => {
+    if ((i.status || 'own') === 'sold' || i.isExternal) return;
+    const ls = (laysBy[i.id] || []).slice().sort((a, b) => (a.date > b.date ? 1 : -1));
+    const ms = (matesBy[i.id] || []).slice().sort((a, b) => (a.date > b.date ? 1 : -1));
+    if (!ls.length && !ms.length) return;
+    if (i.gender === 'male') return;                       // 수컷은 제외 (미구분은 기록이 있으면 포함)
+    let base, interval, basis;
+    const own = layingGaps(ls.map(e => e.date));
+    if (ls.length) {
+      base = ls[ls.length - 1].date;
+      if (own.length) { interval = median(own); basis = `본인 ${own.length + 1}회 기록 평균`; }
+      else if (herdAvg) { interval = herdAvg; basis = '다른 아이들 평균'; }
+      else { interval = LAYING_INTERVAL; basis = '기본값'; }
+    } else {
+      base = ms[ms.length - 1].date;
+      interval = LAYING_AFTER_MATING; basis = '메이팅 기준';
+    }
+    const eta = localISO(new Date(new Date(base).getTime() + interval * 86400000));
+    if (daysUntil(eta) < -21) return;                      // 너무 오래 지난 추정은 의미가 없습니다
+    const lastMate = ms.length ? ms[ms.length - 1] : null;
+    const dadName = (lastMate && lastMate.data && lastMate.data.partnerName)
+      || ((byId[(lastMate && lastMate.data && lastMate.data.partnerId)] || {}).name) || null;
+    out.push({
+      indId: i.id, name: i.name, pairName: i.name + (dadName ? ' × ' + dadName : ''),
+      eta, interval, basis, count: ls.length, lastLay: ls.length ? ls[ls.length - 1].date : null,
+    });
+  });
+  return out;
+}
+
+/* 화면에 띄울 알림 = 사용자가 직접 만든 알림 + 계산으로 만든 부화·산란 예정
+   예정일은 저장하지 않습니다(온도·기록이 바뀌면 바로 따라오게). */
 function allAlerts() {
-  const stored = DB.getReminders().filter(r => r.type !== 'hatching_expected');
-  const derived = clutchRows().filter(r => r.waiting).map(r => ({
+  const stored = DB.getReminders().filter(r => r.type !== 'hatching_expected' && r.type !== 'laying_expected');
+  const hatch = clutchRows().filter(r => r.waiting).map(r => ({
     id: 'H:' + r.e.id,
     individualId: r.e.individualId,
     geckoName: r.pairName,
@@ -815,15 +879,70 @@ function allAlerts() {
     layingId: r.e.id,
     derived: true,
   }));
-  return [...stored, ...derived].sort((a, b) => (a.date > b.date ? 1 : -1));
+  const lay = layingForecasts().map(f => ({
+    id: 'L:' + f.indId,
+    individualId: f.indId,
+    geckoName: f.pairName,
+    type: 'laying_expected',
+    date: f.eta,
+    message: f.count
+      ? `다음 산란 예정 · 약 ${f.interval}일 간격 (${f.basis})`
+      : `첫 산란 예정 · 메이팅 +${f.interval}일`,
+    derived: true,
+  }));
+  return [...stored, ...hatch, ...lay].sort((a, b) => (a.date > b.date ? 1 : -1));
 }
 
-// 예전 버전이 저장해 둔 '부화 예정' 알림은 이제 계산으로 대체되므로 한 번만 정리합니다
+// 예전 버전이 저장해 둔 '부화·산란 예정' 알림은 이제 계산으로 대체되므로 한 번만 정리합니다
 function purgeStoredHatchReminders() {
   const rs = DB.getReminders();
-  const next = rs.filter(r => r.type !== 'hatching_expected');
+  const next = rs.filter(r => r.type !== 'hatching_expected' && r.type !== 'laying_expected');
   if (next.length !== rs.length) DB.saveReminders(next);
   return rs.length - next.length;
+}
+
+/* ── 밥 주는 날 관리 ──
+   보통 개체별로 따로 주지 않고 "오늘 한 바퀴 돈다"에 가깝습니다.
+   그래서 마지막으로 밥을 준 날 + 설정한 간격 = 다음 급여일로 잡고, 그날 한 번에 체크합니다. */
+const FEED_INTERVAL_DEFAULT = 3;   // 며칠에 한 번 주는지
+const FEED_WARN_DEFAULT = 7;       // 며칠째 안 먹으면 걱정하는지
+const feedInterval = () => {
+  const v = Number((DB.getSettings() || {}).feedInterval);
+  return v >= 1 && v <= 14 ? v : FEED_INTERVAL_DEFAULT;
+};
+const feedWarn = () => {
+  const v = Number((DB.getSettings() || {}).feedWarn);
+  return v >= 3 && v <= 30 ? v : FEED_WARN_DEFAULT;
+};
+// 먹은 것으로 치는 기록인가 (안 먹음·건너뜀은 제외)
+const isAte = (e) => !(e.data && (e.data.ate === false || e.data.skipped));
+
+function feedPlan(individuals, events) {
+  const inds = (individuals || DB.getIndividuals()).filter(i => (i.status || 'own') !== 'sold' && !i.isExternal);
+  const evs = (events || DB.getEvents()).filter(e => e.type === 'feeding');
+  const today = todayStr();
+  const lastRound = evs.reduce((a, e) => (!a || e.date > a) ? e.date : a, null);
+  const interval = feedInterval();
+  const nextDay = lastRound
+    ? localISO(new Date(new Date(lastRound).getTime() + interval * 86400000))
+    : today;
+  const dLeft = daysUntil(nextDay);
+
+  const ateBy = {}, seenBy = {};
+  evs.forEach(e => {
+    if (!seenBy[e.individualId] || seenBy[e.individualId] < e.date) seenBy[e.individualId] = e.date;
+    if (!isAte(e)) return;
+    if (!ateBy[e.individualId] || ateBy[e.individualId] < e.date) ateBy[e.individualId] = e.date;
+  });
+  const doneToday = new Set(evs.filter(e => e.date === today).map(e => e.individualId));
+  const daysSinceAte = (id) => ateBy[id] ? Math.floor((new Date(today) - new Date(ateBy[id])) / 86400000) : null;
+  const worried = inds
+    .map(i => ({ ind: i, last: ateBy[i.id] || null, days: daysSinceAte(i.id) }))
+    .filter(x => x.days !== null && x.days >= feedWarn())
+    .sort((a, b) => b.days - a.days);
+
+  return { inds, evs, lastRound, nextDay, dLeft, due: dLeft <= 0, interval,
+           ateBy, seenBy, doneToday, worried, remaining: inds.filter(i => !doneToday.has(i.id)) };
 }
 
 /* 크레건설 출생(CG) 판정 — 우리 기록으로 부모를 아는 아이는 우리 집에서 나온 아이입니다.
@@ -1389,6 +1508,9 @@ function App() {
     <div className="app">
       {screen.name === 'home' && (
         <HomeScreen key={screen.props.view || 'own'} {...screen.props} individuals={individuals} navigate={navigate} showToast={showToast} refreshIndividuals={refreshIndividuals} />
+      )}
+      {screen.name === 'feeding' && (
+        <FeedingScreen navigate={navigate} showToast={showToast} refreshIndividuals={refreshIndividuals} />
       )}
       {screen.name === 'clutch' && (
         <ClutchScreen {...screen.props} navigate={navigate} showToast={showToast} refreshIndividuals={refreshIndividuals} />
@@ -3358,7 +3480,12 @@ function formatEventDetail(ev) {
     }
     case 'distribution': return d.price ? `${Number(d.price).toLocaleString()}원에 분양` : '분양 기록';
     case 'shed':         return '탈피 완료';
-    case 'feeding':      return d.foodType ? `${d.foodType === '충식' ? '🦗 충식' : '🥣 슈푸(일반식)'} 급여` : (d.notes || '먹이 급여');
+    case 'feeding': {
+      if (d.skipped) return '⏭️ 오늘은 안 줌';
+      const f = d.foodType ? `${d.foodType === '충식' ? '🦗 충식' : '🥣 슈푸(일반식)'}` : '먹이';
+      if (d.ate === false) return `🚫 ${f} 안 먹음`;
+      return d.foodType ? `${f} 급여` : (d.notes || '먹이 급여');
+    }
     case 'photo':        return '사진 기록';
     case 'memo':         return d.notes || '메모';
     default:             return '';
@@ -3392,10 +3519,24 @@ function CalendarScreen({ navigate, individuals, showToast, onRemindersChanged }
     add(r.date, { ...base, name: r.geckoName || '', planned: true, reminder: r });
   });
   // 캘린더에는 "일정"만 — 개체별 메모·사진·무게 같은 기록은 각 개체 프로필에서 봅니다
+  // 산란·해칭은 알림과 같은 양식("엄마 × 아빠 · N차")으로 맞춥니다
+  const cRows = clutchRows(individuals, DB.getEvents());
+  const byLaying = {}; cRows.forEach(r => { byLaying[r.e.id] = r; });
+  const byHatchEv = {}; cRows.forEach(r => { if (r.hatched) byHatchEv[r.hatched.id] = r; });
   DB.getEvents().forEach(e => {
     if (!CALENDAR_TYPES.includes(e.type)) return;
     const t = EVENT_TYPES.find(x => x.key === e.type) || {};
-    add(e.date, { emoji: t.emoji || '📌', label: t.label || e.type, name: (byId[e.individualId] || {}).name || '', event: e });
+    let name = (byId[e.individualId] || {}).name || '';
+    let label = t.label || e.type;
+    if (e.type === 'laying' && byLaying[e.id]) {
+      name = byLaying[e.id].pairName; label = `${byLaying[e.id].nth}차 산란`;
+    } else if (e.type === 'hatching' && byHatchEv[e.id]) {
+      name = byHatchEv[e.id].pairName; label = `${byHatchEv[e.id].nth}차 해칭`;
+    } else if (e.type === 'mating') {
+      const p = (e.data && e.data.partnerName) || (byId[e.data && e.data.partnerId] || {}).name;
+      if (p) name = `${name} × ${p}`;
+    }
+    add(e.date, { emoji: t.emoji || '📌', label, name, event: e });
   });
 
   const startDow = new Date(cur.y, cur.m, 1).getDay();
@@ -3651,30 +3792,165 @@ function buildTodo(reminders, navigateTo) {
       id: r.id,
       emoji: hatch ? '🐣' : '🥚',
       title: r.geckoName || '',
-      sub: hatch ? (r.message || '부화했는지 알을 확인해주세요') : '산란했는지 확인해주세요',
+      sub: r.message || (hatch ? '부화했는지 알을 확인해주세요' : '산란했는지 확인해주세요'),
       late,
       action: hatch && lay ? { label: '알 보기', go: () => navigateTo('clutch', { layingId: lay.id }) }
         : byId[r.individualId] ? { label: '기록하기', go: () => navigateTo('profile', { gecko: byId[r.individualId] }) } : null,
     });
   });
 
-  // ② 밥 줄 때가 된 아이들 (분양 완료한 아이는 제외)
-  const lastFeedBy = {};
-  evs.filter(e => e.type === 'feeding').forEach(e => {
-    if (!lastFeedBy[e.individualId] || lastFeedBy[e.individualId] < e.date) lastFeedBy[e.individualId] = e.date;
-  });
-  const hungry = inds.filter(i => (i.status || 'own') !== 'sold')
-    .map(i => ({ i, d: lastFeedBy[i.id] ? Math.floor((new Date(todayStr()) - new Date(lastFeedBy[i.id])) / 86400000) : null }))
-    .filter(x => x.d !== null && x.d >= FEED_DUE)
-    .sort((a, b) => b.d - a.d);
-  if (hungry.length) {
+  // ② 밥 주는 날 — 개체별이 아니라 "오늘 한 바퀴 돈다" 기준
+  const fp = feedPlan(inds, evs);
+  if (fp.due && fp.remaining.length) {
     todo.push({
-      id: 'feed', emoji: '🦗', title: `밥 줄 아이 ${hungry.length}마리`,
-      sub: hungry.slice(0, 6).map(x => `${x.i.name}(${x.d}일)`).join(' · ') + (hungry.length > 6 ? ' 외' : ''),
-      late: 0, action: { label: '개체 보기', go: () => navigateTo('home') },
+      id: 'feed', emoji: '🦗', pinned: true,
+      title: fp.dLeft === 0 ? '오늘 밥 주는 날' : `밥 주는 날 ${-fp.dLeft}일 지남`,
+      sub: `${fp.inds.length}마리 중 ${fp.remaining.length}마리 남음` +
+        (fp.lastRound ? ` · 지난 급여 ${fmtDate(fp.lastRound)}` : ' · 첫 급여 기록'),
+      late: Math.max(0, -fp.dLeft),
+      action: { label: '밥 주기', go: () => navigateTo('feeding') },
+    });
+  } else if (fp.doneToday.size && !fp.remaining.length) {
+    // 오늘 한 바퀴 다 돌았으면 확인 문구로 바꿔줍니다
+    todo.push({
+      id: 'feed-done', emoji: '✅', title: '오늘 밥 다 줬어요',
+      sub: `${fp.inds.length}마리 전부 확인 완료 · 다음 급여는 ${fmtDate(fp.nextDay)}`,
+      late: 0, action: { label: '다시 보기', go: () => navigateTo('feeding') },
     });
   }
-  return todo.sort((a, b) => b.late - a.late);
+
+  // ③ 며칠째 안 먹는 아이 — 위험해지기 전에 짚어줍니다
+  fp.worried.slice(0, 5).forEach(w => {
+    todo.push({
+      id: 'noeat:' + w.ind.id, emoji: '⚠️',
+      title: `${w.ind.name} ${w.days}일째 안 먹어요`,
+      sub: `마지막 섭취 ${fmtDate(w.last)} · 계속되면 병원 진료를 생각해보세요`,
+      late: w.days,
+      action: { label: '프로필', go: () => navigateTo('profile', { gecko: w.ind }) },
+    });
+  });
+
+  // 밥 주는 날은 늘 맨 위에
+  return todo.sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || b.late - a.late);
+}
+
+/* ══════════════════════════════════════════
+   밥 주기 화면 — 오늘 한 바퀴 돌면서 한 마리씩 체크
+   ══════════════════════════════════════════ */
+function FeedingScreen({ navigate, showToast, refreshIndividuals }) {
+  const [ver, setVer] = useState(0);
+  const [foodType, setFoodType] = useState(() => (DB.getSettings() || {}).lastFoodType || '슈푸');
+  const bump = () => { setVer(v => v + 1); refreshIndividuals && refreshIndividuals(); };
+  const fp = feedPlan();
+  const today = todayStr();
+
+  // 오늘 이미 찍은 기록 (다시 누르면 바꿔 끼웁니다)
+  const todayBy = {};
+  fp.evs.filter(e => e.date === today).forEach(e => { todayBy[e.individualId] = e; });
+
+  const mark = (ind, kind) => {
+    const prev = todayBy[ind.id];
+    if (prev) DB.deleteEvent(prev.id);
+    const data = kind === 'ate' ? { ate: true, foodType }
+      : kind === 'left' ? { ate: false, foodType, notes: '안 먹음' }
+      : { skipped: true, notes: '건너뜀' };
+    DB.addEvent({ individualId: ind.id, type: 'feeding', date: today, data });
+    bump();
+  };
+  const undo = (ind) => { const prev = todayBy[ind.id]; if (prev) { DB.deleteEvent(prev.id); bump(); } };
+
+  const allAte = () => {
+    let n = 0;
+    fp.inds.forEach(i => {
+      if (todayBy[i.id]) return;
+      DB.addEvent({ individualId: i.id, type: 'feeding', date: today, data: { ate: true, foodType } });
+      n++;
+    });
+    DB.saveSettings({ ...DB.getSettings(), lastFoodType: foodType });
+    bump();
+    showToast(n ? `🦗 ${n}마리 급여 기록 완료` : '이미 다 체크했어요');
+  };
+
+  const doneCnt = fp.inds.filter(i => todayBy[i.id]).length;
+  const nextAfter = localISO(new Date(new Date(today).getTime() + fp.interval * 86400000));
+  const kindOf = (ind) => {
+    const e = todayBy[ind.id];
+    if (!e) return null;
+    if (e.data && e.data.skipped) return 'skip';
+    if (e.data && e.data.ate === false) return 'left';
+    return 'ate';
+  };
+
+  return (
+    <div className="screen">
+      <div className="header">
+        <div className="header-row">
+          <button className="back-btn" onClick={() => navigate('reminders')}>‹ 알림</button>
+          <span style={{fontSize:13, fontWeight:700, color:'var(--accent2)'}}>{doneCnt} / {fp.inds.length}</span>
+        </div>
+      </div>
+
+      <div style={{padding:'12px 16px 0'}}>
+        <div className="card" style={{margin:'0 0 12px'}}>
+          <div style={{fontSize:15, fontWeight:800}}>🦗 오늘 밥 주기</div>
+          <div style={{fontSize:12, color:'var(--text3)', marginTop:4}}>
+            {fp.lastRound ? `지난 급여 ${fmtDate(fp.lastRound)} · ` : ''}{fp.interval}일 간격 · 다 주면 다음은 {fmtDate(nextAfter)}
+          </div>
+          <div style={{display:'flex', gap:6, marginTop:10}}>
+            {['슈푸', '충식'].map(t => (
+              <button key={t} className="filter-chip" style={foodType === t ? CHIP_ON : CHIP_OFF}
+                onClick={() => setFoodType(t)}>{t}</button>
+            ))}
+          </div>
+          <button className="btn btn-primary btn-sm" style={{marginTop:10}} onClick={allAte}>
+            남은 {fp.inds.length - doneCnt}마리 전부 "먹었어요"로
+          </button>
+        </div>
+      </div>
+
+      <div style={{padding:'0 16px 20px'}}>
+        {fp.inds.map(i => {
+          const k = kindOf(i);
+          const since = fp.ateBy[i.id] ? Math.floor((new Date(today) - new Date(fp.ateBy[i.id])) / 86400000) : null;
+          const warn = since !== null && since >= feedWarn();
+          return (
+            <div className="card" key={i.id} style={{margin:'0 0 8px', padding:'10px 12px',
+              borderLeft: k === 'ate' ? '3px solid #2E7D46' : k === 'left' ? '3px solid #C87F2F'
+                : k === 'skip' ? '3px solid var(--text3)' : warn ? '3px solid var(--danger)' : '3px solid transparent'}}>
+              <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', gap:8}}>
+                <div style={{minWidth:0, flex:1}}>
+                  <div style={{fontSize:14, fontWeight:700}}>
+                    <GenderTag g={i.gender} size={13} /> {i.name}
+                    {warn && <span style={{fontSize:11, color:'var(--danger)', marginLeft:6}}>{since}일째 안 먹음</span>}
+                  </div>
+                  <div style={{fontSize:11, color:'var(--text3)', marginTop:2}}>
+                    {fp.ateBy[i.id] ? `마지막 섭취 ${fmtDate(fp.ateBy[i.id])}` : '섭취 기록 없음'}
+                  </div>
+                </div>
+                {k ? (
+                  <button className="btn btn-secondary btn-sm" style={{width:'auto', whiteSpace:'nowrap'}} onClick={() => undo(i)}>
+                    {k === 'ate' ? '✅ 먹음' : k === 'left' ? '🚫 안 먹음' : '⏭️ 건너뜀'} 취소
+                  </button>
+                ) : (
+                  <div style={{display:'flex', gap:4, flexShrink:0}}>
+                    <button className="btn btn-secondary btn-sm" style={{width:'auto', padding:'6px 8px', fontSize:12}} onClick={() => mark(i, 'ate')}>✅</button>
+                    <button className="btn btn-secondary btn-sm" style={{width:'auto', padding:'6px 8px', fontSize:12}} onClick={() => mark(i, 'left')}>🚫</button>
+                    <button className="btn btn-secondary btn-sm" style={{width:'auto', padding:'6px 8px', fontSize:12}} onClick={() => mark(i, 'skip')}>⏭️</button>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+        <div style={{fontSize:11, color:'var(--text3)', textAlign:'center', padding:'8px 0'}}>
+          ✅ 먹었어요 · 🚫 안 먹었어요 · ⏭️ 오늘은 안 줬어요
+        </div>
+        <div style={{fontSize:11, color:'var(--text3)', textAlign:'center'}}>
+          {feedWarn()}일 넘게 안 먹은 아이는 알림에서 따로 알려드려요 (설정에서 조절)
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function RemindersScreen({ navigate, onChanged }) {
@@ -4200,6 +4476,11 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
     DB.saveSettings(s);
     setSettings(s);
   };
+  const setFeed = (patch) => {
+    const s = { ...settings, ...patch };
+    DB.saveSettings(s);
+    setSettings(s);
+  };
   const importRef = useRef(null);
   const [importData, setImportData] = useState(null);
   const onImportPick = (e) => {
@@ -4312,6 +4593,31 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
         </div>
 
         <div className="card" style={{margin:0}}>
+          <div style={{fontSize:13, fontWeight:700, marginBottom:4, color:'var(--text2)'}}>🦗 밥 주는 간격</div>
+          <div style={{fontSize:12, color:'var(--text3)', marginBottom:10, lineHeight:1.6}}>
+            며칠에 한 번 주시나요? 마지막으로 준 날 + 이 간격이 되면 <b>알림 맨 위</b>에 "오늘 밥 주는 날"이 떠요.
+          </div>
+          <div style={{display:'flex', gap:6, flexWrap:'wrap'}}>
+            {[1, 2, 3, 4, 5, 7].map(n => (
+              <button key={n} className="filter-chip"
+                style={(settings.feedInterval || FEED_INTERVAL_DEFAULT) === n ? CHIP_ON : CHIP_OFF}
+                onClick={() => setFeed({ feedInterval: n })}>{n}일</button>
+            ))}
+          </div>
+          <div style={{fontSize:13, fontWeight:700, margin:'16px 0 4px', color:'var(--text2)'}}>⚠️ 걱정 시작일</div>
+          <div style={{fontSize:12, color:'var(--text3)', marginBottom:10}}>
+            며칠째 안 먹으면 알려드릴까요?
+          </div>
+          <div style={{display:'flex', gap:6, flexWrap:'wrap'}}>
+            {[5, 7, 10, 14, 21].map(n => (
+              <button key={n} className="filter-chip"
+                style={(settings.feedWarn || FEED_WARN_DEFAULT) === n ? CHIP_ON : CHIP_OFF}
+                onClick={() => setFeed({ feedWarn: n })}>{n}일</button>
+            ))}
+          </div>
+        </div>
+
+        <div className="card" style={{margin:0}}>
           <div style={{fontSize:13, fontWeight:700, marginBottom:4, color:'var(--text2)'}}>🐣 해칭 베이비 이름 규칙</div>
           <div style={{fontSize:12, color:'var(--text3)', marginBottom:10}}>해칭 기록 시 베이비를 자동 등록하는 방식이에요</div>
           <div style={{display:'flex', flexDirection:'column', gap:6}}>
@@ -4323,7 +4629,7 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
         <div className="card" style={{margin:0}}>
           <div style={{fontSize:13, fontWeight:700, marginBottom:6, color:'var(--text2)'}}>앱 정보</div>
           <div style={{fontSize:13, color:'var(--text3)', lineHeight:1.7}}>
-            크레건설 브리딩 비서 v2.9<br/>
+            크레건설 브리딩 비서 v3.0<br/>
             축양·분양·<b>산란</b>·메이팅·해칭 · 즐겨찾기 · 캘린더(날짜별 추가·수정)<br/>
             사진 첨부 · 예정일 대비 차이 기록 · 백업 복원 · 비속어 필터<br/>
             ☁️ 서버 동기화 — 회원가입·로그인, 폰·PC 같은 데이터<br/>
@@ -4333,6 +4639,8 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
             ✅ 오늘 할 일 알림(지난 일정 포함) · 메이팅별 산란 이력<br/>
             ✏️ 부화일 수정 · 대화로 정보 정정("부화일 8월 6일이야")<br/>
             🔢 몇 차 산란 표시 · 암컷별 필터 · 온도 바꾸면 예정일 전부 갱신<br/>
+            🦗 밥 주는 날 알림 · 일괄 급여 체크 · 안 먹는 아이 경고<br/>
+            📈 암컷별 산란 간격을 배워서 다음 산란 예정일 추정<br/>
             테마: 아이보리 × 버건디 (크레건설 아이덴티티)<br/>
             예정: AI 상담 연결
           </div>
