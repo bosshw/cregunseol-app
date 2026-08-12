@@ -120,6 +120,13 @@
     .badge-green { background: var(--accent-soft); color: var(--accent2); border: 1px solid #E5C6C4; }
     .badge-gold { background: #F5EBD6; color: var(--gold); border: 1px solid #E2D2AC; }
     .badge-blue { background: #E7EDF6; color: #4A6FA5; border: 1px solid #C9D6E8; }
+    /* 몇 차 산란인지 */
+    .nth-chip { display: inline-flex; align-items: center; justify-content: center; min-width: 34px; padding: 2px 7px;
+                border-radius: 8px; background: var(--accent-soft); color: var(--accent); border: 1px solid #E5C6C4;
+                font-size: 11px; font-weight: 800; }
+    /* 목록 위 필터 칩 */
+    .filter-chip { flex: 0 0 auto; padding: 6px 12px; border-radius: 18px; font-size: 12px; font-weight: 600;
+                   cursor: pointer; white-space: nowrap; }
 
     /* 섹션 헤더 */
     .section-title { font-size: 12px; font-weight: 700; color: var(--text3); text-transform: uppercase; letter-spacing: .8px; padding: 16px 20px 8px; }
@@ -268,7 +275,8 @@ const DB = {
   },
   markRemindersRead(ids) {
     const merged = [...new Set([...this.getReadReminderIds(), ...ids])];
-    const valid = new Set(this.getReminders().map(r => r.id));
+    // 부화 예정은 저장하지 않고 계산해서 만들므로(id가 'H:'로 시작) 그것도 읽음 목록에 남깁니다
+    const valid = new Set(allAlerts().map(r => r.id));
     localStorage.setItem('cg_read_reminders', JSON.stringify(merged.filter(id => valid.has(id))));
   },
   saveSettings(s) {
@@ -747,6 +755,84 @@ function incubateTemp() {
 const hatchDaysNow = () => hatchDays(incubateTemp());
 // 산란일 + 부화일수 = 부화 예정일
 const hatchETA = (layDate) => localISO(new Date(new Date(layDate).getTime() + hatchDaysNow() * 86400000));
+
+/* ── 알(클러치) 목록을 한 곳에서 계산합니다 ──
+   산란 기록마다 엄마·아빠·이 짝의 몇 차 산란인지·부화 예정일·상태를 붙여 돌려줍니다.
+   ★ 부화 예정일은 저장하지 않고 "늘 지금 온도로" 다시 계산합니다.
+     그래서 설정에서 인큐 온도를 바꾸면 산란기록·알림·캘린더가 한꺼번에 따라 바뀝니다.
+   결과는 산란일 오래된 순입니다(몇 차인지 세려면 이 순서여야 합니다). */
+function clutchRows(individuals, events) {
+  const inds = individuals || DB.getIndividuals();
+  const evs = events || DB.getEvents();
+  const byId = {}; inds.forEach(i => { byId[i.id] = i; });
+  const matings = evs.filter(e => e.type === 'mating').sort((a, b) => (a.date < b.date ? 1 : -1));
+  const hatchings = evs.filter(e => e.type === 'hatching');
+  const lays = evs.filter(e => e.type === 'laying').sort((a, b) => (a.date > b.date ? 1 : -1));
+  const seq = {};
+  return lays.map(e => {
+    const mom = byId[e.individualId] || null;
+    const momName = mom ? mom.name : '(삭제된 개체)';
+    const m = matings.find(x => x.individualId === e.individualId && x.date <= e.date);
+    const dadId = (e.data && e.data.sireId) || (m && m.data && m.data.partnerId) || null;
+    const dad = byId[dadId] || null;
+    const dadName = (dad && dad.name) || (e.data && e.data.sireName) || (m && m.data && m.data.partnerName) || null;
+    const pairKey = e.individualId + '|' + (dadName || '?');
+    seq[pairKey] = (seq[pairKey] || 0) + 1;
+    const nth = seq[pairKey];
+    const pairName = momName + (dadName ? ' × ' + dadName : '');
+    const notes = (e.data && e.data.notes) || '';
+    const eggs = (e.data && e.data.eggCount) || 0;
+    const etaISO = hatchETA(e.date);
+    const d = daysUntil(etaISO);
+    const infertile = /무정/.test(notes);
+    const hatched = hatchings.find(h =>
+      (h.data && h.data.layingId === e.id) ||
+      (!(h.data && h.data.layingId) && h.individualId === e.individualId &&
+        h.date >= e.date && Math.abs((new Date(h.date) - new Date(etaISO)) / 86400000) <= 45));
+    let state = `D-${d}`, tone = d <= 7 ? '#B3261E' : 'var(--accent2)';
+    if (infertile) { state = '무정'; tone = '#8A8177'; }
+    else if (hatched) { state = '부화완료'; tone = '#2E7D46'; }
+    else if (d < -14) { state = '경과'; tone = '#8A8177'; }
+    else if (d < 0) { state = `지연 ${-d}일`; tone = '#C87F2F'; }
+    else if (d === 0) { state = '오늘 예정'; tone = '#B3261E'; }
+    const waiting = !infertile && !hatched && d >= -14;
+    return { e, mom, momName, dad, dadId, dadName, pairKey, pairName, nth,
+             eggs, notes, etaISO, expISO: etaISO, d, state, tone, infertile, hatched, waiting };
+  });
+}
+
+/* 화면에 띄울 알림 = 저장된 알림 + 산란기록에서 계산한 부화 예정
+   부화 예정은 저장하지 않으므로(온도 연동) 여기서 만들어 붙입니다. */
+function allAlerts() {
+  const stored = DB.getReminders().filter(r => r.type !== 'hatching_expected');
+  const derived = clutchRows().filter(r => r.waiting).map(r => ({
+    id: 'H:' + r.e.id,
+    individualId: r.e.individualId,
+    geckoName: r.pairName,
+    type: 'hatching_expected',
+    date: r.etaISO,
+    message: `${r.nth}차 산란 · 부화 예정 (${fmtDate(r.e.date)} 산란)`,
+    layingId: r.e.id,
+    derived: true,
+  }));
+  return [...stored, ...derived].sort((a, b) => (a.date > b.date ? 1 : -1));
+}
+
+// 예전 버전이 저장해 둔 '부화 예정' 알림은 이제 계산으로 대체되므로 한 번만 정리합니다
+function purgeStoredHatchReminders() {
+  const rs = DB.getReminders();
+  const next = rs.filter(r => r.type !== 'hatching_expected');
+  if (next.length !== rs.length) DB.saveReminders(next);
+  return rs.length - next.length;
+}
+
+/* 크레건설 출생(CG) 판정 — 우리 기록으로 부모를 아는 아이는 우리 집에서 나온 아이입니다.
+   직접 등록한 아이는 프로필에서 손으로 켜고 끌 수 있습니다. */
+const isCG = (i) => !!i && !i.cgOff && (i.isFromCreGunseol === true || !!(i.sireId || i.damId));
+
+// 필터 칩 색
+const CHIP_ON  = { background: 'var(--accent)', color: 'var(--on-accent)', border: '1px solid var(--accent)' };
+const CHIP_OFF = { background: 'var(--bg2)', color: 'var(--text2)', border: '1px solid var(--border)' };
 
 // 공유 기능: 서버(Supabase) 연동 전까지 UI 숨김 (shareCode 데이터는 유지)
 const SHOW_SHARE = false;
@@ -1247,6 +1333,11 @@ function App() {
   const refreshIndividuals = () => setIndividuals(DB.getIndividuals());
   const refreshReminders = () => setRemVer(v => v + 1);
 
+  // 예전 버전이 저장해 둔 '부화 예정' 알림 정리 (이제 산란기록에서 매번 계산합니다)
+  useEffect(() => {
+    if (purgeStoredHatchReminders()) setRemVer(v => v + 1);
+  }, []);
+
   // 서버 동기화: 앱을 켤 때 / 다시 앱으로 돌아올 때 / 인터넷이 다시 연결될 때
   useEffect(() => {
     if (!SYNC.active()) return;
@@ -1291,7 +1382,7 @@ function App() {
   // 배지: 오늘 해야 할 일 — 당일이거나 이미 날짜가 지난 것 중 아직 확인하지 않은 것
   // (지난 일정도 배지에 넣습니다. 예전엔 D-1·당일만 세어서 3일 지난 부화 확인이 조용히 묻혔습니다)
   const readIds = DB.getReadReminderIds();
-  const badgeCount = DB.getReminders().filter(r =>
+  const badgeCount = allAlerts().filter(r =>
     daysUntil(r.date) <= 0 && !readIds.includes(r.id)).length;
 
   return (
@@ -1358,7 +1449,7 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
   const stats = {
     total: activeInds.length,
     fav: activeInds.filter(i => i.favorite).length,
-    fromCG: activeInds.filter(i => i.isFromCreGunseol).length,
+    fromCG: activeInds.filter(isCG).length,
     sold: individuals.filter(i => (i.status || 'own') === 'sold').length,
   };
   const bySearch = list => list.filter(i =>
@@ -1643,36 +1734,20 @@ function MatingView({ individuals, navigate, showToast }) {
    메이팅기록이 "누가 누구랑"이라면, 여기는 "알이 언제 부화하나"를 봅니다.
    부화 임박한 것부터 위로 올라옵니다. ── */
 function LayingView({ individuals, navigate }) {
-  const byId = {};
-  individuals.forEach(i => { byId[i.id] = i; });
-  const events = DB.getEvents();
-  const matings = events.filter(e => e.type === 'mating').sort((a, b) => (a.date < b.date ? 1 : -1));
-  const hatchings = events.filter(e => e.type === 'hatching');
+  const [momFilter, setMomFilter] = useState('all');   // 암컷별로 골라 보기
+  const all = clutchRows(individuals, DB.getEvents());
 
-  const rows = events.filter(e => e.type === 'laying').map(e => {
-    const mom = byId[e.individualId];
-    const notes = (e.data && e.data.notes) || '';
-    const eggs = e.data && e.data.eggCount;
-    // 부(父): 이 산란일 이전의 가장 최근 메이팅 상대
-    const m = matings.find(x => x.individualId === e.individualId && x.date <= e.date);
-    const dadName = m && m.data ? (m.data.partnerName || (byId[m.data.partnerId] || {}).name || null) : null;
-    const expDate = new Date(new Date(e.date).getTime() + hatchDaysNow() * 86400000);
-    const expISO = localISO(expDate);
-    const d = daysUntil(expISO);
-    const infertile = /무정/.test(notes);
-    const hatched = hatchings.find(h => h.individualId === e.individualId &&
-      new Date(h.date) >= new Date(e.date) &&
-      Math.abs((new Date(h.date) - expDate) / 86400000) <= 45);
-
-    let state = `D-${d}`, tone = d <= 7 ? '#B3261E' : 'var(--accent2)';
-    if (infertile) { state = '무정'; tone = '#8A8177'; }
-    else if (hatched) { state = '부화완료'; tone = '#2E7D46'; }
-    else if (d < -14) { state = '경과'; tone = '#8A8177'; }
-    else if (d < 0) { state = `지연 ${-d}일`; tone = '#C87F2F'; }
-    else if (d === 0) { state = '오늘 예정'; tone = '#B3261E'; }
-    const waiting = !infertile && !hatched && d >= -14;
-    return { e, mom, dadName, eggs, notes, expISO, state, tone, waiting, d };
+  // 암컷 목록 (산란 기록이 있는 아이만, 산란 많은 순)
+  const momList = [];
+  const momCnt = {};
+  all.forEach(r => {
+    if (!r.mom) return;
+    momCnt[r.mom.id] = (momCnt[r.mom.id] || 0) + 1;
+    if (!momList.some(m => m.id === r.mom.id)) momList.push(r.mom);
   });
+  momList.sort((a, b) => (momCnt[b.id] - momCnt[a.id]) || (a.name > b.name ? 1 : -1));
+
+  const rows = all.filter(r => momFilter === 'all' || (r.mom && r.mom.id === momFilter));
 
   // 부화 대기 중인 것부터 임박순 → 나머지는 최신 산란순
   rows.sort((a, b) => {
@@ -1685,7 +1760,7 @@ function LayingView({ individuals, navigate }) {
   const eggSum = rows.filter(r => r.waiting).reduce((s, r) => s + (r.eggs || 0), 0);
   const soon = rows.filter(r => r.waiting && r.d >= 0 && r.d <= 7).length;
 
-  if (!rows.length) return (
+  if (!all.length) return (
     <div className="empty" style={{padding:'40px 20px'}}>
       <div className="empty-icon">🥚</div>
       <p>{'아직 산란 기록이 없어요.\n＋ 버튼에서 "크범이 알 낳았어" 처럼 말씀해보세요.'}</p>
@@ -1694,6 +1769,20 @@ function LayingView({ individuals, navigate }) {
 
   return (
     <div style={{padding:'0 16px'}}>
+      {/* 암컷별로 골라 보기 — "크밤이 산란만" 같은 식으로 */}
+      {momList.length > 1 && (
+        <div style={{display:'flex', gap:6, overflowX:'auto', padding:'2px 0 10px', WebkitOverflowScrolling:'touch'}}>
+          <button className="filter-chip" style={momFilter === 'all' ? CHIP_ON : CHIP_OFF}
+            onClick={() => setMomFilter('all')}>전체 {all.length}</button>
+          {momList.map(m => (
+            <button key={m.id} className="filter-chip" style={momFilter === m.id ? CHIP_ON : CHIP_OFF}
+              onClick={() => setMomFilter(momFilter === m.id ? 'all' : m.id)}>
+              {genderMark(m.gender)} {m.name} {momCnt[m.id]}
+            </button>
+          ))}
+        </div>
+      )}
+
       <div className="card" style={{margin:'0 0 12px', display:'flex', justifyContent:'space-around', textAlign:'center'}}>
         <div>
           <div style={{fontSize:20, fontWeight:800, color:'var(--accent2)'}}>{waitCnt}</div>
@@ -1714,9 +1803,11 @@ function LayingView({ individuals, navigate }) {
           onClick={() => navigate('clutch', { layingId: r.e.id })}>
           <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', gap:8}}>
             <div style={{minWidth:0}}>
-              <div style={{fontSize:14, fontWeight:700}}>
-                🥚 {r.mom ? r.mom.name : '(삭제된 개체)'}
-                {r.dadName && <span style={{fontSize:12, fontWeight:500, color:'var(--text3)'}}> × {r.dadName}</span>}
+              <div style={{fontSize:14, fontWeight:700, display:'flex', alignItems:'center', gap:6, flexWrap:'wrap'}}>
+                <span className="nth-chip">{r.nth}차</span>
+                <span>🥚 {r.momName}
+                  {r.dadName && <span style={{fontSize:12, fontWeight:500, color:'var(--text3)'}}> × {r.dadName}</span>}
+                </span>
               </div>
               <div style={{fontSize:12, color:'var(--text3)', marginTop:3}}>
                 {fmtDate(r.e.date)} 산란
@@ -1731,8 +1822,16 @@ function LayingView({ individuals, navigate }) {
           </div>
         </div>
       ))}
-      <div style={{fontSize:11, color:'var(--text3)', textAlign:'center', padding:'6px 0 2px'}}>
-        부화 예정일은 인큐 {incubateTemp()}°C 기준 산란일 +{hatchDaysNow()}일이에요 · 온도는 설정에서 바꿀 수 있어요
+      {!rows.length && (
+        <div className="card" style={{textAlign:'center', color:'var(--text3)', fontSize:13, padding:'18px 12px'}}>
+          이 아이의 산란 기록이 없어요.
+        </div>
+      )}
+      <div style={{fontSize:11, color:'var(--text3)', textAlign:'center', padding:'6px 0 0'}}>
+        "N차"는 그 엄마 × 아빠 짝의 몇 번째 산란인지예요
+      </div>
+      <div style={{fontSize:11, color:'var(--text3)', textAlign:'center', padding:'2px 0 2px'}}>
+        부화 예정일은 인큐 {incubateTemp()}°C 기준 산란일 +{hatchDaysNow()}일 · 온도는 설정에서 바꿀 수 있어요
       </div>
     </div>
   );
@@ -1761,6 +1860,7 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals }) {
   const inds = DB.getIndividuals();
   const mom = inds.find(i => i.id === ev.individualId);
   const evs = DB.getEvents();
+  const row = clutchRows(inds, evs).find(r => r.e.id === layingId) || null;   // 몇 차 산란인지 등
   const mate = evs.filter(e => e.type === 'mating' && e.individualId === ev.individualId && e.date <= ev.date)
     .sort((a, b) => (a.date < b.date ? 1 : -1))[0];
   const dadId = (ev.data && ev.data.sireId) || (mate && mate.data && mate.data.partnerId) || null;
@@ -1819,7 +1919,7 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals }) {
     }
     DB.addEvent({ individualId: ev.individualId, type: 'hatching', date, data: { count: n, layingId: ev.id } });
     // 이 클러치는 부화 완료로 표시
-    DB.saveReminders(DB.getReminders().filter(r => !(r.individualId === ev.individualId && r.type === 'hatching_expected')));
+    // (부화 예정 알림은 저장하지 않고 계산으로 만들기 때문에 따로 지울 게 없습니다)
     bump();
     showToast(made ? `🐣 ${n}마리 부화 · 베이비 ${made}마리 등록` : `🐣 ${n}마리 부화 기록`);
     navigate('home', { view: 'hatch' });
@@ -1856,10 +1956,13 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals }) {
           </button>
           <input ref={fileRef} type="file" accept="image/*" style={{display:'none'}} onChange={onPhoto} />
 
-          <div style={{fontSize:19, fontWeight:800, marginTop:12}}>
-            {eggs ? `알 ${eggs}개` : '알 (개수 미기록)'}
+          <div style={{fontSize:19, fontWeight:800, marginTop:12, display:'flex', alignItems:'center', justifyContent:'center', gap:8}}>
+            {row && <span className="nth-chip" style={{fontSize:12}}>{row.nth}차</span>}
+            <span>{eggs ? `알 ${eggs}개` : '알 (개수 미기록)'}</span>
           </div>
-          <div style={{fontSize:13, color:'var(--text3)', marginTop:2}}>{fmtDate(ev.date)} 산란</div>
+          <div style={{fontSize:13, color:'var(--text3)', marginTop:2}}>
+            {row ? `${row.pairName} · ` : ''}{fmtDate(ev.date)} 산란
+          </div>
           {notes && <div style={{fontSize:12, color:'var(--accent2)', marginTop:4}}>{notes}</div>}
 
           {eggEdit ? (
@@ -2072,7 +2175,7 @@ function GeckoCard({ gecko, onClick, onToggleFav }) {
       <div className="gecko-info">
         <div style={{display:'flex', alignItems:'center', gap:6, flexWrap:'wrap'}}>
           <div className="gecko-name">{gecko.name} <GenderTag g={gecko.gender} size={14} /></div>
-          {gecko.isFromCreGunseol && <span className="badge badge-gold" style={{fontSize:10}}>CG</span>}
+          {isCG(gecko) && <span className="badge badge-gold" style={{fontSize:10}}>CG</span>}
           {gecko.isExternal && <span className="badge badge-blue" style={{fontSize:10}}>외부</span>}
           {stKey !== 'own' && (
             <span className="badge" style={{fontSize:10, background:'var(--bg3)', color:st.color, border:'1px solid var(--border)'}}>{st.label}</span>
@@ -2734,14 +2837,23 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
           .sort((a, b) => b.date > a.date ? 1 : -1)[0];
         if (mate) { f.data.sireId = mate.data.partnerId; f.data.sireName = mate.data.partnerName; }
       }
-      // 예정일 대비 실제일 차이 기록 (산란/해칭)
-      if (f.type === 'laying' || f.type === 'hatching') {
-        const expType = f.type === 'laying' ? 'laying_expected' : 'hatching_expected';
-        const exp = matchExpectedReminder(f.targetId, expType, f.date || todayStr());
+      // 예정일 대비 실제일 차이 기록 — 산란은 저장된 예정 알림, 해칭은 그 알의 계산된 예정일과 비교
+      if (f.type === 'laying') {
+        const exp = matchExpectedReminder(f.targetId, 'laying_expected', f.date || todayStr());
         if (exp) {
           f.data.expectedDate = exp.date;
           f.data.diffDays = Math.round((new Date(f.date || todayStr()) - new Date(exp.date)) / 86400000);
           DB.saveReminders(DB.getReminders().filter(r => r.id !== exp.id)); // 예정 완료 → 제거
+        }
+      }
+      if (f.type === 'hatching') {
+        const actual = f.date || todayStr();
+        const cand = clutchRows().filter(c => c.e.individualId === f.targetId && !c.hatched && !c.infertile)
+          .sort((a, b) => Math.abs(new Date(a.etaISO) - new Date(actual)) - Math.abs(new Date(b.etaISO) - new Date(actual)))[0];
+        if (cand) {
+          f.data.layingId = cand.e.id;
+          f.data.expectedDate = cand.etaISO;
+          f.data.diffDays = Math.round((new Date(actual) - new Date(cand.etaISO)) / 86400000);
         }
       }
       DB.addEvent({ individualId: f.targetId, type: f.type, date: f.date || todayStr(), data: f.data || {} });
@@ -2791,13 +2903,10 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
           babyMsg = ` · 🐣 베이비 ${Math.min(count, names.length)}마리 등록`;
         }
       }
+      // 부화 예정 알림은 따로 저장하지 않습니다.
+      // 산란 기록만 있으면 알림·캘린더가 "지금 인큐 온도"로 매번 다시 계산합니다(온도 바꾸면 전부 따라 바뀜).
       if (f.type === 'laying' && layingReminder) {
-        const d = new Date(f.date || todayStr());
-        d.setDate(d.getDate() + hatchDaysNow());
-        const rs = DB.getReminders();
-        rs.push({ id: uuid(), individualId: f.targetId, geckoName: f.targetName, type: 'hatching_expected', date: localISO(d), message: `${f.targetName} 부화 예정일` });
-        DB.saveReminders(rs);
-        reminderMsg = ' · 🔔 부화 알림 설정';
+        reminderMsg = ' · 🔔 부화 예정 알림 자동';
       }
     });
     refreshIndividuals();
@@ -3034,7 +3143,20 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
                   aria-label="즐겨찾기" style={{background:'none', border:'none', cursor:'pointer', fontSize:22, lineHeight:1, padding:0, color: gecko.favorite ? 'var(--gold)' : 'var(--text3)'}}>
                   {gecko.favorite ? '⭐' : '☆'}
                 </button>
-                {gecko.isFromCreGunseol && <span className="badge badge-gold">크레건설</span>}
+                {/* 우리 집에서 나온 아이 표시 — 눌러서 켜고 끕니다 */}
+                <button className="badge badge-gold"
+                  style={{cursor:'pointer', opacity: isCG(gecko) ? 1 : .4,
+                          filter: isCG(gecko) ? 'none' : 'grayscale(1)'}}
+                  onClick={() => {
+                    const on = isCG(gecko);
+                    DB.updateIndividual(gecko.id, on
+                      ? { cgOff: true, isFromCreGunseol: false }
+                      : { cgOff: false, isFromCreGunseol: true });
+                    refreshLocal(); refreshIndividuals && refreshIndividuals();
+                    showToast(on ? '크레건설 표시를 뗐어요' : '🏷️ 크레건설 출생으로 표시했어요');
+                  }}>
+                  {isCG(gecko) ? '크레건설' : '크레건설 아님'}
+                </button>
               </div>
               <div style={{fontSize:13, color:'var(--text3)', marginTop:4}}>
                 {genderLabel(gecko.gender)}
@@ -3263,9 +3385,9 @@ function CalendarScreen({ navigate, individuals, showToast, onRemindersChanged }
   // 이 달의 항목 수집: 예정(리마인더) + 실제(이벤트, 전체 종류)
   const items = {}; // 'YYYY-MM-DD' -> [{emoji, label, name, planned, reminder?, event?}]
   const add = (ds, it) => { (items[ds] = items[ds] || []).push(it); };
-  DB.getReminders().forEach(r => {
+  allAlerts().forEach(r => {
     const base = r.type === 'laying_expected' ? { emoji: '🥚', label: '산란 예정' }
-      : r.type === 'hatching_expected' ? { emoji: '🐣', label: '해칭 예정' }
+      : r.type === 'hatching_expected' ? { emoji: '🐣', label: r.message || '부화 예정' }
       : { emoji: '🔔', label: r.message || '알림' };
     add(r.date, { ...base, name: r.geckoName || '', planned: true, reminder: r });
   });
@@ -3409,7 +3531,10 @@ function CalendarScreen({ navigate, individuals, showToast, onRemindersChanged }
                     </div>
                     <div style={{display:'flex', gap:10, flexShrink:0}}>
                       {ev && <button onClick={() => isEditing ? setEditingEv(null) : startEdit(ev)} style={{background:'none', border:'none', cursor:'pointer', fontSize:13, color:'var(--text3)'}}>✏️</button>}
-                      <button onClick={() => { setEditingEv(null); setAdding(false); setConfirmDel(confirmDel === delKey ? null : delKey); }} style={{background:'none', border:'none', cursor:'pointer', fontSize:13, color:'var(--text3)'}}>🗑️</button>
+                      {/* 부화 예정은 산란기록에서 계산한 것이라 따로 지우지 않습니다 */}
+                      {!(it.reminder && it.reminder.derived) && (
+                        <button onClick={() => { setEditingEv(null); setAdding(false); setConfirmDel(confirmDel === delKey ? null : delKey); }} style={{background:'none', border:'none', cursor:'pointer', fontSize:13, color:'var(--text3)'}}>🗑️</button>
+                      )}
                     </div>
                   </div>
 
@@ -3517,13 +3642,16 @@ function buildTodo(reminders, navigateTo) {
       return;
     }
     // 부화 예정이면 그 알(클러치) 화면으로 바로 보냅니다
-    const lay = hatch ? [...evs].filter(e => e.type === 'laying' && e.individualId === r.individualId && e.date <= r.date)
-      .sort((a, b) => (a.date < b.date ? 1 : -1))[0] : null;
+    const lay = hatch
+      ? (r.layingId ? { id: r.layingId }
+        : [...evs].filter(e => e.type === 'laying' && e.individualId === r.individualId && e.date <= r.date)
+            .sort((a, b) => (a.date < b.date ? 1 : -1))[0])
+      : null;
     todo.push({
       id: r.id,
       emoji: hatch ? '🐣' : '🥚',
       title: r.geckoName || '',
-      sub: hatch ? '부화했는지 알을 확인해주세요' : '산란했는지 확인해주세요',
+      sub: hatch ? (r.message || '부화했는지 알을 확인해주세요') : '산란했는지 확인해주세요',
       late,
       action: hatch && lay ? { label: '알 보기', go: () => navigateTo('clutch', { layingId: lay.id }) }
         : byId[r.individualId] ? { label: '기록하기', go: () => navigateTo('profile', { gecko: byId[r.individualId] }) } : null,
@@ -3550,7 +3678,7 @@ function buildTodo(reminders, navigateTo) {
 }
 
 function RemindersScreen({ navigate, onChanged }) {
-  const [all, setAll] = useState(() => [...DB.getReminders()].sort((a,b) => a.date > b.date ? 1 : -1));
+  const [all, setAll] = useState(() => allAlerts());
   const todo = buildTodo(all, navigate);
   const thisWeek = all.filter(r => { const d = daysUntil(r.date); return d > 0 && d <= WEEK_WINDOW; });
   const later = all.filter(r => daysUntil(r.date) > WEEK_WINDOW);
@@ -3568,9 +3696,8 @@ function RemindersScreen({ navigate, onChanged }) {
   }, []);
 
   const deleteReminder = (id) => {
-    const next = DB.getReminders().filter(r => r.id !== id);
-    DB.saveReminders(next);
-    setAll([...next].sort((a,b) => a.date > b.date ? 1 : -1));
+    DB.saveReminders(DB.getReminders().filter(r => r.id !== id));
+    setAll(allAlerts());
     onChanged && onChanged();
   };
 
@@ -3643,7 +3770,10 @@ function ReminderCard({ r, onDelete, past }) {
             {past ? fmtDate(r.date) + ' (지남)' : daysLeft === 0 ? '오늘!' : `D-${daysLeft} · ${fmtDate(r.date)}`}
           </div>
         </div>
-        <button onClick={() => onDelete(r.id)} style={{background:'none', border:'none', color:'var(--text3)', cursor:'pointer', fontSize:16}}>✕</button>
+        {/* 계산으로 만든 부화 예정은 지울 대상이 아니라 산란기록 자체가 원본입니다 */}
+        {!r.derived && (
+          <button onClick={() => onDelete(r.id)} style={{background:'none', border:'none', color:'var(--text3)', cursor:'pointer', fontSize:16}}>✕</button>
+        )}
       </div>
     </div>
   );
@@ -4193,7 +4323,7 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
         <div className="card" style={{margin:0}}>
           <div style={{fontSize:13, fontWeight:700, marginBottom:6, color:'var(--text2)'}}>앱 정보</div>
           <div style={{fontSize:13, color:'var(--text3)', lineHeight:1.7}}>
-            크레건설 브리딩 비서 v2.8<br/>
+            크레건설 브리딩 비서 v2.9<br/>
             축양·분양·<b>산란</b>·메이팅·해칭 · 즐겨찾기 · 캘린더(날짜별 추가·수정)<br/>
             사진 첨부 · 예정일 대비 차이 기록 · 백업 복원 · 비속어 필터<br/>
             ☁️ 서버 동기화 — 회원가입·로그인, 폰·PC 같은 데이터<br/>
@@ -4202,6 +4332,7 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
             🌡️ 인큐 온도로 부화 예정일 계산 · ♀♂? 성별 표시<br/>
             ✅ 오늘 할 일 알림(지난 일정 포함) · 메이팅별 산란 이력<br/>
             ✏️ 부화일 수정 · 대화로 정보 정정("부화일 8월 6일이야")<br/>
+            🔢 몇 차 산란 표시 · 암컷별 필터 · 온도 바꾸면 예정일 전부 갱신<br/>
             테마: 아이보리 × 버건디 (크레건설 아이덴티티)<br/>
             예정: AI 상담 연결
           </div>
