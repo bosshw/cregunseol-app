@@ -8,17 +8,19 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="크레건설">
   <link rel="manifest" href="manifest.json">
-  <title>크레건설 브리딩 비서</title>
+  <link rel="icon" type="image/png" href="./icon-192.png">
+  <link rel="apple-touch-icon" href="./icon-192.png">
+  <title>크레건설 브리딩비서</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-    html, body, #root { height: 100%; background: #FAF6EF; }
-    body { font-family: -apple-system, 'Noto Sans KR', sans-serif; color: #3B2F2A; overscroll-behavior: none; }
+    html, body, #root { height: 100%; background: var(--bg); }
+    body { font-family: -apple-system, 'Noto Sans KR', sans-serif; color: var(--text); overscroll-behavior: none; }
 
     :root {
-      /* 크레건설 아이덴티티: 아이보리 × 버건디-브라운 */
+      /* 크레건설 아이덴티티: 아이보리 × 버건디-브라운 (기본값 — 설정의 색상 테마가 덮어씁니다) */
       --bg: #FAF6EF;          /* 아이보리 바탕 */
       --bg2: #F3EDE2;         /* 헤더/탭바 크림 */
       --bg3: #F0E9DC;         /* 입력창/보조 면 */
@@ -28,6 +30,8 @@
       --accent2: #7C2D3A;     /* 버건디 진한 텍스트 */
       --accent-soft: #F4E3E1; /* 버건디 옅은 면 (선택/말풍선) */
       --accent-dim: #A85560;  /* 버건디 중간 */
+      --accent-edge: #E5C6C4; /* 말풍선·배지 테두리 */
+      --accent-shadow: rgba(142,59,69,.25);
       --on-accent: #FFF6EE;   /* 버건디 위 글자 */
       --text: #3B2F2A;        /* 다크 브라운 본문 */
       --text2: #6B5A4E;       /* 중간 브라운 */
@@ -35,6 +39,8 @@
       --danger: #B3362B;
       --warning: #C87F2F;
       --gold: #A9812E;
+      --gold-soft: #F5EBD6;
+      --gold-edge: #E2D2AC;
       --radius: 14px;
       --shadow: 0 2px 10px rgba(59,47,42,.07);
       --safe-bottom: env(safe-area-inset-bottom, 0px);
@@ -59,6 +65,9 @@
     .tab-btn { flex: 1; display: flex; flex-direction: column; align-items: center; padding: 10px 0 8px; gap: 3px; border: none; background: none; color: var(--text3); font-size: 10px; cursor: pointer; transition: color .15s; }
     .tab-btn.active { color: var(--accent); }
     .tab-btn svg { width: 22px; height: 22px; }
+    /* 가운데 대화 버튼 — 늘 눈에 띄게 강조 */
+    .tab-chat { color: var(--accent); font-weight: 700; }
+    .tab-chat svg { width: 25px; height: 25px; }
 
     /* 카드 */
     .card { background: var(--card); border-radius: var(--radius); padding: 16px; margin: 0 16px 12px; border: 1px solid var(--border); box-shadow: var(--shadow); }
@@ -67,7 +76,7 @@
     /* 버튼 */
     .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 13px 20px; border-radius: 12px; border: none; font-size: 15px; font-weight: 600; cursor: pointer; transition: opacity .15s, transform .1s; width: 100%; }
     .btn:active { transform: scale(.97); opacity: .85; }
-    .btn-primary { background: var(--accent); color: var(--on-accent); box-shadow: 0 3px 10px rgba(142,59,69,.25); }
+    .btn-primary { background: var(--accent); color: var(--on-accent); box-shadow: 0 3px 10px var(--accent-shadow); }
     .btn-secondary { background: var(--bg3); color: var(--text2); border: 1px solid var(--border); }
     .btn-danger { background: #FBEAE7; color: var(--danger); border: 1px solid #EBC7C0; }
     .btn-sm { padding: 8px 14px; font-size: 13px; border-radius: 8px; }
@@ -85,7 +94,7 @@
     /* 대화형 채팅 */
     .chat-wrap { padding: 16px; display: flex; flex-direction: column; gap: 14px; }
     .chat-q { background: var(--card); border-radius: 14px 14px 14px 4px; padding: 12px 14px; font-size: 14px; color: var(--text2); max-width: 85%; border: 1px solid var(--border); align-self: flex-start; white-space: pre-line; line-height: 1.6; box-shadow: var(--shadow); }
-    .chat-a { align-self: flex-end; background: var(--accent-soft); border-radius: 14px 14px 4px 14px; padding: 10px 14px; font-size: 14px; color: var(--accent2); max-width: 85%; border: 1px solid #E5C6C4; white-space: pre-line; line-height: 1.55; }
+    .chat-a { align-self: flex-end; background: var(--accent-soft); border-radius: 14px 14px 4px 14px; padding: 10px 14px; font-size: 14px; color: var(--accent2); max-width: 85%; border: 1px solid var(--accent-edge); white-space: pre-line; line-height: 1.55; }
     .chat-input-row { display: flex; gap: 8px; align-items: flex-end; }
     .chat-input-row .input { flex: 1; }
     .send-btn { background: var(--accent); border: none; border-radius: 10px; padding: 13px 14px; cursor: pointer; color: var(--on-accent); font-size: 16px; flex-shrink: 0; }
@@ -104,12 +113,15 @@
     .chip-btn:active { background: var(--accent-soft); }
 
     /* 개체 카드 */
-    .gecko-card { display: flex; align-items: center; gap: 12px; background: var(--card); border-radius: var(--radius); padding: 11px 14px; margin: 0 16px 8px; border: 1px solid var(--border); cursor: pointer; transition: border-color .15s; box-shadow: var(--shadow); }
+    .gecko-card { display: flex; align-items: center; gap: 12px; background: var(--card); border-radius: var(--radius); padding: 10px 14px; margin: 0 16px 8px; border: 1px solid var(--border); cursor: pointer; transition: border-color .15s; box-shadow: var(--shadow); }
     .gecko-card:active { border-color: var(--accent-dim); }
     .gecko-avatar { width: 42px; height: 42px; border-radius: 50%; background: var(--bg3); display: flex; align-items: center; justify-content: center; font-size: 19px; flex-shrink: 0; border: 2px solid var(--border); }
     .gecko-info { flex: 1; min-width: 0; }
     .gecko-name { font-size: 16px; font-weight: 700; color: var(--text); }
     .gecko-meta { font-size: 12px; color: var(--text3); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    /* 개체 카드 한 줄(모프 / 생일 / 최근기록) — 값이 없어도 칸은 그대로 비워 둡니다 */
+    .gecko-line { font-size: 11.5px; color: var(--text3); line-height: 1.4; min-height: 16px;
+                  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .gender-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
     .gender-dot.female { background: #C2607E; }
     .gender-dot.male { background: #4A6FA5; }
@@ -117,12 +129,12 @@
 
     /* 배지 */
     .badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 600; }
-    .badge-green { background: var(--accent-soft); color: var(--accent2); border: 1px solid #E5C6C4; }
-    .badge-gold { background: #F5EBD6; color: var(--gold); border: 1px solid #E2D2AC; }
+    .badge-green { background: var(--accent-soft); color: var(--accent2); border: 1px solid var(--accent-edge); }
+    .badge-gold { background: var(--gold-soft); color: var(--gold); border: 1px solid var(--gold-edge); }
     .badge-blue { background: #E7EDF6; color: #4A6FA5; border: 1px solid #C9D6E8; }
     /* 몇 차 산란인지 */
     .nth-chip { display: inline-flex; align-items: center; justify-content: center; min-width: 34px; padding: 2px 7px;
-                border-radius: 8px; background: var(--accent-soft); color: var(--accent); border: 1px solid #E5C6C4;
+                border-radius: 8px; background: var(--accent-soft); color: var(--accent2); border: 1px solid var(--accent-edge);
                 font-size: 11px; font-weight: 800; }
     /* 목록 위 필터 칩 */
     .filter-chip { flex: 0 0 auto; padding: 6px 12px; border-radius: 18px; font-size: 12px; font-weight: 600;
@@ -132,7 +144,7 @@
     .section-title { font-size: 12px; font-weight: 700; color: var(--text3); text-transform: uppercase; letter-spacing: .8px; padding: 16px 20px 8px; }
 
     /* FAB */
-    .fab { position: fixed; bottom: calc(80px + var(--safe-bottom)); right: calc(50% - 215px + 16px); width: 56px; height: 56px; border-radius: 28px; background: var(--accent); border: none; color: var(--on-accent); font-size: 26px; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 18px rgba(142,59,69,.35); z-index: 15; transition: transform .15s; }
+    .fab { position: fixed; bottom: calc(80px + var(--safe-bottom)); right: calc(50% - 215px + 16px); width: 56px; height: 56px; border-radius: 28px; background: var(--accent); border: none; color: var(--on-accent); font-size: 26px; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 18px var(--accent-shadow); z-index: 15; transition: transform .15s; }
     .fab:active { transform: scale(.9); }
     @media (max-width: 430px) { .fab { right: 16px; left: auto; transform: none; } .fab:active { transform: scale(.9); } }
 
@@ -355,6 +367,82 @@ const DB = {
 
 const uuid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
 const now = () => new Date().toISOString();
+
+/* ══════════════════════════════════════════
+   색상 테마 — 설정에서 고르면 CSS 변수만 갈아끼웁니다.
+   화면 코드는 전부 var(--accent) 같은 변수만 쓰기 때문에 앱 전체 색이 한 번에 바뀝니다.
+   고른 값은 cg_settings.theme 에 저장돼 서버 동기화로 다른 기기에도 따라갑니다.
+   ══════════════════════════════════════════ */
+const THEMES = [
+  {
+    key: 'burgundy', label: '버건디', hint: '크레건설 기본',
+    vars: {
+      '--bg':'#FAF6EF', '--bg2':'#F3EDE2', '--bg3':'#F0E9DC', '--card':'#FFFDF8', '--border':'#E4DACA',
+      '--accent':'#8E3B45', '--accent2':'#7C2D3A', '--accent-soft':'#F4E3E1', '--accent-dim':'#A85560',
+      '--accent-edge':'#E5C6C4', '--accent-shadow':'rgba(142,59,69,.25)', '--on-accent':'#FFF6EE',
+      '--text':'#3B2F2A', '--text2':'#6B5A4E', '--text3':'#A08D7C',
+      '--danger':'#B3362B', '--warning':'#C87F2F', '--gold':'#A9812E', '--gold-soft':'#F5EBD6', '--gold-edge':'#E2D2AC',
+      '--shadow':'0 2px 10px rgba(59,47,42,.07)',
+    },
+  },
+  {
+    key: 'green', label: '그린', hint: '크레스티드 그린',
+    vars: {
+      '--bg':'#F7F9F3', '--bg2':'#EDF2E6', '--bg3':'#E8EFE0', '--card':'#FDFEFB', '--border':'#D8E2CB',
+      '--accent':'#3F6B44', '--accent2':'#2F5535', '--accent-soft':'#E3EFDF', '--accent-dim':'#5C8A61',
+      '--accent-edge':'#C6DCC3', '--accent-shadow':'rgba(63,107,68,.25)', '--on-accent':'#F6FBF3',
+      '--text':'#2C332B', '--text2':'#55604F', '--text3':'#8C9887',
+      '--danger':'#B3362B', '--warning':'#C87F2F', '--gold':'#8C7A24', '--gold-soft':'#F1F0D6', '--gold-edge':'#DCDCAC',
+      '--shadow':'0 2px 10px rgba(44,51,43,.07)',
+    },
+  },
+  {
+    key: 'brown', label: '브라운', hint: '따뜻한 우드',
+    vars: {
+      '--bg':'#FBF6F0', '--bg2':'#F2E9DE', '--bg3':'#EEE3D5', '--card':'#FFFCF7', '--border':'#E2D3BF',
+      '--accent':'#8A5A2B', '--accent2':'#6E441E', '--accent-soft':'#F3E5D3', '--accent-dim':'#A87843',
+      '--accent-edge':'#E0C9A9', '--accent-shadow':'rgba(138,90,43,.25)', '--on-accent':'#FFF8EF',
+      '--text':'#3A2E24', '--text2':'#6A5A48', '--text3':'#A08F78',
+      '--danger':'#B3362B', '--warning':'#C87F2F', '--gold':'#A9812E', '--gold-soft':'#F5EBD6', '--gold-edge':'#E2D2AC',
+      '--shadow':'0 2px 10px rgba(58,46,36,.07)',
+    },
+  },
+  {
+    key: 'blue', label: '블루', hint: '차분한 코발트',
+    vars: {
+      '--bg':'#F5F8FC', '--bg2':'#E9F0F8', '--bg3':'#E2EBF5', '--card':'#FCFDFF', '--border':'#D2DFEE',
+      '--accent':'#33608F', '--accent2':'#254A70', '--accent-soft':'#E0EAF6', '--accent-dim':'#5182B3',
+      '--accent-edge':'#C3D6EA', '--accent-shadow':'rgba(51,96,143,.25)', '--on-accent':'#F6FAFF',
+      '--text':'#26313D', '--text2':'#4E5D6E', '--text3':'#8494A4',
+      '--danger':'#B3362B', '--warning':'#C87F2F', '--gold':'#8A7526', '--gold-soft':'#F2EEDA', '--gold-edge':'#DDD3AE',
+      '--shadow':'0 2px 10px rgba(38,49,61,.08)',
+    },
+  },
+  {
+    key: 'charcoal', label: '차콜', hint: '어두운 화면',
+    vars: {
+      '--bg':'#1D1A19', '--bg2':'#262220', '--bg3':'#2F2A27', '--card':'#272220', '--border':'#3C3532',
+      '--accent':'#C4707A', '--accent2':'#E8AAB1', '--accent-soft':'#3A2A2C', '--accent-dim':'#A8626B',
+      '--accent-edge':'#4E393C', '--accent-shadow':'rgba(0,0,0,.45)', '--on-accent':'#1D1A19',
+      '--text':'#EFE7DF', '--text2':'#C3B7AC', '--text3':'#8D8079',
+      '--danger':'#E2695C', '--warning':'#D9A25B', '--gold':'#D9BC72', '--gold-soft':'#3A3226', '--gold-edge':'#54492F',
+      '--shadow':'0 2px 10px rgba(0,0,0,.35)',
+    },
+  },
+];
+const THEME_DEFAULT = 'burgundy';
+const themeOf = (key) => THEMES.find(t => t.key === key) || THEMES[0];
+function currentThemeKey() {
+  try { return (DB.getSettings() || {}).theme || THEME_DEFAULT; } catch { return THEME_DEFAULT; }
+}
+function applyTheme(key) {
+  const t = themeOf(key);
+  const root = document.documentElement;
+  Object.keys(t.vars).forEach(k => root.style.setProperty(k, t.vars[k]));
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute('content', t.vars['--bg2']);
+  root.style.colorScheme = key === 'charcoal' ? 'dark' : 'light';
+}
 
 /* ══════════════════════════════════════════
    서버 동기화 (Supabase REST 직접 호출 · 외부 라이브러리 없음)
@@ -642,7 +730,11 @@ const SYNC = {
     }
 
     dirty.forEach(kind => DB._raw(STORE_OF_KIND[kind], buckets[kind]));
-    if (settingsChanged) DB._rawSettings(settings);
+    if (settingsChanged) {
+      DB._rawSettings(settings);
+      // 다른 기기에서 바꾼 색상 테마도 바로 반영
+      try { applyTheme(settings.theme || THEME_DEFAULT); } catch {}
+    }
     return changed;
   },
 
@@ -1395,20 +1487,84 @@ function answerQuery(target, text) {
   if (/성별|암컷인지|수컷인지/.test(text)) {
     return `${target.name}의 성별은 ${genderLabel(target.gender)}(으)로 기록돼 있어요.`;
   }
-  if (/몇\s*살|나이|태어/.test(text)) {
-    if (!target.hatchDate) return `${target.name}의 출생일은 아직 등록 전이에요.`;
-    const days = Math.floor((Date.now() - new Date(target.hatchDate)) / 86400000);
-    return `${target.name}는 ${fmtDate(target.hatchDate)}에 태어나서 ${days}일째예요 🎂`;
+  if (/생일|출생|부화일|몇\s*살|나이|태어/.test(text)) {
+    if (!target.hatchDate) {
+      return `${target.name}의 생일(부화일)은 아직 등록 전이에요 🎂\n"${target.name} 2025년 7월 14일에 태어났어"처럼 알려주시면 적어둘게요.`;
+    }
+    return `${target.name}의 생일은 ${fmtDate(target.hatchDate)}이에요 🎂 (${ageText(target.hatchDate)})`;
   }
-  if (/기록|근황|요약|히스토리/.test(text)) {
-    if (!evs.length) return `${target.name}는 아직 기록이 없어요. 오늘부터 남겨볼까요? 🙂`;
-    const lines = evs.slice(0, 3).map(e => {
-      const t = EVENT_TYPES.find(x => x.key === e.type) || {};
-      return `· ${fmtDate(e.date)} ${t.emoji || ''} ${formatEventDetail(e)}`;
-    }).join('\n');
-    return `${target.name}의 최근 기록이에요 📋 (총 ${evs.length}건)\n${lines}`;
+  if (/혈통|부모|아빠|엄마|아비|어미|자식|새끼/.test(text)) {
+    const all = DB.getIndividuals();
+    const sire = all.find(i => i.id === target.sireId);
+    const dam = all.find(i => i.id === target.damId);
+    const kids = all.filter(i => i.sireId === target.id || i.damId === target.id);
+    return `${target.name}의 혈통이에요 🧬\n부(아빠): ${sire ? sire.name : '미등록'}\n모(엄마): ${dam ? dam.name : '미등록'}\n`
+      + (kids.length ? `자식 ${kids.length}마리: ${kids.map(k => k.name).join(', ')}` : '자식 기록은 아직 없어요.');
+  }
+  if (/분양가|가격|얼마|값/.test(text)) {
+    const st = STATUS[target.status || 'own'] || STATUS.own;
+    const price = target.salePrice ? `${Number(target.salePrice).toLocaleString()}원` : '가격 미등록';
+    return `${target.name}는 지금 ${st.label} 상태예요 · ${price}`;
+  }
+  if (/사진|이미지/.test(text)) {
+    const photos = evs.filter(e => e.type === 'photo').length;
+    return photos ? `${target.name}의 사진은 ${photos}장 있어요 📷 프로필에서 볼 수 있어요.`
+                  : `${target.name}의 사진은 아직 없어요 📷 대화창의 📷 버튼으로 올려주시면 기록에 붙여둘게요.`;
+  }
+  if (/기록|근황|요약|히스토리|어때|정보|알려|보여|프로필|상태/.test(text)) {
+    return recordSummary(target);
   }
   return null;
+}
+
+// 나이 표현: 1년 2개월째 / 45일째
+function ageText(iso) {
+  const days = Math.floor((new Date(todayStr()) - new Date(iso)) / 86400000);
+  if (days < 0) return '아직 오지 않은 날짜';
+  if (days < 60) return `${days}일째`;
+  const m = Math.floor(days / 30);
+  return m < 12 ? `${m}개월째` : `${Math.floor(m / 12)}년 ${m % 12}개월째`;
+}
+
+/* 이 아이에 대해 앱이 알고 있는 것을 한 번에 읽어줍니다.
+   질문을 정확히 못 알아들었을 때도 "모르겠어요" 대신 이 요약을 보여줍니다. */
+function recordSummary(target) {
+  const all = DB.getIndividuals();
+  const evs = DB.getEventsFor(target.id).sort((a, b) =>
+    (b.date + (b.createdAt || '')) > (a.date + (a.createdAt || '')) ? 1 : -1);
+  const last = t => evs.find(e => e.type === t);
+  const st = STATUS[target.status || 'own'] || STATUS.own;
+  const sire = all.find(i => i.id === target.sireId);
+  const dam = all.find(i => i.id === target.damId);
+  const w = evs.find(e => e.type === 'growth' && e.data && e.data.weight);
+  const feed = last('feeding');
+  const lay = last('laying');
+  const mate = last('mating');
+  const shed = last('shed');
+
+  const L = [];
+  L.push(`· 성별 ${genderLabel(target.gender)} · 모프 ${target.morph || '미등록'}`);
+  L.push(`· 생일 ${target.hatchDate ? `${fmtDate(target.hatchDate)} (${ageText(target.hatchDate)})` : '미등록'}`);
+  L.push(`· 상태 ${st.label}${target.salePrice ? ` · ${Number(target.salePrice).toLocaleString()}원` : ''}`);
+  if (sire || dam) L.push(`· 혈통 부 ${sire ? sire.name : '미등록'} · 모 ${dam ? dam.name : '미등록'}`);
+  if (w) L.push(`· 몸무게 ${w.data.weight}g (${fmtDate(w.date)})`);
+  if (feed) L.push(`· 마지막 밥 ${fmtDate(feed.date)}${feed.data && feed.data.foodType ? ` · ${feed.data.foodType}` : ''}`);
+  if (shed) L.push(`· 마지막 탈피 ${fmtDate(shed.date)}`);
+  if (mate) L.push(`· 마지막 메이팅 ${fmtDate(mate.date)}${mate.data && mate.data.partnerName ? ` · ${mate.data.partnerName}` : ''}`);
+  if (lay) {
+    const total = evs.filter(e => e.type === 'laying').length;
+    L.push(`· 산란 총 ${total}회 · 최근 ${fmtDate(lay.date)}${lay.data && lay.data.eggCount ? ` · 알 ${lay.data.eggCount}개` : ''}`);
+  }
+
+  const recent = evs.slice(0, 3).map(e => {
+    const t = EVENT_TYPES.find(x => x.key === e.type) || {};
+    return `· ${fmtDate(e.date)} ${t.emoji || ''} ${formatEventDetail(e)}`;
+  });
+
+  return `${target.name}에 대해 제가 아는 건 이래요 📋\n${L.join('\n')}\n\n`
+    + (evs.length
+        ? `최근 기록 (총 ${evs.length}건)\n${recent.join('\n')}`
+        : '아직 남긴 기록은 없어요. 오늘부터 하나씩 남겨볼까요? 🙂');
 }
 
 // 사진 압축 (localStorage 용량 보호)
@@ -1542,6 +1698,11 @@ function App() {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
             캘린더
           </button>
+          {/* 가운데 대화 버튼 — 예전 우하단 ＋ 자리를 대신합니다 */}
+          <button className="tab-btn tab-chat" onClick={() => navigate('chat')} aria-label="대화로 기록하기">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8z"/></svg>
+            대화
+          </button>
           <button className={`tab-btn ${tab==='reminders'?'active':''}`} onClick={() => navigate('reminders')} style={{position:'relative'}}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
             알림
@@ -1590,9 +1751,13 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
       <div className="screen">
         <div className="header">
           <div className="header-row">
-            <div>
-              <h1>🦎 크레건설 비서</h1>
-              <div className="header-sub">＋ 버튼 하나로 등록부터 기록까지</div>
+            <div style={{display:'flex', alignItems:'center', gap:9, minWidth:0}}>
+              <img src="./icon-192.png" alt="크레건설" width="34" height="34"
+                style={{display:'block', flexShrink:0, imageRendering:'auto'}} />
+              <div style={{minWidth:0}}>
+                <h1>크레건설 브리딩비서</h1>
+                <div className="header-sub">💬 대화 하나로 등록부터 기록까지</div>
+              </div>
             </div>
             <div style={{display:'flex', gap:6}}>
               {stats.fromCG > 0 && <span className="badge badge-gold">CG {stats.fromCG}</span>}
@@ -1646,7 +1811,7 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
             {ownList.length === 0 && (
               <div className="empty">
                 <div className="empty-icon">{favOnly ? '⭐' : '🦎'}</div>
-                <p>{favOnly ? '즐겨찾기한 아이가 없어요.\n개체 카드의 ☆ 를 눌러 즐겨찾기에 추가해보세요.' : (individuals.length === 0 ? '아직 등록된 개체가 없어요.\n＋ 버튼을 누르고 대화하듯 말씀해보세요.\n예) "크한이 12그램"' : '검색 결과가 없어요.')}</p>
+                <p>{favOnly ? '즐겨찾기한 아이가 없어요.\n개체 카드의 ☆ 를 눌러 즐겨찾기에 추가해보세요.' : (individuals.length === 0 ? '아직 등록된 개체가 없어요.\n아래 💬 대화 버튼을 누르고 말씀해보세요.\n예) "크한이 12그램"' : '검색 결과가 없어요.')}</p>
               </div>
             )}
             <div className="section-title" style={{display: ownList.length ? 'block' : 'none'}}>{favOnly ? '⭐ 즐겨찾기' : '내 개체'}</div>
@@ -1676,8 +1841,6 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
 
         <div style={{height: 16}} />
       </div>
-
-      <button className="fab" onClick={() => navigate('chat')}>＋</button>
     </>
   );
 }
@@ -1740,7 +1903,7 @@ function MatingView({ individuals, navigate, showToast }) {
     return (
       <div className="empty" style={{padding:'40px 20px'}}>
         <div className="empty-icon" style={{fontSize:36}}>💞</div>
-        <p>아직 메이팅 기록이 없어요.{'\n'}＋에서 "크한이 크봉이랑 메이팅했어"처럼 말씀해보세요.</p>
+        <p>아직 메이팅 기록이 없어요.{'\n'}💬 대화에서 "크한이 크봉이랑 메이팅했어"처럼 말씀해보세요.</p>
       </div>
     );
   }
@@ -1885,7 +2048,7 @@ function LayingView({ individuals, navigate }) {
   if (!all.length) return (
     <div className="empty" style={{padding:'40px 20px'}}>
       <div className="empty-icon">🥚</div>
-      <p>{'아직 산란 기록이 없어요.\n＋ 버튼에서 "크범이 알 낳았어" 처럼 말씀해보세요.'}</p>
+      <p>{'아직 산란 기록이 없어요.\n💬 대화 버튼에서 "크범이 알 낳았어" 처럼 말씀해보세요.'}</p>
     </div>
   );
 
@@ -2303,14 +2466,18 @@ function GeckoCard({ gecko, onClick, onToggleFav }) {
             <span className="badge" style={{fontSize:10, background:'var(--bg3)', color:st.color, border:'1px solid var(--border)'}}>{st.label}</span>
           )}
         </div>
-        <div className="gecko-meta">
+        {/* 모프 / 생일 / 최근기록을 한 줄씩 — 없는 항목도 칸은 그대로 비워 둡니다 */}
+        <div className="gecko-line">
           <span className={`gender-dot ${gecko.gender}`}></span>
-          {gecko.morph || '모프 미등록'} {gecko.hatchDate ? `· ${fmtDate(gecko.hatchDate)} 출생` : ''}
+          {gecko.morph || '모프 미등록'}
         </div>
-        <div style={{fontSize:11, marginTop:3, display:'flex', gap:10, flexWrap:'wrap'}}>
-          {lastEvent && (
-            <span style={{color:'var(--text3)'}}>최근: {EVENT_TYPES.find(e=>e.key===lastEvent.type)?.emoji} {fmtDate(lastEvent.date)}</span>
-          )}
+        <div className="gecko-line">
+          {gecko.hatchDate ? `🎂 ${fmtDate(gecko.hatchDate)}` : ' '}
+        </div>
+        <div className="gecko-line" style={{display:'flex', gap:10}}>
+          {lastEvent
+            ? <span>최근: {EVENT_TYPES.find(e=>e.key===lastEvent.type)?.emoji} {fmtDate(lastEvent.date)}</span>
+            : <span>{' '}</span>}
           {feedDays !== null && (
             <span style={{color: feedDays >= 3 ? 'var(--warning)' : 'var(--text3)', fontWeight: feedDays >= 3 ? 700 : 400}}>
               🍽️ {feedDays === 0 ? '오늘 먹음' : `${feedDays}일 전`}{feedDays >= 3 ? ' ⚠️' : ''}
@@ -2353,18 +2520,18 @@ function WeightChart({ events }) {
           </div>
         </div>
         <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%', height:'auto', display:'block'}}>
-          <line x1={P} y1={H - P} x2={W - P} y2={H - P} stroke="#E4DACA" strokeWidth="1" />
-          <polyline points={pts} fill="none" stroke="#8E3B45" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+          <line x1={P} y1={H - P} x2={W - P} y2={H - P} stroke="var(--border)" strokeWidth="1" />
+          <polyline points={pts} fill="none" stroke="var(--accent)" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
           {ws.map((w, i) => (
             <g key={i}>
-              <circle cx={x(i)} cy={y(w)} r="3.5" fill="#8E3B45" />
+              <circle cx={x(i)} cy={y(w)} r="3.5" fill="var(--accent)" />
               {(gs.length <= 8 || i === 0 || i === gs.length - 1) && (
-                <text x={x(i)} y={y(w) - 8} textAnchor="middle" fontSize="10" fill="#6B5A4E">{w}g</text>
+                <text x={x(i)} y={y(w) - 8} textAnchor="middle" fontSize="10" fill="var(--text2)">{w}g</text>
               )}
             </g>
           ))}
-          <text x={x(0)} y={H - 8} textAnchor="start" fontSize="9" fill="#A08D7C">{gs[0].date.slice(5).replace('-', '/')}</text>
-          <text x={x(gs.length - 1)} y={H - 8} textAnchor="end" fontSize="9" fill="#A08D7C">{gs[gs.length - 1].date.slice(5).replace('-', '/')}</text>
+          <text x={x(0)} y={H - 8} textAnchor="start" fontSize="9" fill="var(--text3)">{gs[0].date.slice(5).replace('-', '/')}</text>
+          <text x={x(gs.length - 1)} y={H - 8} textAnchor="end" fontSize="9" fill="var(--text3)">{gs[gs.length - 1].date.slice(5).replace('-', '/')}</text>
         </svg>
       </div>
     </div>
@@ -2404,7 +2571,7 @@ function PedigreeCard({ gecko, navigate }) {
 
 
 /* ══════════════════════════════════════════
-   단일 ＋ 대화형 등록/기록 화면
+   단일 💬 대화형 등록/기록 화면
    — 이름·기록을 한 문장으로 말하면 알아서 분배
    ══════════════════════════════════════════ */
 function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko }) {
@@ -2422,8 +2589,8 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
   const [messages, setMessages] = useState(() => [{
     role: 'bot',
     text: presetGecko
-      ? `${presetGecko.name} 이야기 들려주세요 🦎\n"12그램" · "크순이랑 메이팅" · "알 2개 산란" · "모프는 초초야"처럼 편하게 말씀하시면 제가 알아서 정리할게요.\n사진은 📷 버튼, 다 끝나면 "저장"이라고 해주세요.`
-      : `안녕하세요! 오늘은 어떤 아이 이야기인가요? 🦎\n\n이름만 알려주셔도 되고, "크한이 12그램"처럼 한 번에 말씀하셔도 제가 알아서 그 아이 기록에 정리해둘게요.\n처음 보는 이름이면 새로 등록해드려요.`
+      ? `${presetGecko.name} 이야기 들려주세요 🦎\n"12그램" · "크순이랑 메이팅" · "알 2개 산란" · "모프는 초초야"처럼 편하게 말씀하시면 제가 알아서 정리할게요.\n궁금한 건 물어보셔도 돼요 — "생일 언제야?" · "최근 기록 보여줘"\n사진은 📷 버튼, 다 끝나면 "저장"이라고 해주세요.`
+      : `안녕하세요! 오늘은 어떤 아이 이야기인가요? 🦎\n\n이름만 알려주셔도 되고, "크한이 12그램"처럼 한 번에 말씀하셔도 제가 알아서 그 아이 기록에 정리해둘게요.\n\n적어둔 걸 물어보셔도 돼요 🔍\n예) "크인이 생일 언제야?" · "크한이 최근 기록 보여줘" · "크범이 다음 산란 언제쯤?"`
   }]);
   const [pending, setPending] = useState([]);
   const [input, setInput] = useState('');
@@ -2682,13 +2849,23 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       if (existing) { setTarget(existing); target = existing; }
     }
 
+    /* 3.45) 물어보는 말이면 기록에서 먼저 답을 찾습니다.
+       이 검사를 새 이름 감지보다 먼저 두는 이유:
+       "다음 산란 언제쯤?" 같은 질문의 "다음"을 새 개체 이름으로 오해하는 걸 막기 위해서입니다. */
+    if (target) {
+      const qa0 = answerQuery(target, text);
+      if (qa0) { bot(qa0); return; }
+    }
+
     // 3.5) 새 주체(미등록) 감지 — 보수적으로:
     //  - 문장에서 기존 개체명을 찾았으면 새 등록을 묻지 않음
     //  - 단독 이름이거나, 기록할 내용(무게·모프·성별 등)이 함께 있을 때만 등록 확인
+    //  - 물음표로 끝나는 질문은 이름 선언이 아니므로 등록을 묻지 않음
     let newSubject = null;
+    const looksLikeQuestion = QUESTION_RE.test(text);
     if (decl && !inds.some(i => i.name === decl)) {
       newSubject = decl;
-    } else if (!names.length) {
+    } else if (!names.length && !looksLikeQuestion) {
       const singleWord = text.trim().split(/\s+/).length === 1;
       const genderAssert = /(수컷|암컷)(?:이야|이에요|입니다|임|이래|같아|이다)/.test(text);
       const c = guessNewName(text, inds);
@@ -2733,6 +2910,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       pushPending(flushed, target);
     }
 
+    // (질문 답변은 3.45에서 이미 처리했습니다 — 보류 기록이 대상에 붙은 뒤 한 번 더 확인)
     const qa = answerQuery(target, text);
     if (qa) { bot(qa); return; }
 
@@ -2821,7 +2999,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     }
 
     if (/((할까|좋을까|될까|괜찮을까)(요)?\s*[?？]?\s*$)|추천해|추천\s*좀/.test(text)) {
-      bot(`좋은 질문이에요! 다만 지금 제 머리는 기록 정리 전용이라, 상담 답변은 아직 어려워요 🙏\n(AI 연결이 되면 이런 질문에도 답해드릴 수 있어요)\n이 내용을 ${target.name} 메모로 남겨둘까요?`, [
+      bot(`좋은 질문이에요! 다만 지금 제 머리는 기록 정리 전용이라, 판단이 필요한 상담은 아직 어려워요 🙏\n(적어둔 기록은 얼마든지 찾아드려요 — "${target.name} 기록 보여줘"처럼요)\n이 내용을 ${target.name} 메모로 남겨둘까요?`, [
         { label: '📝 메모로 남기기', kind: 'memo-save', value: { text, date, targetId: target.id, targetName: target.name } },
         { label: '괜찮아요', kind: 'memo-skip' },
       ]);
@@ -2864,9 +3042,10 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
         return;
       }
 
-      // 질문형 문장 → 솔직하게 한계 안내 + 메모 여부 선택
+      // 질문형 문장 → 먼저 기록에서 답을 찾아 읽어주고, 그래도 모르면 메모 여부를 여쭤봅니다
       if (QUESTION_RE.test(text) && !HEALTH_RE.test(text)) {
-        bot(`좋은 질문이에요! 다만 지금 제 머리는 기록 정리 전용이라, 상담 답변은 아직 어려워요 🙏\n(AI 연결이 되면 이런 질문에도 답해드릴 수 있어요)\n이 내용을 ${target.name} 메모로 남겨둘까요?`, [
+        const fresh = DB.getIndividuals().find(i => i.id === target.id) || target;
+        bot(`${recordSummary(fresh)}\n\n혹시 찾으시던 내용이 아니면, 이 질문을 메모로 남겨둘까요?`, [
           { label: '📝 메모로 남기기', kind: 'memo-save', value: { text, date, targetId: target.id, targetName: target.name } },
           { label: '괜찮아요', kind: 'memo-skip' },
         ]);
@@ -4481,6 +4660,13 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
     DB.saveSettings(s);
     setSettings(s);
   };
+  const setTheme = (key) => {
+    const s = { ...settings, theme: key };
+    DB.saveSettings(s);
+    setSettings(s);
+    applyTheme(key);
+    showToast(`🎨 ${themeOf(key).label} 테마 적용`);
+  };
   const importRef = useRef(null);
   const [importData, setImportData] = useState(null);
   const onImportPick = (e) => {
@@ -4504,7 +4690,7 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
     DB.saveIndividuals(importData.individuals);
     DB.saveEvents(importData.events);
     DB.saveReminders(importData.reminders || []);
-    if (importData.settings) DB.saveSettings(importData.settings);
+    if (importData.settings) { DB.saveSettings(importData.settings); applyTheme(importData.settings.theme || THEME_DEFAULT); }
     setImportData(null);
     refreshIndividuals();
     showToast('✅ 백업 복원 완료!');
@@ -4543,6 +4729,35 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
     <div className="screen">
       <div className="header"><h1>⚙️ 설정</h1></div>
       <div style={{padding:'16px', display:'flex', flexDirection:'column', gap:12}}>
+        <div className="card" style={{margin:0}}>
+          <div style={{fontSize:13, fontWeight:700, marginBottom:4, color:'var(--text2)'}}>🎨 색상 테마</div>
+          <div style={{fontSize:12, color:'var(--text3)', marginBottom:10, lineHeight:1.6}}>
+            앱 전체 색을 바꿉니다. 고른 색은 이 기기에 저장되고, 서버 동기화를 켜두셨다면 다른 기기에도 따라가요.
+          </div>
+          <div style={{display:'flex', flexDirection:'column', gap:8}}>
+            {THEMES.map(t => {
+              const on = (settings.theme || THEME_DEFAULT) === t.key;
+              return (
+                <button key={t.key} onClick={() => setTheme(t.key)}
+                  style={{display:'flex', alignItems:'center', gap:12, width:'100%', cursor:'pointer', textAlign:'left',
+                          padding:'10px 12px', borderRadius:12, background: on ? 'var(--accent-soft)' : 'var(--bg3)',
+                          border: `1px solid ${on ? 'var(--accent-dim)' : 'var(--border)'}`}}>
+                  <span style={{display:'flex', flexShrink:0}}>
+                    {['--accent', '--accent-dim', '--bg2', '--card'].map((v, i) => (
+                      <span key={v} style={{width:18, height:18, borderRadius:'50%', background:t.vars[v],
+                        border:'1px solid rgba(0,0,0,.12)', marginLeft: i ? -6 : 0}} />
+                    ))}
+                  </span>
+                  <span style={{flex:1, minWidth:0}}>
+                    <span style={{display:'block', fontSize:14, fontWeight:700, color: on ? 'var(--accent2)' : 'var(--text)'}}>{t.label}</span>
+                    <span style={{display:'block', fontSize:11, color:'var(--text3)', marginTop:1}}>{t.hint}</span>
+                  </span>
+                  <span style={{fontSize:15, color:'var(--accent2)', width:16, textAlign:'right'}}>{on ? '✓' : ''}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
         <DupMergeCard showToast={showToast} refreshIndividuals={refreshIndividuals} />
         <SyncCard showToast={showToast} refreshIndividuals={refreshIndividuals} />
         <div className="card" style={{margin:0}}>
@@ -4629,7 +4844,7 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
         <div className="card" style={{margin:0}}>
           <div style={{fontSize:13, fontWeight:700, marginBottom:6, color:'var(--text2)'}}>앱 정보</div>
           <div style={{fontSize:13, color:'var(--text3)', lineHeight:1.7}}>
-            크레건설 브리딩 비서 v3.0<br/>
+            크레건설 브리딩비서 v3.1<br/>
             축양·분양·<b>산란</b>·메이팅·해칭 · 즐겨찾기 · 캘린더(날짜별 추가·수정)<br/>
             사진 첨부 · 예정일 대비 차이 기록 · 백업 복원 · 비속어 필터<br/>
             ☁️ 서버 동기화 — 회원가입·로그인, 폰·PC 같은 데이터<br/>
@@ -4670,6 +4885,9 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
   window.addEventListener('resize', apply);
   window.addEventListener('orientationchange', () => setTimeout(apply, 200));
 })();
+
+// 저장해 둔 색상 테마를 첫 화면이 그려지기 전에 입힙니다 (색이 바뀌며 깜빡이지 않도록)
+applyTheme(currentThemeKey());
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(<App />);

@@ -1,5 +1,5 @@
-const CACHE = 'creg-v24';
-const ASSETS = ['./index.html', './manifest.json'];
+const CACHE = 'creg-v25';
+const ASSETS = ['./index.html', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)));
@@ -21,4 +21,4 @@ self.addEventListener('fetch', e => {
     caches.match(e.request).then(r => r || fetch(e.request))
   );
 });
-// v2.1 deploy 2026-08-07
+// v3.1 deploy 2026-08-13 (브리딩비서 리브랜딩·색상테마·대화탭)
