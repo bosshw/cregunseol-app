@@ -1,4 +1,4 @@
-const CACHE = 'creg-v25';
+const CACHE = 'creg-v32';
 const ASSETS = ['./index.html', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {
@@ -16,9 +16,12 @@ self.addEventListener('activate', e => {
 self.addEventListener('fetch', e => {
   // 서버 동기화(Supabase) 요청과 GET 이외 요청은 캐시를 건너뜁니다
   if (e.request.method !== 'GET') return;
-  if (new URL(e.request.url).origin !== self.location.origin) return;
+  const u = new URL(e.request.url);
+  if (u.origin !== self.location.origin) return;
+  // 새 버전 확인 파일은 절대 캐시하지 않습니다 (캐시되면 새 버전을 영영 못 봅니다)
+  if (u.pathname.endsWith('/version.json')) return;
   e.respondWith(
     caches.match(e.request).then(r => r || fetch(e.request))
   );
 });
-// v3.1 deploy 2026-08-13 (브리딩비서 리브랜딩·색상테마·대화탭)
+// v3.2 deploy 2026-08-14 (새 버전 알림 · 옛 버전 올리기 차단)

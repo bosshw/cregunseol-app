@@ -188,6 +188,12 @@
     /* 토스트 */
     .toast { position: fixed; bottom: calc(80px + var(--safe-bottom) + 10px); left: 50%; transform: translateX(-50%); background: var(--card); border: 1px solid var(--accent-dim); color: var(--accent2); padding: 10px 20px; border-radius: 20px; font-size: 13px; z-index: 100; white-space: nowrap; box-shadow: 0 4px 18px rgba(59,47,42,.18); animation: toastIn .2s ease; }
     @keyframes toastIn { from { opacity: 0; transform: translateX(-50%) translateY(10px); } }
+
+    /* 새 버전 안내 막대 */
+    .updbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: var(--accent-dim); color: var(--accent2); padding: 9px 14px; font-size: 12.5px; line-height: 1.35; border-bottom: 1px solid var(--border); }
+    .updbar button { background: var(--accent); color: var(--on-accent); border: none; border-radius: 14px; padding: 6px 12px; font-size: 12px; cursor: pointer; white-space: nowrap; flex-shrink: 0; }
+    .updbar.hard { position: sticky; top: 0; z-index: 30; background: #8C2F39; color: #FFF3F3; border-bottom-color: #6E2029; }
+    .updbar.hard button { background: #FFFFFF; color: #8C2F39; font-weight: 700; }
   </style>
 </head>
 <body>
@@ -470,6 +476,77 @@ const SERVER = {
   key: 'sb_publishable_FXQ8f-T6LdImrKUWFvW8jw_6_1IJ7AI',
 };
 
+/* ══════════════════════════════════════════
+   버전 확인 — 새 버전 알림 · 옛 버전 안전장치
+
+   version.json 하나로 두 가지를 합니다.
+     app      : 지금 올라가 있는 앱 버전. 내 것과 다르면 "새 버전이 있어요" 안내
+     minSchema: 서버에 올려도 되는 최소 데이터 모양 버전.
+                내 것이 이보다 낮으면 push를 멈춥니다.
+                → 옛 버전이 새 필드를 모른 채 남의 기록을 덮어쓰는 사고를 막습니다.
+
+   인터넷이 없거나 파일을 못 받으면 아무 것도 막지 않습니다(앱은 그대로 씁니다).
+   ══════════════════════════════════════════ */
+const APP_VERSION = '3.2';
+const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
+const VERSION_URL = './version.json';
+const VERSION_CHECK_MS = 30 * 60 * 1000;
+
+const VER = {
+  latest: null,
+  checkedAt: 0,
+  listeners: new Set(),
+  on(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); },
+  emit() { this.listeners.forEach(fn => { try { fn(); } catch {} }); },
+
+  // 서버가 요구하는 최소 모양보다 낮은가 → 올리기 중단
+  blocked() {
+    const m = this.latest && Number(this.latest.minSchema);
+    return !!(m && m > SCHEMA_VERSION);
+  },
+  // 새 버전이 올라와 있는가 → 안내 막대
+  hasUpdate() {
+    const a = this.latest && this.latest.app;
+    return !!(a && String(a) !== APP_VERSION);
+  },
+  note() { return (this.latest && this.latest.note) || ''; },
+
+  async check() {
+    if (typeof fetch !== 'function') return null;
+    try {
+      const res = await fetch(VERSION_URL + '?t=' + Date.now(), { cache: 'no-store' });
+      if (!res.ok) return null;
+      const j = await res.json();
+      if (!j || typeof j !== 'object') return null;
+      let before = '';
+      try { before = JSON.stringify(this.latest); } catch {}
+      this.latest = j;
+      this.checkedAt = Date.now();
+      let after = '';
+      try { after = JSON.stringify(j); } catch {}
+      if (after !== before) this.emit();
+      return j;
+    } catch { return null; }
+  },
+
+  // 새 버전 받기 — 캐시를 비우고 다시 엽니다
+  async refresh() {
+    try {
+      if (typeof caches !== 'undefined' && caches.keys) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map(k => caches.delete(k)));
+      }
+    } catch {}
+    try {
+      if (navigator.serviceWorker && navigator.serviceWorker.getRegistration) {
+        const reg = await navigator.serviceWorker.getRegistration();
+        if (reg) await reg.update();
+      }
+    } catch {}
+    try { location.reload(); } catch {}
+  },
+};
+
 const SYNC = {
   listeners: new Set(),
   running: false,
@@ -741,6 +818,12 @@ const SYNC = {
   /* ── 한 번의 동기화 사이클 ── */
   async run(reason = 'manual') {
     if (this.running || !this.active()) return { skipped: true };
+    // 데이터 모양이 바뀐 새 버전이 나와 있으면, 옛 버전은 서버에 올리지 않습니다
+    // (모르는 항목을 덮어써서 다른 기기의 기록을 지우는 것을 막습니다)
+    if (VER.blocked()) {
+      this.saveSt({ lastError: '앱 업데이트가 필요해요. 새 버전으로 열면 다시 올라갑니다' });
+      return { blocked: true };
+    }
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
       this.saveSt({ lastError: '오프라인 상태예요. 연결되면 자동으로 올려드릴게요' });
       return { skipped: true };
@@ -1631,6 +1714,20 @@ function App() {
     return () => { off(); clearInterval(timer); document.removeEventListener('visibilitychange', onVisible); window.removeEventListener('online', onOnline); };
   }, []);
 
+  /* 새 버전 확인 — 켤 때 / 앱으로 돌아올 때 / 30분마다.
+     새 버전이 올라와 있으면 안내 막대를 띄우고, 데이터 모양이 바뀐 경우엔 올리기를 멈춥니다. */
+  const [, bumpVer] = useState(0);
+  useEffect(() => {
+    const off = VER.on(() => bumpVer(v => v + 1));
+    VER.check();
+    const onVisible = () => { if (document.visibilityState === 'visible') VER.check(); };
+    const onOnlineV = () => VER.check();
+    const timer = setInterval(() => { if (document.visibilityState === 'visible') VER.check(); }, VERSION_CHECK_MS);
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('online', onOnlineV);
+    return () => { off(); clearInterval(timer); document.removeEventListener('visibilitychange', onVisible); window.removeEventListener('online', onOnlineV); };
+  }, []);
+
   /* 화면 이동 기록 — 안드로이드 뒤로가기(◁)로 앱이 꺼지지 않고 이전 화면으로 가게 합니다.
      화면을 옮길 때마다 브라우저 방문기록에 한 칸을 쌓고, 뒤로가기가 오면 한 칸 되돌립니다.
      홈에서 한 번 더 누르면 그때는 정상적으로 앱이 닫힙니다. */
@@ -1662,6 +1759,19 @@ function App() {
 
   return (
     <div className="app">
+      {/* 새 버전 안내 — 모양이 바뀐 경우(hard)는 화면에 계속 붙어 있습니다 */}
+      {VER.blocked() ? (
+        <div className="updbar hard">
+          <span>업데이트가 필요해요. 지금은 기록이 서버에 올라가지 않습니다.</span>
+          <button onClick={() => VER.refresh()}>지금 업데이트</button>
+        </div>
+      ) : VER.hasUpdate() ? (
+        <div className="updbar">
+          <span>새 버전이 있어요{VER.note() ? ' — ' + VER.note() : ''}</span>
+          <button onClick={() => VER.refresh()}>새로고침</button>
+        </div>
+      ) : null}
+
       {screen.name === 'home' && (
         <HomeScreen key={screen.props.view || 'own'} {...screen.props} individuals={individuals} navigate={navigate} showToast={showToast} refreshIndividuals={refreshIndividuals} />
       )}
@@ -4844,7 +4954,7 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
         <div className="card" style={{margin:0}}>
           <div style={{fontSize:13, fontWeight:700, marginBottom:6, color:'var(--text2)'}}>앱 정보</div>
           <div style={{fontSize:13, color:'var(--text3)', lineHeight:1.7}}>
-            크레건설 브리딩비서 v3.1<br/>
+            크레건설 브리딩비서 v{APP_VERSION}<br/>
             축양·분양·<b>산란</b>·메이팅·해칭 · 즐겨찾기 · 캘린더(날짜별 추가·수정)<br/>
             사진 첨부 · 예정일 대비 차이 기록 · 백업 복원 · 비속어 필터<br/>
             ☁️ 서버 동기화 — 회원가입·로그인, 폰·PC 같은 데이터<br/>
