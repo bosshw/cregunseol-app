@@ -1,4 +1,4 @@
-const CACHE = 'creg-v32';
+const CACHE = 'creg-v33';
 const ASSETS = ['./index.html', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {
@@ -24,4 +24,4 @@ self.addEventListener('fetch', e => {
     caches.match(e.request).then(r => r || fetch(e.request))
   );
 });
-// v3.2 deploy 2026-08-14 (새 버전 알림 · 옛 버전 올리기 차단)
+// v3.3 deploy 2026-08-15 (분양가 입력 · KEEP · 목록 정렬)

@@ -132,6 +132,9 @@
     .badge-green { background: var(--accent-soft); color: var(--accent2); border: 1px solid var(--accent-edge); }
     .badge-gold { background: var(--gold-soft); color: var(--gold); border: 1px solid var(--gold-edge); }
     .badge-blue { background: #E7EDF6; color: #4A6FA5; border: 1px solid #C9D6E8; }
+    /* KEEP 스티커 — 내가 데리고 갈 아이 */
+    .badge-keep { background: linear-gradient(135deg, #2F6F4A 0%, #1E4A31 100%); color: #FFEFC2; border: 1px solid #14361F;
+      letter-spacing: .09em; font-weight: 800; text-shadow: 0 1px 0 rgba(0,0,0,.35); box-shadow: 0 1px 4px rgba(20,54,31,.35); }
     /* 몇 차 산란인지 */
     .nth-chip { display: inline-flex; align-items: center; justify-content: center; min-width: 34px; padding: 2px 7px;
                 border-radius: 8px; background: var(--accent-soft); color: var(--accent2); border: 1px solid var(--accent-edge);
@@ -267,6 +270,41 @@ const DB = {
   updateEvent(id, patch) {
     this.saveEvents(this.getEvents().map(e => e.id === id ? { ...e, ...patch } : e));
   },
+
+  /* ── 분양 확정 — 상태·분양가·분양 기록을 한 번에 맞춥니다 ──
+     엑셀 분양리스트가 읽는 형식(분양처: OOO)에 맞춰 적습니다. */
+  recordSale(id, opt) {
+    const o = opt || {};
+    const d = o.date || todayStr();
+    const won = Number(o.won || 0);
+    const buyer = (o.buyer || '').trim();
+    this.updateIndividual(id, { status: 'sold', keep: false, salePrice: won ? String(won) : '' });
+    const evs = this.getEvents();
+    const idx = evs.findIndex(e => e.individualId === id && e.type === 'distribution');
+    if (idx >= 0) {
+      const cur = evs[idx];
+      const prevNotes = (cur.data && cur.data.notes) || '';
+      const rest = prevNotes.split('·').map(s => s.trim()).filter(s => s && !/^분양처\s*:/.test(s));
+      const notes = [buyer ? '분양처: ' + buyer : '', ...rest].filter(Boolean).join(' · ');
+      evs[idx] = { ...cur, date: d, data: { ...(cur.data || {}), price: won ? String(won) : '', notes } };
+      this.saveEvents(evs);
+    } else {
+      this.addEvent({ individualId: id, type: 'distribution', date: d,
+        data: { price: won ? String(won) : '', notes: buyer ? '분양처: ' + buyer : '' } });
+    }
+    return { won, buyer, date: d };
+  },
+
+  /* ── KEEP 표시 ──
+     켜면 내놓은 상태(분양가능·예약중)는 보유중으로 되돌립니다.
+     이미 분양완료로 나간 아이는 건드리지 않습니다. */
+  setKeep(id, on) {
+    const cur = this.getIndividuals().find(x => x.id === id);
+    const patch = { keep: !!on };
+    if (on && cur && (cur.status === 'available' || cur.status === 'reserved')) patch.status = 'own';
+    this.updateIndividual(id, patch);
+    return patch;
+  },
   /* 부화일 옮기기 — 부화 기록과 그날 태어난 베이비들의 생일을 한 번에 맞춥니다.
      (같은 알에서 나온 형제는 같은 날이 맞으므로 통째로 움직입니다) */
   moveHatchDate(damId, oldDate, newDate) {
@@ -338,7 +376,7 @@ const DB = {
     if (!keep || !drop) return null;
 
     const PROFILE = ['gender', 'morph', 'spots', 'hatchDate', 'status', 'salePrice',
-                     'avatar', 'isExternal', 'isFromCreGunseol', 'favorite', 'babyNotes', 'shareCode'];
+                     'avatar', 'isExternal', 'isFromCreGunseol', 'favorite', 'keep', 'babyNotes', 'shareCode'];
     const src = profileFrom === 'drop' ? drop : keep;
     const alt = profileFrom === 'drop' ? keep : drop;
     const blank = v => v === undefined || v === null || v === '' || v === 'unknown' || v === false;
@@ -487,7 +525,7 @@ const SERVER = {
 
    인터넷이 없거나 파일을 못 받으면 아무 것도 막지 않습니다(앱은 그대로 씁니다).
    ══════════════════════════════════════════ */
-const APP_VERSION = '3.2';
+const APP_VERSION = '3.3';
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -905,6 +943,66 @@ const STATUS = {
   sold:      { label: '🤝 분양완료', color: '#8A64A8' },
 };
 
+/* 분양 상태 중 "내놓은" 상태 — KEEP과 함께 둘 수 없는 것들 */
+const SALE_STATUS = ['available', 'reserved', 'sold'];
+
+/* 분양가 입력 해석 — 기본은 만원, "원"이라고 쓰면 원 그대로.
+   "15" "15만" "15만원" → 150000 / "150000원" "150,000원" → 150000 */
+function parseMoney(text) {
+  const s = String(text == null ? '' : text).replace(/,/g, '').replace(/\s/g, '');
+  if (!s) return null;
+  const m = s.match(/^(\d+(?:\.\d+)?)(만원|만|원)?$/);
+  if (!m) return null;
+  const n = parseFloat(m[1]);
+  if (!isFinite(n) || n < 0) return null;
+  const unit = m[2];
+  if (unit === '원') return Math.round(n);          // 원이라고 밝힌 경우만 원
+  return Math.round(n * 10000);                     // 그 밖엔 만원
+}
+const wonText = w => (w || w === 0) ? Number(w).toLocaleString() + '원' : '';
+
+/* 분양완료인데 분양가가 비어 있는 아이들 */
+function soldMissingPrice(individuals) {
+  const list = individuals || DB.getIndividuals();
+  return list.filter(i => (i.status || 'own') === 'sold' && !i.isExternal && !salePriceOf(i));
+}
+// 개체에 붙은 분양가(원). 개체 필드 → 분양 기록 순으로 찾습니다
+function salePriceOf(ind) {
+  if (!ind) return 0;
+  const own = Number(ind.salePrice || 0);
+  if (own > 0) return own;
+  const ev = DB.getEventsFor(ind.id).filter(e => e.type === 'distribution' && e.data && Number(e.data.price) > 0)
+    .sort((a, b) => (a.date < b.date ? 1 : -1))[0];
+  return ev ? Number(ev.data.price) : 0;
+}
+
+/* 목록 정렬 — 지금까지는 등록순 고정이었습니다 */
+const SORTS = {
+  recent:   { label: '최근 기록순', fn: (a, b) => (lastTouch(b) || '').localeCompare(lastTouch(a) || '') },
+  name:     { label: '이름순',     fn: (a, b) => (a.name || '').localeCompare(b.name || '', 'ko') },
+  young:    { label: '어린 순',    fn: (a, b) => (b.hatchDate || '0').localeCompare(a.hatchDate || '0') },
+  added:    { label: '등록순',     fn: () => 0 },
+};
+const SORT_DEFAULT = 'added';
+function lastTouch(ind) {
+  const evs = DB.getEventsFor(ind.id);
+  let best = '';
+  evs.forEach(e => { const d = e.date || ''; if (d > best) best = d; });
+  return best || ind.hatchDate || '';
+}
+// 정렬 적용 — 즐겨찾기·KEEP은 항상 위로 올립니다
+function sortList(list, key, pinTop) {
+  const s = SORTS[key] || SORTS[SORT_DEFAULT];
+  const rank = i => (pinTop === false ? 0 : ((i.favorite ? -2 : 0) + (i.keep ? -1 : 0)));
+  return [...list].map((v, i) => [v, i]).sort((x, y) => {
+    const r = rank(x[0]) - rank(y[0]);
+    if (r) return r;
+    const c = s.fn(x[0], y[0]);
+    if (c) return c;
+    return x[1] - y[1];              // 같으면 원래 순서 유지
+  }).map(p => p[0]);
+}
+
 /* 캘린더에 띄울 종류 — 날짜가 의미 있는 "일정"만.
    메모·사진·성장(무게)·탈피는 개체 프로필의 활동 기록에서 봅니다. */
 const CALENDAR_TYPES = ['mating', 'laying', 'hatching', 'feeding'];
@@ -943,6 +1041,55 @@ function clutchRows(individuals, events) {
   const matings = evs.filter(e => e.type === 'mating').sort((a, b) => (a.date < b.date ? 1 : -1));
   const hatchings = evs.filter(e => e.type === 'hatching');
   const lays = evs.filter(e => e.type === 'laying').sort((a, b) => (a.date > b.date ? 1 : -1));
+
+  /* ── 부화 기록·아기를 산란에 "하나씩만" 배정합니다 ──
+     예전에는 같은 부화 기록이 1차·2차에 동시에 붙어서
+     같은 아기가 두 번 나오고 뒤쪽 클러치는 비어 보였습니다. */
+  const usedH = new Set(), hatchOf = {};
+  // (1) layingId로 직접 연결된 것이 최우선
+  lays.forEach(e => {
+    const h = hatchings.find(x => x.data && x.data.layingId === e.id && !usedH.has(x.id));
+    if (h) { hatchOf[e.id] = h; usedH.add(h.id); }
+  });
+  // (2) 연결이 없는 예전 기록은 오래된 산란부터 가장 이른 부화를 가져갑니다
+  lays.forEach(e => {
+    if (hatchOf[e.id]) return;
+    const eta = hatchETA(e.date);
+    const cand = hatchings
+      .filter(h => !usedH.has(h.id) && !(h.data && h.data.layingId)
+        && h.individualId === e.individualId && h.date >= e.date
+        && Math.abs((new Date(h.date) - new Date(eta)) / 86400000) <= 45)
+      .sort((a, b) => (a.date < b.date ? -1 : 1));
+    if (cand[0]) { hatchOf[e.id] = cand[0]; usedH.add(cand[0].id); }
+  });
+
+  const usedB = new Set(), babiesOf = {};
+  const kidsOfMom = {};
+  inds.forEach(i => {
+    if (!i.damId || !i.hatchDate) return;
+    (kidsOfMom[i.damId] = kidsOfMom[i.damId] || []).push(i);
+  });
+  Object.values(kidsOfMom).forEach(list => list.sort((a, b) => (a.createdAt || '') < (b.createdAt || '') ? -1 : 1));
+  lays.forEach(e => {
+    const kids = kidsOfMom[e.individualId] || [];
+    const h = hatchOf[e.id];
+    let day = h ? h.date : null;
+    if (!day) {
+      // 부화 기록은 없는데 아기만 등록된 경우 — 예정일 근처에 태어난 아이를 찾아 붙입니다
+      const eta = hatchETA(e.date);
+      const near = kids.filter(i => !usedB.has(i.id) && i.hatchDate >= e.date
+        && Math.abs((new Date(i.hatchDate) - new Date(eta)) / 86400000) <= 45)
+        .sort((a, b) => (a.hatchDate < b.hatchDate ? -1 : 1));
+      day = near.length ? near[0].hatchDate : null;
+    }
+    if (!day) { babiesOf[e.id] = []; return; }
+    let list = kids.filter(i => !usedB.has(i.id) && i.hatchDate === day);
+    const cap = Number((h && h.data && h.data.count) || 0);
+    if (cap > 0 && list.length > cap) list = list.slice(0, cap);
+    list.forEach(i => usedB.add(i.id));
+    babiesOf[e.id] = list;
+  });
+
   const seq = {};
   return lays.map(e => {
     const mom = byId[e.individualId] || null;
@@ -960,10 +1107,8 @@ function clutchRows(individuals, events) {
     const etaISO = hatchETA(e.date);
     const d = daysUntil(etaISO);
     const infertile = /무정/.test(notes);
-    const hatched = hatchings.find(h =>
-      (h.data && h.data.layingId === e.id) ||
-      (!(h.data && h.data.layingId) && h.individualId === e.individualId &&
-        h.date >= e.date && Math.abs((new Date(h.date) - new Date(etaISO)) / 86400000) <= 45));
+    const hatched = hatchOf[e.id] || null;
+    const babies = babiesOf[e.id] || [];
     let state = `D-${d}`, tone = d <= 7 ? '#B3261E' : 'var(--accent2)';
     if (infertile) { state = '무정'; tone = '#8A8177'; }
     else if (hatched) { state = '부화완료'; tone = '#2E7D46'; }
@@ -972,7 +1117,7 @@ function clutchRows(individuals, events) {
     else if (d === 0) { state = '오늘 예정'; tone = '#B3261E'; }
     const waiting = !infertile && !hatched && d >= -14;
     return { e, mom, momName, dad, dadId, dadName, pairKey, pairName, nth,
-             eggs, notes, etaISO, expISO: etaISO, d, state, tone, infertile, hatched, waiting };
+             eggs, notes, etaISO, expISO: etaISO, d, state, tone, infertile, hatched, babies, waiting };
   });
 }
 
@@ -1586,7 +1731,7 @@ function answerQuery(target, text) {
   }
   if (/분양가|가격|얼마|값/.test(text)) {
     const st = STATUS[target.status || 'own'] || STATUS.own;
-    const price = target.salePrice ? `${Number(target.salePrice).toLocaleString()}원` : '가격 미등록';
+    const price = salePriceOf(target) ? wonText(salePriceOf(target)) : '가격 미등록';
     return `${target.name}는 지금 ${st.label} 상태예요 · ${price}`;
   }
   if (/사진|이미지/.test(text)) {
@@ -1838,10 +1983,18 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
   const [view, setView] = useState(initialView || 'own'); // own | sale | mating | laying | hatch
   const [saleFilter, setSaleFilter] = useState('available');
   const [favOnly, setFavOnly] = useState(false);
+  const [keepOnly, setKeepOnly] = useState(false);
+  // 정렬은 골라둔 것을 기억합니다
+  const [sortKey, setSortKey] = useState(() => (DB.getSettings().listSort || SORT_DEFAULT));
+  const [sortOpen, setSortOpen] = useState(false);
+  const [fillQueue, setFillQueue] = useState([]);   // 분양가 채우기 대기줄
+  const pickSort = (k) => { setSortKey(k); setSortOpen(false); DB.saveSettings({ ...DB.getSettings(), listSort: k }); };
   const activeInds = individuals.filter(i => (i.status || 'own') !== 'sold' && !i.isExternal);
+  const missingPrice = soldMissingPrice(individuals);
   const stats = {
     total: activeInds.length,
     fav: activeInds.filter(i => i.favorite).length,
+    keep: activeInds.filter(i => i.keep).length,
     fromCG: activeInds.filter(isCG).length,
     sold: individuals.filter(i => (i.status || 'own') === 'sold').length,
   };
@@ -1849,11 +2002,13 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
     i.name.toLowerCase().includes(search.toLowerCase()) ||
     (i.morph || '').toLowerCase().includes(search.toLowerCase())
   );
-  // 즐겨찾기 우선 정렬 + (필터 시) 즐겨찾기만
-  const favSort = list => [...list].sort((a, b) => (b.favorite ? 1 : 0) - (a.favorite ? 1 : 0));
-  let ownList = favSort(bySearch(activeInds));
+  // 고른 기준으로 정렬 (즐겨찾기·KEEP은 항상 위) + 필터
+  let ownList = sortList(bySearch(activeInds), sortKey);
   if (favOnly) ownList = ownList.filter(i => i.favorite);
-  const saleList = bySearch(individuals.filter(i => (i.status || 'own') === saleFilter && !i.isExternal));
+  if (keepOnly) ownList = ownList.filter(i => i.keep);
+  // KEEP인 아이는 "분양가능" 목록에 올리지 않습니다 (실수로 내놓지 않게)
+  const saleList = sortList(bySearch(individuals.filter(i =>
+    (i.status || 'own') === saleFilter && !i.isExternal && !(saleFilter === 'available' && i.keep))), sortKey);
   const toggleFav = (g) => { DB.updateIndividual(g.id, { favorite: !g.favorite }); refreshIndividuals(); };
 
   return (
@@ -1890,11 +2045,35 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
           <div style={{display:'flex', alignItems:'center', gap:10, padding:'10px 16px 0', fontSize:13, color:'var(--text3)'}}>
             <span><b style={{fontSize:16, color:'var(--accent2)'}}>{stats.total}</b> 마리</span>
             <span style={{color:'var(--border)'}}>|</span>
-            <button onClick={() => { setView('own'); setFavOnly(f => !f); }}
+            <button onClick={() => { setView('own'); setKeepOnly(false); setFavOnly(f => !f); }}
               style={{background:'none', border:'none', padding:0, cursor:'pointer', fontSize:13,
                       color: favOnly ? 'var(--accent2)' : 'var(--text3)', fontWeight: favOnly ? 700 : 400}}>
               ⭐ {stats.fav} {favOnly ? '· 해제' : '즐겨찾기'}
             </button>
+            <button onClick={() => { setView('own'); setFavOnly(false); setKeepOnly(k => !k); }}
+              style={{background:'none', border:'none', padding:0, cursor:'pointer', fontSize:13,
+                      color: keepOnly ? 'var(--accent2)' : 'var(--text3)', fontWeight: keepOnly ? 700 : 400}}>
+              🔒 {stats.keep} {keepOnly ? '· 해제' : 'KEEP'}
+            </button>
+            {/* 정렬 기준 — 지금까지는 등록순 고정이었습니다 */}
+            <div style={{marginLeft:'auto', position:'relative'}}>
+              <button onClick={() => setSortOpen(o => !o)}
+                style={{background:'none', border:'none', padding:0, cursor:'pointer', fontSize:12.5, color:'var(--text3)'}}>
+                ↕ {(SORTS[sortKey] || SORTS[SORT_DEFAULT]).label}
+              </button>
+              {sortOpen && (
+                <div className="card" style={{position:'absolute', right:0, top:22, zIndex:40, margin:0, padding:6, minWidth:124}}>
+                  {Object.entries(SORTS).map(([k, s]) => (
+                    <button key={k} onClick={() => pickSort(k)}
+                      style={{display:'block', width:'100%', textAlign:'left', background: sortKey === k ? 'var(--accent-soft)' : 'none',
+                              border:'none', padding:'8px 10px', borderRadius:8, cursor:'pointer', fontSize:13,
+                              color: sortKey === k ? 'var(--accent2)' : 'var(--text2)', fontWeight: sortKey === k ? 700 : 400}}>
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
 
@@ -1909,11 +2088,22 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
         )}
 
         {view === 'sale' && individuals.length > 0 && (
-          <div style={{display:'flex', gap:6, padding:'10px 16px 0'}}>
-            {[['available','분양가능'],['reserved','예약중'],['sold',`분양완료${stats.sold ? ' ' + stats.sold : ''}`]].map(([k, l]) => (
-              <button key={k} className="chip-btn" style={{fontSize:12, padding:'6px 11px', ...(saleFilter === k ? {background:'var(--accent-soft)', fontWeight:700} : {})}} onClick={() => setSaleFilter(k)}>{l}</button>
-            ))}
-          </div>
+          <>
+            <div style={{display:'flex', gap:6, padding:'10px 16px 0'}}>
+              {[['available','분양가능'],['reserved','예약중'],['sold',`분양완료${stats.sold ? ' ' + stats.sold : ''}`]].map(([k, l]) => (
+                <button key={k} className="chip-btn" style={{fontSize:12, padding:'6px 11px', ...(saleFilter === k ? {background:'var(--accent-soft)', fontWeight:700} : {})}} onClick={() => setSaleFilter(k)}>{l}</button>
+              ))}
+            </div>
+            {/* 분양가가 비어 있는 아이들 — 한 번에 채울 수 있게 */}
+            {missingPrice.length > 0 && (
+              <div style={{margin:'10px 16px 0', padding:'9px 12px', borderRadius:10, background:'var(--accent-soft)',
+                           border:'1px solid var(--accent-edge)', display:'flex', alignItems:'center', gap:10, fontSize:12.5}}>
+                <span style={{color:'var(--accent2)', flex:1}}>분양가가 비어 있는 아이 <b>{missingPrice.length}마리</b></span>
+                <button className="btn btn-primary btn-sm" style={{width:'auto', padding:'6px 12px'}}
+                  onClick={() => setFillQueue(missingPrice.map(i => i.id))}>채우기</button>
+              </div>
+            )}
+          </>
         )}
 
         {view === 'own' && (
@@ -1951,6 +2141,19 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
 
         <div style={{height: 16}} />
       </div>
+
+      {/* 빠진 분양가를 앞에서부터 하나씩 채웁니다 */}
+      {fillQueue.length > 0 && (
+        <SalePrompt
+          gecko={individuals.find(i => i.id === fillQueue[0])}
+          onClose={() => setFillQueue([])}
+          onDone={() => {
+            const rest = fillQueue.slice(1);
+            setFillQueue(rest);
+            refreshIndividuals();
+            if (!rest.length) showToast('🤝 분양가 정리 완료');
+          }} />
+      )}
     </>
   );
 }
@@ -2269,13 +2472,10 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals }) {
   const expISO = localISO(expDate);
   const d = daysUntil(expISO);
   const infertile = /무정/.test(notes);
-  // 부화 기록은 layingId로 이 알과 직접 연결합니다(날짜를 직접 적으면 예정일과 멀어질 수 있어서).
-  // layingId가 없는 예전 기록은 종전대로 날짜 근사로 찾습니다.
-  const hatched = evs.find(h => h.type === 'hatching' && (
-    (h.data && h.data.layingId === ev.id) ||
-    (!(h.data && h.data.layingId) && h.individualId === ev.individualId &&
-      new Date(h.date) >= new Date(ev.date) && Math.abs((new Date(h.date) - expDate) / 86400000) <= 45)));
-  const babies = hatched ? inds.filter(i => i.damId === ev.individualId && i.hatchDate === hatched.date) : [];
+  // 부화 기록·아기는 clutchRows에서 "한 클러치에 하나씩만" 배정한 결과를 그대로 씁니다.
+  // (예전엔 여기서 따로 찾느라 같은 아기가 1차·2차에 겹쳐 나왔습니다)
+  const hatched = row ? row.hatched : null;
+  const babies = row ? row.babies : [];
 
   let state = `부화까지 D-${d}`, tone = d <= 7 ? '#B3261E' : 'var(--accent2)';
   if (infertile) { state = '무정란'; tone = '#8A8177'; }
@@ -2553,6 +2753,50 @@ function HatchView({ individuals, refreshIndividuals, showToast, navigate }) {
   );
 }
 
+/* 분양가 물어보기 — 분양완료로 바꿀 때와, 빠진 분양가를 채울 때 함께 씁니다 */
+function SalePrompt({ gecko, onDone, onClose }) {
+  const already = gecko ? salePriceOf(gecko) : 0;
+  const [price, setPrice] = useState(already ? String(already / 10000) : '');
+  const [buyer, setBuyer] = useState('');
+  const [date, setDate] = useState(todayStr());
+  if (!gecko) return null;
+  const won = parseMoney(price);
+  const save = (noPrice) => {
+    const r = DB.recordSale(gecko.id, { won: noPrice ? 0 : (won || 0), buyer, date });
+    onDone && onDone(r);
+  };
+  return (
+    <div style={{position:'fixed', inset:0, background:'rgba(30,20,15,.72)', zIndex:210, display:'flex',
+                 alignItems:'center', justifyContent:'center', padding:18}} onClick={onClose}>
+      <div className="card" style={{margin:0, width:'100%', maxWidth:340, maxHeight:'88vh', overflowY:'auto'}} onClick={e => e.stopPropagation()}>
+        <div style={{fontSize:15, fontWeight:800}}>🤝 {gecko.name} 분양</div>
+        <div style={{fontSize:12, color:'var(--text3)', margin:'3px 0 12px'}}>얼마에 보내셨어요? 기록과 엑셀에 함께 남겨둘게요.</div>
+
+        <div style={{fontSize:11.5, color:'var(--text3)', marginBottom:4}}>분양가 <b>(만원)</b></div>
+        <input className="input" inputMode="decimal" placeholder="예) 15" value={price}
+          onChange={e => setPrice(e.target.value)} autoFocus />
+        <div style={{fontSize:11.5, minHeight:17, margin:'5px 2px 10px', color: won ? 'var(--accent2)' : 'var(--text3)'}}>
+          {!price ? '"150000원" 처럼 원으로 적어도 됩니다'
+            : won ? wonText(won) + ' 으로 적을게요'
+                  : '숫자로 적어주세요 (예: 15 · 15만원 · 150000원)'}
+        </div>
+
+        <div style={{fontSize:11.5, color:'var(--text3)', marginBottom:4}}>분양처 <span style={{opacity:.65}}>(선택)</span></div>
+        <input className="input" placeholder="예) 홍길동 · 파충류샵" value={buyer} onChange={e => setBuyer(e.target.value)} />
+
+        <div style={{fontSize:11.5, color:'var(--text3)', margin:'10px 0 4px'}}>분양한 날</div>
+        <input className="input" type="date" value={date} onChange={e => setDate(e.target.value)} />
+
+        <div style={{display:'flex', gap:6, marginTop:14}}>
+          <button className="btn btn-primary btn-sm" style={{flex:1}} disabled={!!price && !won} onClick={() => save(false)}>저장</button>
+          <button className="btn btn-secondary btn-sm" style={{flex:1}} onClick={() => save(true)}>가격 없이</button>
+        </div>
+        <button className="btn btn-secondary btn-sm" style={{width:'100%', marginTop:6}} onClick={onClose}>취소</button>
+      </div>
+    </div>
+  );
+}
+
 function GeckoCard({ gecko, onClick, onToggleFav }) {
   const events = DB.getEventsFor(gecko.id);
   const lastEvent = [...events].sort((a,b) => b.createdAt > a.createdAt ? 1 : -1)[0];
@@ -2570,6 +2814,7 @@ function GeckoCard({ gecko, onClick, onToggleFav }) {
       <div className="gecko-info">
         <div style={{display:'flex', alignItems:'center', gap:6, flexWrap:'wrap'}}>
           <div className="gecko-name">{gecko.name} <GenderTag g={gecko.gender} size={14} /></div>
+          {gecko.keep && <span className="badge badge-keep" style={{fontSize:10}}>KEEP</span>}
           {isCG(gecko) && <span className="badge badge-gold" style={{fontSize:10}}>CG</span>}
           {gecko.isExternal && <span className="badge badge-blue" style={{fontSize:10}}>외부</span>}
           {stKey !== 'own' && (
@@ -3288,7 +3533,8 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
         }
       }
       if (f.type === 'distribution') {
-        DB.updateIndividual(f.targetId, { status: 'sold', salePrice: f.data.price || '' });
+        // 대화로 분양을 적어도 KEEP은 함께 풀립니다 (한 아이가 KEEP이면서 분양완료일 수는 없으므로)
+        DB.updateIndividual(f.targetId, { status: 'sold', keep: false, salePrice: f.data.price || '' });
       }
       if (f.type === 'hatching') {
         const mode = DB.getSettings().babyNaming || 'combo';
@@ -3473,6 +3719,8 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
   const [editVals, setEditVals] = useState({});
   const [confirmDelEvent, setConfirmDelEvent] = useState(null);
   const [photoView, setPhotoView] = useState(null); // {src, date}
+  const [salePrompt, setSalePrompt] = useState(false);   // 분양가 물어보기
+  const [keepAsk, setKeepAsk] = useState(null);          // KEEP인데 분양 상태로 바꾸려 할 때
   const eventPhotoRef = useRef(null);
   const avatarFileRef = useRef(null);
 
@@ -3554,6 +3802,17 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
                   aria-label="즐겨찾기" style={{background:'none', border:'none', cursor:'pointer', fontSize:22, lineHeight:1, padding:0, color: gecko.favorite ? 'var(--gold)' : 'var(--text3)'}}>
                   {gecko.favorite ? '⭐' : '☆'}
                 </button>
+                {/* KEEP — 내가 데리고 갈 아이. 켜면 분양 상태에서 빠집니다 */}
+                <button className="badge badge-keep"
+                  style={{cursor:'pointer', opacity: gecko.keep ? 1 : .4, filter: gecko.keep ? 'none' : 'grayscale(1)'}}
+                  onClick={() => {
+                    const on = !gecko.keep;
+                    const p = DB.setKeep(gecko.id, on);
+                    refreshLocal();
+                    showToast(on
+                      ? (p.status === 'own' ? 'KEEP · 분양 상태를 보유중으로 되돌렸어요' : 'KEEP 표시했어요')
+                      : 'KEEP 해제');
+                  }}>KEEP</button>
                 {/* 우리 집에서 나온 아이 표시 — 눌러서 켜고 끕니다 */}
                 <button className="badge badge-gold"
                   style={{cursor:'pointer', opacity: isCG(gecko) ? 1 : .4,
@@ -3620,11 +3879,25 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
       </div>
 
       <div style={{padding:'0 16px 4px'}}>
-        <div style={{fontSize:11, color:'var(--text3)', marginBottom:4}}>분양 상태{gecko.salePrice ? ` · 분양가 ${Number(gecko.salePrice).toLocaleString()}원` : ''}</div>
+        <div style={{fontSize:11, color:'var(--text3)', marginBottom:4}}>
+          분양 상태{salePriceOf(gecko) ? ` · 분양가 ${wonText(salePriceOf(gecko))}` : ''}
+          {gecko.status === 'sold' && !salePriceOf(gecko) && (
+            <button onClick={() => setSalePrompt(true)}
+              style={{background:'none', border:'none', padding:'0 0 0 6px', cursor:'pointer', fontSize:11, color:'var(--accent2)', fontWeight:700, textDecoration:'underline'}}>
+              분양가 적기
+            </button>
+          )}
+        </div>
         <div style={{display:'flex', gap:6, overflowX:'auto', paddingBottom:8}}>
           {Object.entries(STATUS).map(([k, s]) => (
             <button key={k} className="chip-btn" style={(gecko.status || 'own') === k ? {background:'var(--accent-soft)', fontWeight:700} : {}}
-              onClick={() => { DB.updateIndividual(gecko.id, { status: k }); refreshLocal(); showToast(`${s.label} 변경 완료`); }}>
+              onClick={() => {
+                if ((gecko.status || 'own') === k) { if (k === 'sold') setSalePrompt(true); return; }
+                // KEEP인 아이를 내놓으려 하면 한 번 물어봅니다 (실수 방지)
+                if (gecko.keep && SALE_STATUS.includes(k)) { setKeepAsk(k); return; }
+                if (k === 'sold') { setSalePrompt(true); return; }
+                DB.updateIndividual(gecko.id, { status: k }); refreshLocal(); showToast(`${s.label} 변경 완료`);
+              }}>
               {s.label}
             </button>
           ))}
@@ -3740,6 +4013,36 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
       <input ref={eventPhotoRef} type="file" accept="image/*" style={{display:'none'}} onChange={onEventPhoto} />
 
       {/* 사진 크게 보기 + 다운로드 + 대표사진 */}
+      {salePrompt && (
+        <SalePrompt gecko={gecko} onClose={() => setSalePrompt(false)}
+          onDone={(r) => {
+            setSalePrompt(false); refreshLocal();
+            showToast(r.won ? `🤝 분양완료 · ${wonText(r.won)}` : '🤝 분양완료로 바꿨어요');
+          }} />
+      )}
+
+      {keepAsk && (
+        <div style={{position:'fixed', inset:0, background:'rgba(30,20,15,.72)', zIndex:210, display:'flex',
+                     alignItems:'center', justifyContent:'center', padding:18}} onClick={() => setKeepAsk(null)}>
+          <div className="card" style={{margin:0, width:'100%', maxWidth:320}} onClick={e => e.stopPropagation()}>
+            <div style={{fontSize:14, fontWeight:800, marginBottom:6}}>이 아이는 KEEP이에요</div>
+            <div style={{fontSize:12.5, color:'var(--text2)', lineHeight:1.6, marginBottom:14}}>
+              {gecko.name}는 데리고 계실 아이로 표시돼 있어요.<br/>
+              {(STATUS[keepAsk] || STATUS.own).label} 로 바꾸면 KEEP이 풀립니다.
+            </div>
+            <div style={{display:'flex', gap:6}}>
+              <button className="btn btn-primary btn-sm" style={{flex:1}} onClick={() => {
+                const k = keepAsk; setKeepAsk(null);
+                if (k === 'sold') { DB.updateIndividual(gecko.id, { keep: false }); refreshLocal(); setSalePrompt(true); return; }
+                DB.updateIndividual(gecko.id, { status: k, keep: false }); refreshLocal();
+                showToast(`${(STATUS[k] || STATUS.own).label} 변경 완료 · KEEP 해제`);
+              }}>KEEP 풀고 바꾸기</button>
+              <button className="btn btn-secondary btn-sm" style={{flex:1}} onClick={() => setKeepAsk(null)}>그대로 두기</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {photoView && (
         <div style={{position:'fixed', inset:0, background:'rgba(30,20,15,.88)', zIndex:200, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:14, padding:20}} onClick={() => setPhotoView(null)}>
           <img src={photoView.src} alt="사진 크게 보기" style={{maxWidth:'92%', maxHeight:'68%', borderRadius:12}} onClick={e => e.stopPropagation()} />
@@ -4420,8 +4723,10 @@ function buildWorkbook(XLSX) {
   own.forEach((i, n) => {
     const m = splitMemo(i.id);
     if (m.price) priceSum += parseFloat(m.price) || 0;
+    // KEEP은 원본 양식을 건드리지 않도록 특이사항 칸 앞에 적습니다
+    const note = [i.keep ? 'KEEP' : '', m.note].filter(Boolean).join(' · ');
     a1.push(['', n + 1, i.name, xlDate(i.hatchDate) || m.birthRaw, xlGender(i.gender), i.morph || '',
-             m.feat, i.spots || '', m.source, m.blood, m.price, m.note]);
+             m.feat, i.spots || '', m.source, m.blood, m.price, note]);
   });
   // 원본과 같은 자리(O4·P4·Q4)에 합계
   a1[3][14] = '분양가 합'; a1[3][15] = priceSum ? Math.round(priceSum * 100) / 100 : ''; a1[3][16] = '만원';
