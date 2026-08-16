@@ -525,7 +525,7 @@ const SERVER = {
 
    인터넷이 없거나 파일을 못 받으면 아무 것도 막지 않습니다(앱은 그대로 씁니다).
    ══════════════════════════════════════════ */
-const APP_VERSION = '3.3';
+const APP_VERSION = '3.4';
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -942,6 +942,9 @@ const STATUS = {
   reserved:  { label: '📌 예약중',   color: '#C87F2F' },
   sold:      { label: '🤝 분양완료', color: '#8A64A8' },
 };
+
+/* 하루에 하나면 충분한 기록 — 같은 날 두 번 적으면 덮어씁니다 */
+const ONE_PER_DAY = ['feeding', 'shed'];
 
 /* 분양 상태 중 "내놓은" 상태 — KEEP과 함께 둘 수 없는 것들 */
 const SALE_STATUS = ['available', 'reserved', 'sold'];
@@ -1440,7 +1443,7 @@ const QUESTION_RE = /[?？]\s*$|어떻게\s|추천해|뭐가\s*좋|누가\s*좋|
 /* ── 프로필 정정 감지 ──
    "부화일이 8월 6일이야" 처럼 이미 저장된 값과 다른 정보가 들어오면,
    말없이 덮어쓰지 않고 뭐가 맞는지 여쭤봅니다. */
-const PROFILE_LABEL = { hatchDate: '부화일(생일)', gender: '성별', morph: '모프' };
+const PROFILE_LABEL = { hatchDate: '부화일(생일)', gender: '성별', morph: '모프', name: '이름' };
 function profileText(field, v) {
   if (field === 'hatchDate') return fmtDate(v);
   if (field === 'gender') return genderLabel(v);
@@ -1465,7 +1468,47 @@ function detectProfileClaim(text) {
     const gm = text.match(/(수컷|암컷)(?:이야|이에요|입니다|임|이래|같아|이다|이었|였|으로|이었어)/);
     if (gm) return { field: 'gender', value: gm[1] === '수컷' ? 'male' : 'female' };
   }
+  const nm = detectNameClaim(text);
+  if (nm) return { field: 'name', value: nm };
   return null;
+}
+
+/* 이름을 바꾸겠다는 말 알아듣기
+   "이름이 마동5호야" / "이름 마동5호로 바꿔줘" / "마동5호로 이름 변경" / "이름을 마동5호라고 해줘"
+   → 새 이름만 뽑아냅니다. 이름이라는 낱말이 없으면 건드리지 않습니다(엉뚱한 걸 이름으로 잡지 않게). */
+function detectNameClaim(text) {
+  const s = String(text || '').trim();
+  if (!/이름|개명|명칭/.test(s)) return null;
+  if (/이름(이|은)?\s*(뭐|무엇|어떻게|모)/.test(s)) return null;        // 물어보는 말은 제외
+  // 이름에 띄어쓰기가 들어갈 수 있어서(마동 5호) 공백도 허용하고, 앞뒤를 다듬습니다
+  const V = '([^"\'“”‘’]{1,20}?)';
+  const pats = [
+    new RegExp('이름(?:은|이|을)?\\s*["\'“”‘’]?' + V + '["\'“”‘’]?\\s*(?:로|으로)\\s*(?:바꿔|변경|고쳐|수정|해줘|해|바꾸)'),
+    new RegExp('^\\s*["\'“”‘’]?' + V + '["\'“”‘’]?\\s*(?:로|으로)\\s*이름\\s*(?:바꿔|변경|고쳐|수정)'),
+    new RegExp('이름(?:은|이)\\s*["\'“”‘’]?' + V + '["\'“”‘’]?\\s*(?:이야|이에요|예요|입니다|이다|임|야)\\s*$'),
+    new RegExp('이름(?:을|은|이)?\\s*["\'“”‘’]?' + V + '["\'“”‘’]?\\s*(?:라고|이라고)\\s*(?:불러|해줘|해)'),
+  ];
+  for (const p of pats) {
+    const m = s.match(p);
+    if (m && m[1]) {
+      const v = m[1].replace(/[.,!?]+$/, '').trim();
+      if (v && !/^(뭐|무엇|어떻게|그거|이거)$/.test(v)) return v;
+    }
+  }
+  return null;
+}
+
+/* 이름 바꾸기 — 같은 이름이 이미 있으면 막습니다(누구 기록인지 헷갈리지 않게) */
+function renameCheck(id, newName, individuals) {
+  const nm = String(newName || '').trim();
+  if (!nm) return { ok: false, reason: '이름을 입력해 주세요' };
+  if (nm.length > 20) return { ok: false, reason: '이름이 너무 길어요 (20자까지)' };
+  const list = individuals || DB.getIndividuals();
+  const cur = list.find(i => i.id === id);
+  if (!cur) return { ok: false, reason: '개체를 찾을 수 없어요' };
+  if (cur.name === nm) return { ok: false, reason: '지금 이름과 같아요', same: true };
+  if (list.some(i => i.id !== id && i.name === nm)) return { ok: false, reason: `"${nm}"는 이미 있는 이름이에요`, dup: true };
+  return { ok: true, from: cur.name, to: nm };
 }
 
 /* 무엇을 할지 정하는 판단부 (화면과 분리 — 그대로 테스트합니다)
@@ -1477,6 +1520,11 @@ function planProfileFix(cur, text, individuals, morph) {
   const claim = detectProfileClaim(text) || (morph ? { field: 'morph', value: morph } : null);
   if (!claim || !cur) return null;
   if (claim.field === 'hatchDate' && claim.value > todayStr()) return { kind: 'future', value: claim.value };
+  if (claim.field === 'name') {
+    const chk = renameCheck(cur.id, claim.value, individuals);
+    if (!chk.ok) return chk.same ? null : { kind: 'nameBad', reason: chk.reason, to: claim.value };
+    return { kind: 'ask', field: 'name', from: chk.from, to: chk.to, sibs: 1 };
+  }
   // 성별 '미구분'은 아직 안 정한 상태라 "다른 값"으로 보지 않습니다
   const from = (claim.field === 'gender' && cur.gender === 'unknown') ? '' : (cur[claim.field] || '');
   if (from === claim.value) return null;
@@ -1484,6 +1532,60 @@ function planProfileFix(cur, text, individuals, morph) {
   const sibs = claim.field === 'hatchDate' && cur.damId
     ? (individuals || []).filter(x => x.damId === cur.damId && x.hatchDate === from).length : 1;
   return { kind: 'ask', field: claim.field, from, to: claim.value, sibs };
+}
+
+/* ── 형제 이름 규칙 맞추기 ──
+   같은 부모에서 나온 아이들은 보통 같은 접두어 + 호수로 짓습니다(마동 1호, 마동 2호 …).
+   해칭할 때 다른 이름으로 지어진 아이를 찾아, 형제들이 쓰는 접두어와 빈 번호로 바꿔 제안합니다.
+   ("동인 1호·2호" → "마동 5호·6호" 같은 경우) */
+const NAME_NO_RE = /^(.*?)\s*(\d+)\s*호$/;
+function splitBabyName(name) {
+  const m = String(name || '').match(NAME_NO_RE);
+  if (!m) return null;
+  const prefix = m[1].trim();
+  if (!prefix) return null;
+  return { prefix, no: parseInt(m[2], 10) };
+}
+function nameFixPlan(individuals) {
+  const list = individuals || DB.getIndividuals();
+  const groups = {};
+  list.forEach(i => {
+    if (!i.damId && !i.sireId) return;
+    const key = (i.sireId || '?') + '|' + (i.damId || '?');
+    (groups[key] = groups[key] || []).push(i);
+  });
+  const out = [];
+  Object.values(groups).forEach(kids => {
+    const parsed = kids.map(i => ({ i, p: splitBabyName(i.name) })).filter(x => x.p);
+    if (parsed.length < 2) return;
+    // 형제들이 가장 많이 쓰는 접두어를 기준으로 삼습니다
+    const cnt = {};
+    parsed.forEach(x => { cnt[x.p.prefix] = (cnt[x.p.prefix] || 0) + 1; });
+    const ranked = Object.entries(cnt).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    const main = ranked[0][0];
+    if (ranked[0][1] < 2) return;                       // 기준이라 할 만큼 많지 않으면 건드리지 않습니다
+    const odd = parsed.filter(x => x.p.prefix !== main)
+      .sort((a, b) => (a.i.hatchDate || '').localeCompare(b.i.hatchDate || '') || a.p.no - b.p.no);
+    if (!odd.length) return;
+    const used = new Set(parsed.filter(x => x.p.prefix === main).map(x => x.p.no));
+    const taken = new Set(list.map(i => i.name));
+    let next = 1;
+    odd.forEach(x => {
+      while (used.has(next) || taken.has(`${main} ${next}호`) || taken.has(`${main}${next}호`)) next++;
+      const to = `${main} ${next}호`;
+      used.add(next); taken.add(to);
+      out.push({ id: x.i.id, from: x.i.name, to, prefix: main });
+    });
+  });
+  return out;
+}
+function applyNameFixes(plans) {
+  let done = 0;
+  (plans || []).forEach(p => {
+    const chk = renameCheck(p.id, p.to);
+    if (chk.ok) { DB.updateIndividual(p.id, { name: p.to }); done++; }
+  });
+  return done;
 }
 
 /* 실제로 고치는 실행부 — 부화일은 부화 기록·형제 생일까지 함께 옮깁니다 */
@@ -1991,6 +2093,7 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
   const pickSort = (k) => { setSortKey(k); setSortOpen(false); DB.saveSettings({ ...DB.getSettings(), listSort: k }); };
   const activeInds = individuals.filter(i => (i.status || 'own') !== 'sold' && !i.isExternal);
   const missingPrice = soldMissingPrice(individuals);
+  const namePlans = nameFixPlan(individuals);   // 형제와 이름 규칙이 다른 아이
   const stats = {
     total: activeInds.length,
     fav: activeInds.filter(i => i.favorite).length,
@@ -2106,6 +2209,25 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
           </>
         )}
 
+        {view === 'own' && namePlans.length > 0 && (
+          <div style={{margin:'10px 16px 0', padding:'9px 12px', borderRadius:10, background:'var(--accent-soft)',
+                       border:'1px solid var(--accent-edge)', fontSize:12.5}}>
+            <div style={{color:'var(--accent2)', marginBottom:6}}>
+              형제와 이름 규칙이 다른 아이 <b>{namePlans.length}마리</b>
+            </div>
+            <div style={{color:'var(--text3)', fontSize:11.5, lineHeight:1.6, marginBottom:8}}>
+              {namePlans.slice(0, 4).map(p => `${p.from} → ${p.to}`).join(' · ')}
+              {namePlans.length > 4 ? ` 외 ${namePlans.length - 4}건` : ''}
+            </div>
+            <button className="btn btn-primary btn-sm" style={{width:'auto', padding:'6px 12px'}}
+              onClick={() => {
+                const n = applyNameFixes(namePlans);
+                refreshIndividuals();
+                showToast(n ? `✏️ ${n}마리 이름을 맞췄어요` : '바꿀 수 있는 이름이 없어요');
+              }}>이름 맞추기</button>
+          </div>
+        )}
+
         {view === 'own' && (
           <>
             {ownList.length === 0 && (
@@ -2170,6 +2292,10 @@ function MatingView({ individuals, navigate, showToast }) {
   const byId = {};
   individuals.forEach(i => { byId[i.id] = i; });
   const evs = DB.getEvents();
+  // 부화 여부·상태는 clutchRows 한 곳에서만 정합니다 (화면마다 답이 다르지 않도록)
+  const crMap = {};
+  clutchRows(individuals, evs).forEach(r => { crMap[r.e.id] = r; });
+  const clutchRowOf = id => crMap[id] || null;
   const pairs = {};
   const orderPair = (aId, aName, bId, bName) => {
     const a = byId[aId], b = byId[bId];
@@ -2294,18 +2420,10 @@ function MatingView({ individuals, navigate, showToast }) {
                 {lays.length === 0 ? (
                   <div style={{fontSize:12, color:'var(--text3)', paddingTop:5}}>아직 산란 기록이 없어요.</div>
                 ) : lays.map((l, i) => {
-                  const eta = hatchETA(l.date);
-                  const d = daysUntil(eta);
-                  const infertile = /무정/.test((l.data && l.data.notes) || '');
-                  const hatched = evs.some(h => h.type === 'hatching' && (
-                    (h.data && h.data.layingId === l.id) ||
-                    (!(h.data && h.data.layingId) && h.individualId === l.individualId &&
-                      h.date >= l.date && Math.abs((new Date(h.date) - new Date(eta)) / 86400000) <= 45)));
-                  const state = infertile ? { t: '무정', c: '#8A8177' }
-                    : hatched ? { t: '부화완료', c: '#2E7D46' }
-                    : d < -14 ? { t: '경과', c: '#8A8177' }
-                    : d < 0 ? { t: `지연 ${-d}일`, c: '#C87F2F' }
-                    : { t: `부화 D-${d}`, c: d <= 7 ? '#B3261E' : 'var(--accent2)' };
+                  // 상태는 clutchRows가 정한 것을 그대로 씁니다.
+                  // (예전엔 여기서 따로 판정해서 목록과 상세 화면의 답이 달랐습니다)
+                  const cr = clutchRowOf(l.id);
+                  const state = { t: cr ? cr.state.replace('D-', '부화 D-') : '-', c: cr ? cr.tone : 'var(--text3)' };
                   return (
                     <div key={l.id}
                       onClick={() => navigate('clutch', { layingId: l.id })}
@@ -3278,6 +3396,10 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
         bot(`${fmtDate(plan.value)}은 아직 오지 않은 날짜예요 🙂 다시 알려주시겠어요?`);
         return;
       }
+      if (plan && plan.kind === 'nameBad') {
+        bot(`${plan.reason} 🙂 다른 이름으로 알려주시겠어요?`);
+        return;
+      }
       if (plan && plan.kind === 'apply') { applyFix(cur, plan.field, plan.from, plan.to); return; }
       if (plan && plan.kind === 'ask') {
         bot(`잠깐만요 — 지금 ${cur.name}의 ${PROFILE_LABEL[plan.field]}은(는) ` +
@@ -3512,7 +3634,14 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
           f.data.diffDays = Math.round((new Date(actual) - new Date(cand.etaISO)) / 86400000);
         }
       }
-      DB.addEvent({ individualId: f.targetId, type: f.type, date: f.date || todayStr(), data: f.data || {} });
+      // 급여·탈피처럼 하루에 한 번이면 충분한 기록은 같은 날 두 번 쌓지 않고 바꿔 끼웁니다
+      // (자정 넘겨 체크한 뒤 "어제 먹였어"라고 다시 말하면 두 개가 남던 문제)
+      const fDate = f.date || todayStr();
+      if (ONE_PER_DAY.includes(f.type)) {
+        const dup = DB.getEvents().find(e => e.individualId === f.targetId && e.type === f.type && e.date === fDate);
+        if (dup) DB.deleteEvent(dup.id);
+      }
+      DB.addEvent({ individualId: f.targetId, type: f.type, date: fDate, data: f.data || {} });
 
       // 메이팅 → 산란 예정 알림 자동 생성 (암컷 기준)
       if (f.type === 'mating') {
@@ -3721,6 +3850,8 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
   const [photoView, setPhotoView] = useState(null); // {src, date}
   const [salePrompt, setSalePrompt] = useState(false);   // 분양가 물어보기
   const [keepAsk, setKeepAsk] = useState(null);          // KEEP인데 분양 상태로 바꾸려 할 때
+  const [nameEdit, setNameEdit] = useState(false);       // 이름 수정
+  const [nameVal, setNameVal] = useState('');
   const eventPhotoRef = useRef(null);
   const avatarFileRef = useRef(null);
 
@@ -3748,6 +3879,15 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
     setGecko(DB.getIndividuals().find(i => i.id === gecko.id) || gecko);
     setEvents(DB.getEventsFor(gecko.id));
     refreshIndividuals();
+  };
+
+  // 이름 바꾸기 — 같은 이름이 이미 있으면 막습니다
+  const saveName = () => {
+    const chk = renameCheck(gecko.id, nameVal);
+    if (!chk.ok) { setNameEdit(false); return showToast(chk.same ? '이름이 그대로예요' : '⚠️ ' + chk.reason); }
+    DB.updateIndividual(gecko.id, { name: chk.to });
+    setNameEdit(false); refreshLocal();
+    showToast(`✏️ ${chk.from} → ${chk.to}`);
   };
 
   const handleDelete = () => {
@@ -3797,7 +3937,22 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
               style={{display:'none'}} onChange={onAvatarPick} />
             <div style={{flex:1}}>
               <div style={{display:'flex', alignItems:'center', gap:8, flexWrap:'wrap'}}>
-                <div style={{fontSize:22, fontWeight:800}}>{gecko.name} <GenderTag g={gecko.gender} size={20} /></div>
+                {nameEdit ? (
+                  <div style={{display:'flex', gap:6, alignItems:'center', width:'100%'}}>
+                    <input className="input" style={{padding:'8px 10px', fontSize:16, fontWeight:700}}
+                      value={nameVal} autoFocus maxLength={20}
+                      onChange={e => setNameVal(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') saveName(); }} />
+                    <button className="btn btn-primary btn-sm" style={{width:'auto'}} onClick={saveName}>저장</button>
+                    <button className="btn btn-secondary btn-sm" style={{width:'auto'}} onClick={() => setNameEdit(false)}>취소</button>
+                  </div>
+                ) : (
+                  <>
+                    <div style={{fontSize:22, fontWeight:800}}>{gecko.name} <GenderTag g={gecko.gender} size={20} /></div>
+                    <button onClick={() => { setNameVal(gecko.name); setNameEdit(true); }} aria-label="이름 수정"
+                      style={{background:'none', border:'none', cursor:'pointer', fontSize:15, lineHeight:1, padding:0, color:'var(--text3)'}}>✏️</button>
+                  </>
+                )}
                 <button onClick={() => { DB.updateIndividual(gecko.id, { favorite: !gecko.favorite }); refreshLocal(); showToast(gecko.favorite ? '즐겨찾기 해제' : '⭐ 즐겨찾기 추가'); }}
                   aria-label="즐겨찾기" style={{background:'none', border:'none', cursor:'pointer', fontSize:22, lineHeight:1, padding:0, color: gecko.favorite ? 'var(--gold)' : 'var(--text3)'}}>
                   {gecko.favorite ? '⭐' : '☆'}
@@ -4434,9 +4589,10 @@ function FeedingScreen({ navigate, showToast, refreshIndividuals }) {
   const [foodType, setFoodType] = useState(() => (DB.getSettings() || {}).lastFoodType || '슈푸');
   const bump = () => { setVer(v => v + 1); refreshIndividuals && refreshIndividuals(); };
   const fp = feedPlan();
-  const today = todayStr();
+  // 밥 준 날 — 자정을 넘겨 체크하는 일이 많아서 날짜를 고를 수 있게 합니다
+  const [today, setToday] = useState(todayStr());
 
-  // 오늘 이미 찍은 기록 (다시 누르면 바꿔 끼웁니다)
+  // 그날 이미 찍은 기록 (다시 누르면 바꿔 끼웁니다)
   const todayBy = {};
   fp.evs.filter(e => e.date === today).forEach(e => { todayBy[e.individualId] = e; });
 
@@ -4484,10 +4640,25 @@ function FeedingScreen({ navigate, showToast, refreshIndividuals }) {
 
       <div style={{padding:'12px 16px 0'}}>
         <div className="card" style={{margin:'0 0 12px'}}>
-          <div style={{fontSize:15, fontWeight:800}}>🦗 오늘 밥 주기</div>
+          <div style={{fontSize:15, fontWeight:800}}>🦗 {today === todayStr() ? '오늘' : fmtDate(today)} 밥 주기</div>
           <div style={{fontSize:12, color:'var(--text3)', marginTop:4}}>
             {fp.lastRound ? `지난 급여 ${fmtDate(fp.lastRound)} · ` : ''}{fp.interval}일 간격 · 다 주면 다음은 {fmtDate(nextAfter)}
           </div>
+          {/* 밥 준 날 — 자정 넘겨 체크했을 때 어제로 돌려놓을 수 있습니다 */}
+          <div style={{display:'flex', alignItems:'center', gap:8, marginTop:10}}>
+            <span style={{fontSize:12, color:'var(--text3)', whiteSpace:'nowrap'}}>밥 준 날</span>
+            <input className="input" type="date" style={{padding:'7px 9px', fontSize:13}}
+              max={todayStr()} value={today} onChange={e => setToday(e.target.value || todayStr())} />
+            {today !== todayStr() && (
+              <button className="btn btn-secondary btn-sm" style={{width:'auto', whiteSpace:'nowrap'}}
+                onClick={() => setToday(todayStr())}>오늘로</button>
+            )}
+          </div>
+          {today !== todayStr() && (
+            <div style={{fontSize:11.5, color:'var(--accent2)', marginTop:6}}>
+              {fmtDate(today)}에 준 것으로 기록됩니다
+            </div>
+          )}
           <div style={{display:'flex', gap:6, marginTop:10}}>
             {['슈푸', '충식'].map(t => (
               <button key={t} className="filter-chip" style={foodType === t ? CHIP_ON : CHIP_OFF}
