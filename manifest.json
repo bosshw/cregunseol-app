@@ -1,6 +1,6 @@
 {
   "name": "크레건설 브리딩비서",
-  "short_name": "브리딩비서",
+  "short_name": "크레건설",
   "description": "크레스티드 게코 브리더를 위한 기록·관리 비서",
   "start_url": "./index.html",
   "display": "standalone",

@@ -200,7 +200,29 @@
   </style>
 </head>
 <body>
-<div id="root"></div>
+<div id="root">
+  <!-- 앱이 그려지면 이 자리는 통째로 지워집니다.
+       못 그려지면(부품을 못 받아온 경우) 이 안내가 남아 하얀 화면을 막습니다. -->
+  <div id="boot" style="height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:28px;text-align:center;font-family:-apple-system,'Noto Sans KR',sans-serif;color:#6B5A4E">
+    <div style="font-size:46px">🦎</div>
+    <div id="boot-a" style="font-size:15px">불러오는 중이에요…</div>
+    <div id="boot-b" style="display:none;max-width:280px">
+      <div style="font-size:16px;font-weight:700;color:#8C2F39;margin-bottom:8px">인터넷 연결을 확인해 주세요</div>
+      <div style="font-size:13.5px;line-height:1.6">앱을 처음 열 때는 인터넷이 필요해요.<br/>한 번 열어두면 다음부터는 인터넷 없이도 열립니다.</div>
+      <button onclick="location.reload()" style="margin-top:16px;background:#6D2E46;color:#fff;border:none;border-radius:22px;padding:11px 26px;font-size:15px;font-weight:700;cursor:pointer">다시 시도</button>
+    </div>
+  </div>
+</div>
+<script>
+  // 6초 안에 화면이 안 그려지면 안내로 바꿔줍니다 (하얀 화면 방지)
+  setTimeout(function () {
+    var b = document.getElementById('boot');
+    if (!b || !document.body.contains(b)) return;
+    var a = document.getElementById('boot-a'), c = document.getElementById('boot-b');
+    if (a) a.style.display = 'none';
+    if (c) c.style.display = 'block';
+  }, 6000);
+</script>
 
 <script type="text/babel">
 const { useState, useEffect, useCallback, useRef } = React;
@@ -525,7 +547,7 @@ const SERVER = {
 
    인터넷이 없거나 파일을 못 받으면 아무 것도 막지 않습니다(앱은 그대로 씁니다).
    ══════════════════════════════════════════ */
-const APP_VERSION = '3.4';
+const APP_VERSION = '3.5';
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
