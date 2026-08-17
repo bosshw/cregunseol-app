@@ -1,0 +1,122 @@
+# 예약 배포 — GitHub가 정해진 시각에 알아서 올려줍니다.
+#
+# 쓰는 법
+#   1) 새 버전 파일을 staging 가지에 올립니다
+#   2) staging의 deploy.json 에 올릴 시각을 적습니다
+#        { "at": "2026-08-20 03:00", "note": "v3.8 급여 개선" }
+#   3) 그 시각이 지나면 GitHub가 staging 내용을 main으로 옮깁니다 (= 배포)
+#
+# 취소하려면 시각 전에 deploy.json 의 at 을 "" 로 비우면 됩니다.
+# 대표님 PC가 꺼져 있어도 됩니다.
+
+name: 예약 배포
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: '시각과 상관없이 지금 바로 배포'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: scheduled-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 저장소 받기
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: staging 가지가 있는지 확인
+        id: has
+        run: |
+          if git ls-remote --exit-code --heads origin staging >/dev/null 2>&1; then
+            echo "ok=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "staging 가지가 없습니다. 아무것도 하지 않습니다."
+            echo "ok=no" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 예약 시각 확인
+        id: check
+        if: steps.has.outputs.ok == 'yes'
+        run: |
+          git fetch origin staging
+          if ! git show origin/staging:deploy.json > /tmp/deploy.json 2>/dev/null; then
+            echo "deploy.json 이 없습니다."
+            echo "go=no" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          cat /tmp/deploy.json
+          AT=$(node -p "try{(require('/tmp/deploy.json').at||'').trim()}catch(e){''}")
+          NOTE=$(node -p "try{(require('/tmp/deploy.json').note||'').trim()}catch(e){''}")
+          echo "note=$NOTE" >> "$GITHUB_OUTPUT"
+
+          if [ "${{ inputs.force }}" = "true" ]; then
+            echo "손으로 지금 바로 배포합니다."
+            echo "go=yes" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ -z "$AT" ]; then
+            echo "예약된 시각이 없습니다."
+            echo "go=no" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+
+          TS=$(TZ=Asia/Seoul date -d "$AT" +%s 2>/dev/null || echo "")
+          if [ -z "$TS" ]; then
+            echo "::warning::시각을 못 읽었습니다: $AT"
+            echo "go=no" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          NOW=$(date +%s)
+          echo "예약 $AT (KST) / 지금 $(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M')"
+          if [ "$NOW" -ge "$TS" ]; then
+            echo "go=yes" >> "$GITHUB_OUTPUT"
+          else
+            LEFT=$(( (TS - NOW) / 60 ))
+            echo "아직 ${LEFT}분 남았습니다."
+            echo "go=no" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 바뀐 게 있는지 확인
+        id: diff
+        if: steps.check.outputs.go == 'yes'
+        run: |
+          if git diff --quiet origin/main origin/staging -- . ':(exclude)deploy.json'; then
+            echo "main과 staging이 같습니다. 올릴 게 없습니다."
+            echo "changed=no" >> "$GITHUB_OUTPUT"
+          else
+            git --no-pager diff --stat origin/main origin/staging -- . ':(exclude)deploy.json'
+            echo "changed=yes" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: main으로 올리기 (= 배포)
+        if: steps.check.outputs.go == 'yes' && steps.diff.outputs.changed == 'yes'
+        run: |
+          git config user.name  "crebot"
+          git config user.email "crebot@users.noreply.github.com"
+          git checkout -B main origin/main
+          git checkout origin/staging -- .
+          rm -f deploy.json
+          git add -A
+          git commit -m "예약 배포: ${{ steps.check.outputs.note }}" || echo "커밋할 내용 없음"
+          git push origin main
+          echo "배포했습니다."
+
+      - name: 예약 표시 지우기
+        if: steps.check.outputs.go == 'yes'
+        run: |
+          git config user.name  "crebot"
+          git config user.email "crebot@users.noreply.github.com"
+          git checkout -B staging origin/staging
+          node -e "const fs=require('fs');const j=JSON.parse(fs.readFileSync('deploy.json','utf8'));j.at='';j.done=new Date().toISOString();fs.writeFileSync('deploy.json',JSON.stringify(j,null,2)+'\n');"
+          git add deploy.json
+          git commit -m "예약 완료 표시" || echo "바뀐 내용 없음"
+          git push origin staging
