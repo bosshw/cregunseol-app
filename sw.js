@@ -1,4 +1,4 @@
-const CACHE = 'creg-v35';
+const CACHE = 'creg-v37';
 
 // 화면을 그리는 데 꼭 필요한 바깥 부품 — 이것도 폰에 저장해둬야 인터넷 없이 열립니다
 const LIBS = [
@@ -6,7 +6,7 @@ const LIBS = [
   'https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js',
 ];
-const ASSETS = ['./index.html', './manifest.json', './icon-192.png', './icon-512.png', ...LIBS];
+const ASSETS = ['./index.html', './manifest.json', './icon-192.png', './icon-512.png', './icon-180.png', ...LIBS];
 
 self.addEventListener('install', e => {
   // 하나가 실패해도 나머지는 저장되도록 한 개씩 담습니다 (addAll은 전부 아니면 전무)
@@ -43,4 +43,4 @@ self.addEventListener('fetch', e => {
     }))
   );
 });
-// v3.5 deploy 2026-08-17 (인터넷 없이도 열리게 · 홈 화면 이름 크레건설)
+// v3.7 deploy 2026-08-17 (아이폰 아이콘 · 말 알아듣기 확대 · 날짜 반영)

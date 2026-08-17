@@ -9,7 +9,8 @@
   <meta name="apple-mobile-web-app-title" content="크레건설">
   <link rel="manifest" href="manifest.json">
   <link rel="icon" type="image/png" href="./icon-192.png">
-  <link rel="apple-touch-icon" href="./icon-192.png">
+  <!-- 아이폰은 투명한 곳을 검정으로 칠하므로, 배경을 채운 전용 아이콘을 씁니다 -->
+  <link rel="apple-touch-icon" sizes="180x180" href="./icon-180.png">
   <title>크레건설 브리딩비서</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
@@ -547,7 +548,7 @@ const SERVER = {
 
    인터넷이 없거나 파일을 못 받으면 아무 것도 막지 않습니다(앱은 그대로 씁니다).
    ══════════════════════════════════════════ */
-const APP_VERSION = '3.5';
+const APP_VERSION = '3.7';
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -1397,47 +1398,60 @@ function parseKDate(text) {
 }
 
 // 문장에서 기록(팩트) 추출 — 한 문장에 여러 개 가능
+/* ── 같은 뜻을 사람마다 다르게 말합니다. 되도록 넓게 알아듣습니다 ── */
+const RE_LAY   = /산란|알\s*낳|알낳|낳았|낳음|낳으[셨시]|낳더|알\s*깠|알깠|알\s*확인|알\s*나왔|알\s*발견|알\s*받[았아]|클러치|알\s*\d+\s*개|\d+\s*개\s*낳/;
+const RE_HATCH = /해칭|헤칭|부화|태어났|태어난|태어나|깨어났|깨어남|깨났|껍질\s*(깨|뚫)|알에서\s*나|(알|새끼|베이비|애기|아기)\s*(에서\s*)?(나왔|나옴|나온)/;
+const RE_MATE  = /메이팅|교배|합사|짝짓기|붙였|붙여\s*놨|합방|짝\s*지어|올려\s*놨|올려놨/;
+const RE_SHED  = /탈피|허물|각질\s*벗|껍질\s*벗/;
+const RE_FEED  = /피딩|먹이|밥|먹였|먹었|먹임|먹여|급여|사료|줬어|줬음|줬고|줬다|주었|급식/;
+const RE_NOFEED = /안\s*먹|못\s*먹|먹지\s*않|거식|남겼|안먹|입질\s*없/;
+
 function extractFacts(text) {
   const facts = [];
+  // "어제", "8월 15일" 처럼 날짜를 말하면 그날 기록으로 잡습니다 (없으면 오늘)
+  const when = explicitDate(text);
+  const push = (type, data) => facts.push(when ? { type, data, date: when } : { type, data });
   let m;
 
   // 몸무게: "12그램", "12.5g"
   m = text.match(/(\d+(?:\.\d+)?)\s*(?:그램|그람|g\b|G\b)/);
-  if (m) facts.push({ type: 'growth', data: { weight: m[1] } });
+  if (m) push('growth', { weight: m[1] });
 
   // 메이팅
-  if (/메이팅|교배|합사/.test(text)) facts.push({ type: 'mating', data: {} });
+  if (RE_MATE.test(text)) push('mating', {});
 
-  // 산란: "산란", "알 2개"
-  if (/산란/.test(text) || /알\s*\d+\s*개/.test(text)) {
-    const c = text.match(/알?\s*(\d+)\s*개/);
-    facts.push({ type: 'laying', data: { eggCount: c ? c[1] : '' } });
+  // 산란
+  if (RE_LAY.test(text)) {
+    const c = text.match(/(\d+)\s*개/);
+    push('laying', { eggCount: c ? c[1] : '' });
   }
 
-  // 해칭/부화
-  if (/해칭|부화/.test(text)) {
+  // 해칭/부화 — 산란과 함께 잡히지 않게 (알 낳은 말이면 부화가 아닙니다)
+  if (RE_HATCH.test(text) && !/알\s*낳|알낳|산란/.test(text)) {
     const c = text.match(/(\d+)\s*마리/);
-    facts.push({ type: 'hatching', data: { count: c ? c[1] : '' } });
+    push('hatching', { count: c ? c[1] : '' });
   }
 
   // 분양: "분양 15만원", "150,000원에 분양" (상태 변경 표현은 제외)
-  if (/분양/.test(text) && !/분양\s*가능|분양\s*예정|분양\s*준비|분양\s*올|분양\s*(취소|내려|중단)/.test(text)) {
+  if (/분양|입양\s*보|보냈|판매/.test(text) && !/분양\s*가능|분양\s*예정|분양\s*준비|분양\s*올|분양\s*(취소|내려|중단)/.test(text)) {
     let price = '';
     const man = text.match(/(\d+(?:\.\d+)?)\s*만\s*원?/);
     const won = text.match(/(\d[\d,]*)\s*원/);
     if (man) price = String(Math.round(parseFloat(man[1]) * 10000));
     else if (won) price = won[1].replace(/,/g, '');
-    facts.push({ type: 'distribution', data: { price } });
+    push('distribution', { price });
   }
 
   // 탈피
-  if (/탈피/.test(text)) facts.push({ type: 'shed', data: {} });
+  if (RE_SHED.test(text)) push('shed', {});
 
-  // 먹이: 충식(귀뚜라미 계열)과 일반식(슈퍼푸드) 구분 (거식·안 먹음은 건강 메모로 분류)
-  const feedTrigger = /피딩|먹이|밥|먹었/.test(text) || CRICKET_RE.test(text) || SUPU_RE.test(text);
-  if (feedTrigger && !/안\s*먹|먹지\s*않|거식/.test(text)) {
+  // 먹이: 충식(귀뚜라미 계열)과 일반식(슈퍼푸드) 구분
+  const feedTrigger = RE_FEED.test(text) || CRICKET_RE.test(text) || SUPU_RE.test(text);
+  if (feedTrigger) {
     const foodType = CRICKET_RE.test(text) ? '충식' : SUPU_RE.test(text) ? '슈푸' : '';
-    facts.push({ type: 'feeding', data: { foodType, notes: text } });
+    // 안 먹었다는 말도 기록으로 남깁니다 — 며칠째 안 먹는지 세는 데 씁니다
+    if (RE_NOFEED.test(text)) push('feeding', { ate: false, foodType, notes: '안 먹음' });
+    else push('feeding', { foodType, notes: text });
   }
 
   return facts;
@@ -1482,7 +1496,9 @@ function explicitDate(text) {
 function detectProfileClaim(text) {
   const birthWord = /(부화일|해칭일|생일|출생일|태어난\s*날)/.test(text);
   const bornVerb = /태어(났|나)/.test(text);
-  if (birthWord || bornVerb) {
+  // "어제 3마리 태어났어"는 그 아이의 생일이 아니라 부화 기록입니다
+  const hasCount = /\d+\s*마리/.test(text);
+  if (birthWord || (bornVerb && !hasCount)) {
     const dv = explicitDate(text);
     if (dv) return { field: 'hatchDate', value: dv };
   }
@@ -4577,6 +4593,16 @@ function buildTodo(reminders, navigateTo) {
       sub: `${fp.inds.length}마리 중 ${fp.remaining.length}마리 남음` +
         (fp.lastRound ? ` · 지난 급여 ${fmtDate(fp.lastRound)}` : ' · 첫 급여 기록'),
       late: Math.max(0, -fp.dLeft),
+      action: { label: '밥 주기', go: () => navigateTo('feeding') },
+    });
+  } else if (!fp.doneToday.size && fp.inds.length) {
+    // 밥 주는 날이 아니어도 언제든 들어갈 수 있게 (지난 날짜로 적을 때 여기로 들어옵니다)
+    todo.push({
+      id: 'feed-open', emoji: '🦗', pinned: false,
+      title: '밥 주기 기록',
+      sub: (fp.lastRound ? `지난 급여 ${fmtDate(fp.lastRound)} · ` : '') +
+        (fp.dLeft > 0 ? `다음은 ${fp.dLeft}일 뒤` : '오늘 줘도 됩니다') + ' · 날짜 골라 적기',
+      late: -1,
       action: { label: '밥 주기', go: () => navigateTo('feeding') },
     });
   } else if (fp.doneToday.size && !fp.remaining.length) {
