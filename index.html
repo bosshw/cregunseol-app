@@ -579,7 +579,7 @@ const SERVER = {
 
    인터넷이 없거나 파일을 못 받으면 아무 것도 막지 않습니다(앱은 그대로 씁니다).
    ══════════════════════════════════════════ */
-const APP_VERSION = '3.9';
+const APP_VERSION = '4.0';
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -1001,7 +1001,7 @@ const STATUS = {
 /* 만든 사람 문의 링크.
    여기에 주소를 박아두면 앱을 쓰는 모든 분에게 똑같이 보입니다.
    비워두면 설정에서 각자 넣은 주소를 씁니다(대표님 기기에만 보임). */
-const CONTACT = { insta: '', blog: '', chat: '' };
+const CONTACT = { insta: 'https://www.instagram.com/cre_construct', blog: '', chat: '' };
 const CONTACT_FIELDS = [
   ['insta', '📸 인스타그램', 'https://instagram.com/...'],
   ['blog',  '📝 블로그',     'https://blog.naver.com/...'],
@@ -1127,6 +1127,20 @@ function ledgerRows(events, individuals) {
       rows.push({ id: 'S:' + e.id, date: e.date, flow: 'in', category: '분양', amount: won,
                   label: nm + ' 분양' + (free ? ' (무료)' : ''), auto: true,
                   indId: e.individualId, ref: e.id });
+    } else if (e.type === 'memo') {
+      /* 엑셀에서 가져온 "입양가 30만원" 메모 = 그 아이를 데려오는 데 쓴 돈.
+         날짜가 없어서(시트에 입양일이 없었음) '이전 기록'으로 따로 묶습니다 —
+         월별·연별 칸은 흔들지 않고, 전체 합계와 개체 손익에는 들어갑니다. */
+      const n0 = (e.data && e.data.notes) || '';
+      const mm = n0.match(/입양가\s*([\d.]+)\s*만\s*원/);
+      if (!mm) return;
+      const won2 = Math.round(parseFloat(mm[1]) * 10000);
+      if (!won2) return;
+      const nm2 = (byId[e.individualId] || {}).name || '개체';
+      const src = (n0.match(/입양처\s*:\s*([^·]+)/) || [])[1];
+      rows.push({ id: 'B:' + e.id, date: e.date, flow: 'out', category: '개체 구입', amount: won2,
+                  label: nm2 + ' 입양' + (src ? ' · ' + src.trim() : ''), auto: true, opening: true,
+                  indId: e.individualId, ref: e.id });
     } else if (e.type === 'ledger') {
       const d = e.data || {};
       rows.push({ id: e.id, date: e.date, flow: d.flow === 'in' ? 'in' : 'out',
@@ -1181,16 +1195,17 @@ function answerLedgerQuery(text) {
   if (!asks) return null;
   const rows = ledgerRows();
   if (!rows.length) return '아직 가계부에 적힌 게 없어요 💰\n"사료 3만원 샀어"처럼 말씀하시면 바로 담아둘게요.';
+  const live = rows.filter(r => !r.opening);   // 날짜가 없는 이전 기록(입양가)은 달·해 계산에서 뺍니다
   const now = todayStr();
   const thisMonth = monthKeyOf(now), thisYear = yearKeyOf(now);
   const d = new Date(now); d.setMonth(d.getMonth() - 1);
   const lastMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
   let label, sel;
   if (/전체|총|누적|지금까지|다\s*합|통틀어/.test(t)) { label = '전체 기간'; sel = rows; }
-  else if (/작년|지난해/.test(t)) { const y = String(Number(thisYear) - 1); label = `${y}년`; sel = rows.filter(r => yearKeyOf(r.date) === y); }
-  else if (/올해|금년|올\s*한\s*해/.test(t)) { label = `${thisYear}년`; sel = rows.filter(r => yearKeyOf(r.date) === thisYear); }
-  else if (/지난\s*달|저번\s*달|전달/.test(t)) { label = `${Number(lastMonth.slice(5))}월`; sel = rows.filter(r => monthKeyOf(r.date) === lastMonth); }
-  else { label = `${Number(thisMonth.slice(5))}월`; sel = rows.filter(r => monthKeyOf(r.date) === thisMonth); }
+  else if (/작년|지난해/.test(t)) { const y = String(Number(thisYear) - 1); label = `${y}년`; sel = live.filter(r => yearKeyOf(r.date) === y); }
+  else if (/올해|금년|올\s*한\s*해/.test(t)) { label = `${thisYear}년`; sel = live.filter(r => yearKeyOf(r.date) === thisYear); }
+  else if (/지난\s*달|저번\s*달|전달/.test(t)) { label = `${Number(lastMonth.slice(5))}월`; sel = live.filter(r => monthKeyOf(r.date) === lastMonth); }
+  else { label = `${Number(thisMonth.slice(5))}월`; sel = live.filter(r => monthKeyOf(r.date) === thisMonth); }
   const g = ledgerSum(sel);
   if (!g.count) return `${label}에는 오간 돈이 없어요 💰`;
   const only = /지출|썼|쓴\s*돈|나갔/.test(t) && !/수입|벌|순익|수익/.test(t) ? 'out'
@@ -1214,11 +1229,11 @@ function ledgerSum(rows) {
   rows.forEach(r => { if (r.flow === 'in') income += r.amount; else expense += r.amount; });
   return { income, expense, net: income - expense, count: rows.length };
 }
-/* 이 아이에게 들어간 돈(개체 구입비 등) — 가계부에서 개체를 지정한 지출만 셉니다 */
+/* 이 아이에게 들어간 돈 — 엑셀에서 가져온 입양가 + 가계부에서 개체를 지정한 지출.
+   판정을 한 곳(ledgerRows)에서만 하도록 그 결과를 그대로 씁니다. */
 function costOfIndividual(id, events) {
-  return (events || DB.getEvents())
-    .filter(e => e.type === 'ledger' && e.data && e.data.flow === 'out' && e.data.indId === id)
-    .reduce((a, e) => a + Number(e.data.amount || 0), 0);
+  return ledgerRows(events).filter(r => r.flow === 'out' && r.indId === id)
+    .reduce((a, r) => a + r.amount, 0);
 }
 /* 개체 손익 = 분양가 − 그 아이에게 쓴 돈. 분양 전이면 아직 계산하지 않습니다 */
 function profitOfIndividual(ind, events) {
@@ -3383,14 +3398,19 @@ function MoneySection({ individuals, navigate, showToast, refreshIndividuals }) 
   const [mk, setMk] = useState(() => monthKeyOf(todayStr()));
   const [form, setForm] = useState(null);            // {flow, category, amount, unit, date, notes, indId}
   const [confirmDel, setConfirmDel] = useState(null);
+  const [openShow, setOpenShow] = useState(false);     // 이전 기록 펼치기
   const refresh = () => { setVer(v => v + 1); refreshIndividuals && refreshIndividuals(); };
   const evs = DB.getEvents();
   const rows = ledgerRows(evs, individuals);
-  const monthRows = rows.filter(r => monthKeyOf(r.date) === mk);
-  const yearRows = rows.filter(r => yearKeyOf(r.date) === mk.slice(0, 4));
-  const m = ledgerSum(monthRows), y = ledgerSum(yearRows), all = ledgerSum(rows);
-  const firstDate = rows.length ? rows[rows.length - 1].date : '';
-  const lastDate = rows.length ? rows[0].date : '';
+  /* 엑셀에서 가져온 입양가는 날짜가 없어서 '이전 기록'으로 따로 둡니다.
+     달·해 칸은 이걸 빼고 계산하고, 전체 합계에는 넣습니다. */
+  const openRows = rows.filter(r => r.opening);
+  const liveRows = rows.filter(r => !r.opening);
+  const monthRows = liveRows.filter(r => monthKeyOf(r.date) === mk);
+  const yearRows = liveRows.filter(r => yearKeyOf(r.date) === mk.slice(0, 4));
+  const m = ledgerSum(monthRows), y = ledgerSum(yearRows), all = ledgerSum(rows), op = ledgerSum(openRows);
+  const firstDate = liveRows.length ? liveRows[liveRows.length - 1].date : '';
+  const lastDate = liveRows.length ? liveRows[0].date : '';
   const byId = {}; individuals.forEach(i => { byId[i.id] = i; });
   const shiftMonth = (k) => {
     const [yy, mm] = mk.split('-').map(Number);
@@ -3559,7 +3579,8 @@ function MoneySection({ individuals, navigate, showToast, refreshIndividuals }) 
       <div className="card" style={{margin:'14px 0 0', background:'var(--accent-soft)', border:'1px solid var(--accent-edge)'}}>
         <div style={{fontSize:12.5, fontWeight:800, color:'var(--accent2)', marginBottom:2}}>📊 전체 합계</div>
         <div style={{fontSize:11, color:'var(--text3)', marginBottom:10}}>
-          {rows.length ? `${fmtDate(firstDate)} ~ ${fmtDate(lastDate)} · 기록 ${all.count}건` : '아직 기록이 없어요'}
+          {rows.length ? `기록 ${all.count}건${firstDate ? ` · ${fmtDate(firstDate)} ~ ${fmtDate(lastDate)}` : ''}` : '아직 기록이 없어요'}
+          {op.count > 0 && ` · 이전 기록 ${op.count}건 포함`}
         </div>
         <div className="confirm-row">
           <span className="confirm-key">총 수입</span>
@@ -3575,12 +3596,38 @@ function MoneySection({ individuals, navigate, showToast, refreshIndividuals }) 
             {all.net >= 0 ? '+' : ''}{all.net.toLocaleString()}원
           </span>
         </div>
+
+        {/* 엑셀에서 가져온 입양가 — 날짜가 없어 달·해 칸에는 안 넣고 여기에 모아둡니다 */}
+        {op.count > 0 && (
+          <div style={{marginTop:10, paddingTop:10, borderTop:'1px solid var(--accent-edge)'}}>
+            <button onClick={() => setOpenShow(v => !v)}
+              style={{background:'none', border:'none', padding:0, cursor:'pointer', fontSize:11.5,
+                      color:'var(--accent2)', fontWeight:700, textAlign:'left', width:'100%'}}>
+              📦 이전 기록 · 입양가 {op.count}건 {op.expense.toLocaleString()}원 {openShow ? '▲' : '▼'}
+            </button>
+            <div style={{fontSize:11, color:'var(--text3)', marginTop:5, lineHeight:1.5}}>
+              엑셀에서 가져온 아이들의 입양가예요. 산 날짜가 없어서 달·해 칸에는 넣지 않고 여기서만 셉니다.
+            </div>
+            {openShow && (
+              <div style={{marginTop:8}}>
+                {openRows.map(r => (
+                  <div key={r.id} style={{display:'flex', alignItems:'center', gap:8, padding:'6px 0',
+                                          borderTop:'1px solid var(--border)', fontSize:12}}>
+                    <span style={{flex:1, minWidth:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{r.label}</span>
+                    <span style={{color:'var(--danger)', fontWeight:700, flexShrink:0}}>−{r.amount.toLocaleString()}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div style={{fontSize:11, color:'var(--text3)', lineHeight:1.6, margin:'12px 2px 0'}}>
         · 분양 수입은 <b>분양가를 적는 순간</b> 여기에 저절로 올라옵니다. 따로 또 적지 않으셔도 됩니다.<br />
         · 개체 구입비를 그 아이에게 연결해 두면, 프로필에서 <b>그 아이의 손익</b>이 보입니다.<br />
-        · 대화로 "사료 3만원 샀어"처럼 말씀하셔도 여기에 들어옵니다.
+        · 대화로 "사료 3만원 샀어"처럼 말씀하셔도 여기에 들어옵니다.<br />
+        · 메모에 <b>입양가 30만원</b>처럼 적힌 아이는 <b>개체 구입 지출</b>로 저절로 잡힙니다.
       </div>
       <div style={{height:16}} />
     </div>
