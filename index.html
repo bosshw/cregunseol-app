@@ -283,6 +283,12 @@ const DB = {
     const list = this.getEvents();
     list.push({ ...ev, id: uuid(), createdAt: now() });
     this.saveEvents(list);
+    /* 첫 사진은 자동으로 얼굴(대표사진)로 잡아 둡니다.
+       이미 얼굴이 있는 아이는 사진을 더 올려도 바뀌지 않습니다 — 바꾸려면 사진을 눌러 지정. */
+    if (ev.type === 'photo' && ev.data && ev.data.photo && ev.individualId) {
+      const me = this.getIndividuals().find(i => i.id === ev.individualId);
+      if (me && !me.avatar) this.updateIndividual(ev.individualId, { avatar: ev.data.photo });
+    }
   },
   getEventsFor(individualId) {
     return this.getEvents().filter(e => e.individualId === individualId);
@@ -573,7 +579,7 @@ const SERVER = {
 
    인터넷이 없거나 파일을 못 받으면 아무 것도 막지 않습니다(앱은 그대로 씁니다).
    ══════════════════════════════════════════ */
-const APP_VERSION = '3.8';
+const APP_VERSION = '3.9';
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -992,6 +998,25 @@ const STATUS = {
   sold:      { label: '🤝 분양완료', color: '#8A64A8' },
 };
 
+/* 만든 사람 문의 링크.
+   여기에 주소를 박아두면 앱을 쓰는 모든 분에게 똑같이 보입니다.
+   비워두면 설정에서 각자 넣은 주소를 씁니다(대표님 기기에만 보임). */
+const CONTACT = { insta: '', blog: '', chat: '' };
+const CONTACT_FIELDS = [
+  ['insta', '📸 인스타그램', 'https://instagram.com/...'],
+  ['blog',  '📝 블로그',     'https://blog.naver.com/...'],
+  ['chat',  '💬 오픈채팅',   'https://open.kakao.com/...'],
+];
+/* 실제로 보여줄 주소 — 코드에 박힌 것이 먼저, 없으면 설정에 적어둔 것 */
+function contactLinks(settings) {
+  const mine = (settings || {}).contact || {};
+  return CONTACT_FIELDS.map(([k, label]) => {
+    let url = (CONTACT[k] || mine[k] || '').trim();
+    if (url && !/^https?:\/\//i.test(url)) url = 'https://' + url;
+    return { key: k, label, url };
+  }).filter(x => x.url);
+}
+
 /* 하루에 하나면 충분한 기록 — 같은 날 두 번 적으면 덮어씁니다 */
 const ONE_PER_DAY = ['feeding', 'shed'];
 
@@ -1111,6 +1136,76 @@ function ledgerRows(events, individuals) {
   });
   rows.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
   return rows;
+}
+
+/* ══ 대화로 가계부 적기·물어보기 ══
+   돈 이야기는 개체가 아니라 가계부로 갑니다.
+   ⚠️ 분양 이야기는 여기서 잡지 않습니다 — 분양가를 적으면 수입이 자동으로 생기므로 두 번 적히면 안 됩니다. */
+const LEDGER_OUT = /샀|구입|구매|주문|결제|지출|썼어|썼다|썼고|쓴\s*돈|냈어|냈다|납부|지불|들었어|나갔어|데려왔|들여왔|영입|입양했/;
+const LEDGER_IN  = /팔았|팔림|판매|입금|받았어|벌었|수입\s*(생겼|났|들어)|들어왔어/;
+const LEDGER_CAT = [
+  [/사료|먹이|판게아|레파시|슈퍼푸드|슈푸|슬러리|CGD|귀뚜라미|귀뚤|밀웜|슈퍼웜|두비아|레드런|충식/i, '사료·먹이'],
+  [/개체|입양|분양\s*받|데려왔|영입|들여왔/, '개체 구입'],
+  [/전기|난방|히터|온조기|보온|전기세|전기요금|관리비/, '전기·난방'],
+  [/택배|포장|배송|운송|퀵|박스|아이스팩|핫팩/, '택배·포장'],
+  [/병원|진료|수의사|약값|치료/, '병원'],
+  [/용품|사육장|케이지|렉|바닥재|은신처|핀셋|먹이컵|온습도계|분무기|화분|유목/, '용품'],
+];
+function extractLedger(text) {
+  const t = String(text || '');
+  if (/분양/.test(t) && !/분양\s*받|분양\s*샵|분양가/.test(t)) return null;   // 분양 수입은 자동 생성
+  const isOut = LEDGER_OUT.test(t), isIn = LEDGER_IN.test(t);
+  if (!isOut && !isIn) return null;
+  // 금액 — "3만원" / "30000원" / "3만"
+  let won = 0;
+  let m = t.match(/(\d+(?:\.\d+)?)\s*만\s*원?/);
+  if (m) won = Math.round(parseFloat(m[1]) * 10000);
+  else if ((m = t.match(/(\d[\d,]*)\s*원/))) won = parseInt(m[1].replace(/,/g, ''), 10);
+  if (!won || !isFinite(won)) return null;
+  const flow = isOut && !isIn ? 'out' : isIn && !isOut ? 'in' : 'out';
+  let category = flow === 'in' ? '기타' : '기타';
+  if (flow === 'out') {
+    const hit = LEDGER_CAT.find(([re]) => re.test(t));
+    if (hit) category = hit[1];
+  } else if (/용품|물건|중고/.test(t)) category = '용품 판매';
+  const notes = t.replace(/\s+/g, ' ').trim().slice(0, 40);
+  return { date: explicitDate(t) || todayStr(), data: { flow, category, amount: won, notes, indId: null } };
+}
+
+/* "이번 달 얼마 썼어?" 같은 물음에 답합니다 */
+function answerLedgerQuery(text) {
+  const t = String(text || '');
+  const money = /얼마|수입|지출|순익|수익|가계부|벌었|썼|쓴\s*돈|남았/.test(t);
+  if (!money) return null;
+  const asks = /얼마|알려\s*줘|보여\s*줘|알려줄래|보여줄래|되지|돼|\?|？/.test(t) || /가계부/.test(t);
+  if (!asks) return null;
+  const rows = ledgerRows();
+  if (!rows.length) return '아직 가계부에 적힌 게 없어요 💰\n"사료 3만원 샀어"처럼 말씀하시면 바로 담아둘게요.';
+  const now = todayStr();
+  const thisMonth = monthKeyOf(now), thisYear = yearKeyOf(now);
+  const d = new Date(now); d.setMonth(d.getMonth() - 1);
+  const lastMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  let label, sel;
+  if (/전체|총|누적|지금까지|다\s*합|통틀어/.test(t)) { label = '전체 기간'; sel = rows; }
+  else if (/작년|지난해/.test(t)) { const y = String(Number(thisYear) - 1); label = `${y}년`; sel = rows.filter(r => yearKeyOf(r.date) === y); }
+  else if (/올해|금년|올\s*한\s*해/.test(t)) { label = `${thisYear}년`; sel = rows.filter(r => yearKeyOf(r.date) === thisYear); }
+  else if (/지난\s*달|저번\s*달|전달/.test(t)) { label = `${Number(lastMonth.slice(5))}월`; sel = rows.filter(r => monthKeyOf(r.date) === lastMonth); }
+  else { label = `${Number(thisMonth.slice(5))}월`; sel = rows.filter(r => monthKeyOf(r.date) === thisMonth); }
+  const g = ledgerSum(sel);
+  if (!g.count) return `${label}에는 오간 돈이 없어요 💰`;
+  const only = /지출|썼|쓴\s*돈|나갔/.test(t) && !/수입|벌|순익|수익/.test(t) ? 'out'
+             : /수입|벌|들어왔/.test(t) && !/지출|썼|쓴\s*돈/.test(t) ? 'in'
+             : /순익|수익|남았|남은/.test(t) ? 'net' : 'all';
+  if (only === 'out') {
+    const top = {};
+    sel.filter(r => r.flow === 'out').forEach(r => { top[r.category] = (top[r.category] || 0) + r.amount; });
+    const list = Object.entries(top).sort((a, b) => b[1] - a[1]).slice(0, 3)
+      .map(([k, v]) => `${k} ${v.toLocaleString()}`).join(' · ');
+    return `${label} 지출은 ${g.expense.toLocaleString()}원이에요 💸${list ? `\n${list}` : ''}`;
+  }
+  if (only === 'in') return `${label} 수입은 ${g.income.toLocaleString()}원이에요 💰`;
+  if (only === 'net') return `${label} 순익은 ${g.net >= 0 ? '+' : ''}${g.net.toLocaleString()}원이에요${g.net >= 0 ? ' 🙂' : ' 😥'}\n수입 ${g.income.toLocaleString()} · 지출 ${g.expense.toLocaleString()}`;
+  return `${label} 가계부예요 💰\n· 수입 ${g.income.toLocaleString()}원\n· 지출 ${g.expense.toLocaleString()}원\n· 남은 것 ${g.net >= 0 ? '+' : ''}${g.net.toLocaleString()}원`;
 }
 const monthKeyOf = iso => String(iso || '').slice(0, 7);
 const yearKeyOf = iso => String(iso || '').slice(0, 4);
@@ -1434,7 +1529,9 @@ function feedPlan(individuals, events) {
 
 /* 크레건설 출생(CG) 판정 — 우리 기록으로 부모를 아는 아이는 우리 집에서 나온 아이입니다.
    직접 등록한 아이는 프로필에서 손으로 켜고 끌 수 있습니다. */
-const isCG = (i) => !!i && !i.cgOff && (i.isFromCreGunseol === true || !!(i.sireId || i.damId));
+/* 우리 집에서 나온 아이 표시 — 화면에는 MY 로 나옵니다.
+   (저장 필드 이름 isFromCreGunseol/cgOff 는 기존 데이터 호환 때문에 그대로 둡니다) */
+const isMine = (i) => !!i && !i.cgOff && (i.isFromCreGunseol === true || !!(i.sireId || i.damId));
 
 // 필터 칩 색
 const CHIP_ON  = { background: 'var(--accent)', color: 'var(--on-accent)', border: '1px solid var(--accent)' };
@@ -1482,12 +1579,13 @@ const mainKeyOf = ev => (MAIN_FIELD[ev.type] || [null])[0];
 const mainLabelOf = ev => (MAIN_FIELD[ev.type] || [null, ''])[1];
 const mainValOf = ev => { const k = mainKeyOf(ev); return k ? (ev.data && ev.data[k]) || '' : ''; };
 
-// 대표사진: 지정된 avatar → 없으면 최근 사진
+// 대표사진: 지정된 avatar → 없으면 "첫 사진"
+// (예전엔 최근 사진이라 새 사진을 올릴 때마다 얼굴이 바뀌었습니다)
 function avatarSrc(gecko) {
   if (gecko.avatar) return gecko.avatar;
   const p = DB.getEventsFor(gecko.id)
     .filter(e => e.type === 'photo' && e.data && e.data.photo)
-    .sort((a, b) => (b.date + (b.createdAt || '')) > (a.date + (a.createdAt || '')) ? 1 : -1)[0];
+    .sort((a, b) => (a.date + (a.createdAt || '')) < (b.date + (b.createdAt || '')) ? -1 : 1)[0];
   return p ? p.data.photo : null;
 }
 
@@ -1893,6 +1991,10 @@ function guessNewName(text, individuals) {
 
 // 담긴 기록 한 줄 요약
 function factLabel(f) {
+  if (f.type === 'ledger') {
+    const d0 = f.data || {};
+    return `${d0.flow === 'in' ? '💰 수입' : '💸 지출'} · ${d0.category || '기타'}${d0.amount ? ' ' + wonText(d0.amount) : ''}`;
+  }
   const t = EVENT_TYPES.find(e => e.key === f.type) || {};
   let d = '';
   switch (f.type) {
@@ -2294,7 +2396,6 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
     total: activeInds.length,
     fav: activeInds.filter(i => i.favorite).length,
     keep: activeInds.filter(i => i.keep).length,
-    fromCG: activeInds.filter(isCG).length,
     sold: individuals.filter(i => (i.status || 'own') === 'sold').length,
   };
   const bySearch = list => list.filter(i =>
@@ -2322,7 +2423,6 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
             </div>
             {/* 설정은 v3.8부터 여기(예전 CG 배지 자리)로 올라왔습니다. 그 자리의 탭은 가계부가 씁니다 */}
             <div style={{display:'flex', alignItems:'center', gap:7, flexShrink:0}}>
-              {stats.fromCG > 0 && <span className="badge badge-gold" style={{fontSize:10.5}}>CG {stats.fromCG}</span>}
               <button onClick={() => navigate('settings')} aria-label="설정"
                 style={{background:'var(--bg3)', border:'1px solid var(--border)', borderRadius:10, padding:'6px 7px',
                         cursor:'pointer', display:'flex', alignItems:'center', color:'var(--text2)'}}>
@@ -3288,7 +3388,9 @@ function MoneySection({ individuals, navigate, showToast, refreshIndividuals }) 
   const rows = ledgerRows(evs, individuals);
   const monthRows = rows.filter(r => monthKeyOf(r.date) === mk);
   const yearRows = rows.filter(r => yearKeyOf(r.date) === mk.slice(0, 4));
-  const m = ledgerSum(monthRows), y = ledgerSum(yearRows);
+  const m = ledgerSum(monthRows), y = ledgerSum(yearRows), all = ledgerSum(rows);
+  const firstDate = rows.length ? rows[rows.length - 1].date : '';
+  const lastDate = rows.length ? rows[0].date : '';
   const byId = {}; individuals.forEach(i => { byId[i.id] = i; });
   const shiftMonth = (k) => {
     const [yy, mm] = mk.split('-').map(Number);
@@ -3453,9 +3555,32 @@ function MoneySection({ individuals, navigate, showToast, refreshIndividuals }) 
         );
       })}
 
+      {/* ── 전체 기간 합계 — 한눈에 얼마 벌고 얼마 썼는지 ── */}
+      <div className="card" style={{margin:'14px 0 0', background:'var(--accent-soft)', border:'1px solid var(--accent-edge)'}}>
+        <div style={{fontSize:12.5, fontWeight:800, color:'var(--accent2)', marginBottom:2}}>📊 전체 합계</div>
+        <div style={{fontSize:11, color:'var(--text3)', marginBottom:10}}>
+          {rows.length ? `${fmtDate(firstDate)} ~ ${fmtDate(lastDate)} · 기록 ${all.count}건` : '아직 기록이 없어요'}
+        </div>
+        <div className="confirm-row">
+          <span className="confirm-key">총 수입</span>
+          <span className="confirm-val" style={{color:'#2E7D46', fontWeight:800}}>{all.income.toLocaleString()}원</span>
+        </div>
+        <div className="confirm-row">
+          <span className="confirm-key">총 지출</span>
+          <span className="confirm-val" style={{color:'var(--danger)', fontWeight:800}}>{all.expense.toLocaleString()}원</span>
+        </div>
+        <div className="confirm-row">
+          <span className="confirm-key" style={{fontWeight:800}}>순익</span>
+          <span className="confirm-val" style={{fontSize:16, fontWeight:800, color: all.net >= 0 ? 'var(--accent2)' : 'var(--danger)'}}>
+            {all.net >= 0 ? '+' : ''}{all.net.toLocaleString()}원
+          </span>
+        </div>
+      </div>
+
       <div style={{fontSize:11, color:'var(--text3)', lineHeight:1.6, margin:'12px 2px 0'}}>
         · 분양 수입은 <b>분양가를 적는 순간</b> 여기에 저절로 올라옵니다. 따로 또 적지 않으셔도 됩니다.<br />
-        · 개체 구입비를 그 아이에게 연결해 두면, 프로필에서 <b>그 아이의 손익</b>이 보입니다.
+        · 개체 구입비를 그 아이에게 연결해 두면, 프로필에서 <b>그 아이의 손익</b>이 보입니다.<br />
+        · 대화로 "사료 3만원 샀어"처럼 말씀하셔도 여기에 들어옵니다.
       </div>
       <div style={{height:16}} />
     </div>
@@ -3515,7 +3640,7 @@ function GeckoCard({ gecko, onClick, onToggleFav }) {
         <div style={{display:'flex', alignItems:'center', gap:6, flexWrap:'wrap'}}>
           <div className="gecko-name">{gecko.name} <GenderTag g={gecko.gender} size={14} /></div>
           {gecko.keep && <span className="badge badge-keep" style={{fontSize:10}}>KEEP</span>}
-          {isCG(gecko) && <span className="badge badge-gold" style={{fontSize:10}}>CG</span>}
+          {isMine(gecko) && <span className="badge badge-gold" style={{fontSize:10}}>MY</span>}
           {gecko.isExternal && <span className="badge badge-blue" style={{fontSize:10}}>외부</span>}
           {stKey !== 'own' && (
             <span className="badge" style={{fontSize:10, background:'var(--bg3)', color:st.color, border:'1px solid var(--border)'}}>{st.label}</span>
@@ -3868,6 +3993,19 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       return;
     }
 
+    // 2.95) 가계부 — 돈 이야기는 개체가 아니라 가계부로 보냅니다
+    const lq = answerLedgerQuery(text);
+    if (lq) { bot(lq); return; }
+    const led = extractLedger(text);
+    if (led) {
+      updatePending(p => [...p, { type: 'ledger', data: led.data, date: led.date, targetId: null, targetName: '💰 가계부' }]);
+      bot(`${led.data.flow === 'out' ? '💸 지출' : '💰 수입'} · ${led.data.category} ${wonText(led.data.amount)} 담아뒀어요.\n`
+        + `가계부 탭에서 항목·개체 연결은 나중에 고칠 수 있어요.\n\n계속 말씀하셔도 되고, 끝나면 저장을 눌러주세요.`, [
+        { label: '💾 이제 저장할래', kind: 'save' },
+      ]);
+      return;
+    }
+
     // 3) 해석
     const inds = DB.getIndividuals();
     const names = findNamesInText(text, inds);
@@ -4191,6 +4329,11 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     let reminderMsg = '';
     let babyMsg = '';
     list.forEach(f => {
+      // 가계부는 개체가 없는 기록입니다 (individualId 를 비워 개체 타임라인에 안 섞이게)
+      if (f.type === 'ledger') {
+        DB.addEvent({ individualId: null, type: 'ledger', date: f.date || todayStr(), data: f.data || {} });
+        return;
+      }
       if (f.type === 'laying' && !f.data.sireId) {
         const mate = DB.getEventsFor(f.targetId)
           .filter(e => e.type === 'mating' && e.date <= (f.date || todayStr()) && e.data && e.data.partnerId)
@@ -4387,8 +4530,8 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
                       <span className="confirm-key">{factLabel(f)}</span>
                       <span className="confirm-val">
                         {fmtDate(f.date)}
-                        <button title="주인 바꾸기" onClick={() => setRetarget(retarget === f ? null : f)}
-                          style={{background:'none', border:'none', color: retarget === f ? 'var(--accent2)' : 'var(--text3)', cursor:'pointer', fontSize:14}}>🦎</button>
+                        {f.targetId && <button title="주인 바꾸기" onClick={() => setRetarget(retarget === f ? null : f)}
+                          style={{background:'none', border:'none', color: retarget === f ? 'var(--accent2)' : 'var(--text3)', cursor:'pointer', fontSize:14}}>🦎</button>}
                         <button onClick={() => removePending(f)} style={{background:'none', border:'none', color:'var(--text3)', cursor:'pointer', fontSize:15}}>✕</button>
                       </span>
                     </div>
@@ -4589,17 +4732,17 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
                   }}>KEEP</button>
                 {/* 우리 집에서 나온 아이 표시 — 눌러서 켜고 끕니다 */}
                 <button className="badge badge-gold"
-                  style={{cursor:'pointer', opacity: isCG(gecko) ? 1 : .4,
-                          filter: isCG(gecko) ? 'none' : 'grayscale(1)'}}
+                  style={{cursor:'pointer', opacity: isMine(gecko) ? 1 : .4,
+                          filter: isMine(gecko) ? 'none' : 'grayscale(1)'}}
                   onClick={() => {
-                    const on = isCG(gecko);
+                    const on = isMine(gecko);
                     DB.updateIndividual(gecko.id, on
                       ? { cgOff: true, isFromCreGunseol: false }
                       : { cgOff: false, isFromCreGunseol: true });
                     refreshLocal(); refreshIndividuals && refreshIndividuals();
-                    showToast(on ? '크레건설 표시를 뗐어요' : '🏷️ 크레건설 출생으로 표시했어요');
+                    showToast(on ? 'MY 표시를 뗐어요' : '🏷️ MY로 표시했어요 (우리 집에서 나온 아이)');
                   }}>
-                  {isCG(gecko) ? '크레건설' : '크레건설 아님'}
+                  {isMine(gecko) ? 'MY' : 'MY 아님'}
                 </button>
               </div>
               <div style={{fontSize:13, color:'var(--text3)', marginTop:4}}>
@@ -5266,6 +5409,7 @@ function buildTodo(reminders, navigateTo) {
    ══════════════════════════════════════════ */
 function FeedingScreen({ navigate, showToast, refreshIndividuals }) {
   const [ver, setVer] = useState(0);
+  const [search, setSearch] = useState('');            // 53마리 중 한 마리 찾기
   const [foodType, setFoodType] = useState(() => (DB.getSettings() || {}).lastFoodType || '슈푸');
   const bump = () => { setVer(v => v + 1); refreshIndividuals && refreshIndividuals(); };
   const fp = feedPlan();
@@ -5300,6 +5444,9 @@ function FeedingScreen({ navigate, showToast, refreshIndividuals }) {
   };
 
   const doneCnt = fp.inds.filter(i => todayBy[i.id]).length;
+  const q = search.trim().toLowerCase();
+  const shown = q ? fp.inds.filter(i =>
+    (i.name || '').toLowerCase().includes(q) || (i.morph || '').toLowerCase().includes(q)) : fp.inds;
   const nextAfter = localISO(new Date(new Date(today).getTime() + fp.interval * 86400000));
   const kindOf = (ind) => {
     const e = todayBy[ind.id];
@@ -5348,11 +5495,30 @@ function FeedingScreen({ navigate, showToast, refreshIndividuals }) {
           <button className="btn btn-primary btn-sm" style={{marginTop:10}} onClick={allAte}>
             남은 {fp.inds.length - doneCnt}마리 전부 "먹었어요"로
           </button>
+          {/* 한 마리만 따로 챙길 때 (예: 크한이는 충식) 찾기 쉽도록 */}
+          <input className="input" style={{marginTop:10, padding:'9px 11px', fontSize:13}}
+            placeholder="🔍 이름 또는 모프로 찾기" value={search}
+            onChange={e => setSearch(e.target.value)} />
+          {search && (
+            <div style={{fontSize:11.5, color:'var(--text3)', marginTop:6, display:'flex', alignItems:'center', gap:8}}>
+              <span>"{search}" · {shown.length}마리</span>
+              <button onClick={() => setSearch('')}
+                style={{background:'none', border:'none', padding:0, cursor:'pointer', fontSize:11.5, color:'var(--accent2)', fontWeight:700}}>
+                전체 보기
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
       <div style={{padding:'0 16px 20px'}}>
-        {fp.inds.map(i => {
+        {search && shown.length === 0 && (
+          <div className="empty" style={{padding:'34px 20px'}}>
+            <div className="empty-icon" style={{fontSize:36}}>🔍</div>
+            <p>찾는 아이가 없어요.</p>
+          </div>
+        )}
+        {shown.map(i => {
           const k = kindOf(i);
           const since = fp.ateBy[i.id] ? Math.floor((new Date(today) - new Date(fp.ateBy[i.id])) / 86400000) : null;
           const warn = since !== null && since >= feedWarn();
@@ -5949,6 +6115,7 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
     applyTheme(key);
     showToast(`🎨 ${themeOf(key).label} 테마 적용`);
   };
+  const [linkEdit, setLinkEdit] = useState(false);     // 문의 링크 넣기 열림 여부
   const importRef = useRef(null);
   const [importData, setImportData] = useState(null);
   const onImportPick = (e) => {
@@ -6145,6 +6312,44 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
         <div className="card" style={{margin:0}}>
           <div style={{fontSize:13, fontWeight:700, marginBottom:6, color:'var(--accent2)'}}>Powered by 크레건설</div>
           <div style={{fontSize:12, color:'var(--text3)'}}>크레스티드 게코 전문 브리더</div>
+
+          {/* 문의 창구 — 눌러서 바로 이동합니다 */}
+          {contactLinks(settings).length > 0 && (
+            <div style={{display:'flex', flexDirection:'column', gap:6, marginTop:12}}>
+              {contactLinks(settings).map(l => (
+                <a key={l.key} href={l.url} target="_blank" rel="noopener noreferrer"
+                  className="btn btn-secondary btn-sm"
+                  style={{display:'flex', alignItems:'center', justifyContent:'center', textDecoration:'none'}}>
+                  {l.label}
+                </a>
+              ))}
+            </div>
+          )}
+
+          <button className="btn btn-secondary btn-sm" style={{marginTop:10}}
+            onClick={() => setLinkEdit(v => !v)}>
+            {linkEdit ? '닫기' : '🔗 문의 링크 넣기'}
+          </button>
+
+          {linkEdit && (
+            <div style={{marginTop:10}}>
+              <div style={{fontSize:11, color:'var(--text3)', lineHeight:1.6, marginBottom:8}}>
+                주소를 넣어두면 위에 버튼으로 뜹니다. 비워두면 그 줄은 안 보입니다.
+              </div>
+              {CONTACT_FIELDS.map(([k, label, ph]) => (
+                <div key={k} style={{marginBottom:8}}>
+                  <div style={{fontSize:11, color:'var(--text3)', marginBottom:4}}>{label}</div>
+                  <input className="input" style={{padding:'9px 11px', fontSize:12.5}} placeholder={ph}
+                    value={(settings.contact || {})[k] || ''}
+                    onChange={e => {
+                      const next = { ...settings, contact: { ...(settings.contact || {}), [k]: e.target.value } };
+                      DB.saveSettings(next); setSettings(next);
+                    }} />
+                </div>
+              ))}
+              <div style={{fontSize:11, color:'var(--text3)'}}>적는 즉시 저장됩니다.</div>
+            </div>
+          )}
         </div>
       </div>
     </div>
