@@ -1,4 +1,4 @@
-const CACHE = 'creg-v37';
+const CACHE = 'creg-v38';
 
 // 화면을 그리는 데 꼭 필요한 바깥 부품 — 이것도 폰에 저장해둬야 인터넷 없이 열립니다
 const LIBS = [
@@ -43,4 +43,4 @@ self.addEventListener('fetch', e => {
     }))
   );
 });
-// v3.7 deploy 2026-08-17 (아이폰 아이콘 · 말 알아듣기 확대 · 날짜 반영)
+// v3.8 deploy 2026-08-23 (가계부 탭 · 알별 기록 · 부화 모프 · 개체 이상 · 무료 분양가)

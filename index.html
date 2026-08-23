@@ -288,7 +288,10 @@ const DB = {
     return this.getEvents().filter(e => e.individualId === individualId);
   },
   updateIndividual(id, patch) {
-    this.saveIndividuals(this.getIndividuals().map(i => i.id === id ? { ...i, ...patch } : i));
+    // 모프를 실제로 적으면 '아직 모르겠어요' 표시는 자동으로 풀립니다 (한 곳에서만 처리)
+    const p = { ...patch };
+    if (typeof p.morph === 'string' && p.morph.trim()) p.morphUnknown = false;
+    this.saveIndividuals(this.getIndividuals().map(i => i.id === id ? { ...i, ...p } : i));
   },
   updateEvent(id, patch) {
     this.saveEvents(this.getEvents().map(e => e.id === id ? { ...e, ...patch } : e));
@@ -300,8 +303,9 @@ const DB = {
     const o = opt || {};
     const d = o.date || todayStr();
     const won = Number(o.won || 0);
+    const free = !won && !!o.free;                 // 무료 분양 — '아직 안 적음'과 구분합니다
     const buyer = (o.buyer || '').trim();
-    this.updateIndividual(id, { status: 'sold', keep: false, salePrice: won ? String(won) : '' });
+    this.updateIndividual(id, { status: 'sold', keep: false, salePrice: won ? String(won) : '', saleFree: free });
     const evs = this.getEvents();
     const idx = evs.findIndex(e => e.individualId === id && e.type === 'distribution');
     if (idx >= 0) {
@@ -309,13 +313,34 @@ const DB = {
       const prevNotes = (cur.data && cur.data.notes) || '';
       const rest = prevNotes.split('·').map(s => s.trim()).filter(s => s && !/^분양처\s*:/.test(s));
       const notes = [buyer ? '분양처: ' + buyer : '', ...rest].filter(Boolean).join(' · ');
-      evs[idx] = { ...cur, date: d, data: { ...(cur.data || {}), price: won ? String(won) : '', notes } };
+      evs[idx] = { ...cur, date: d, data: { ...(cur.data || {}), price: won ? String(won) : '', free, notes } };
       this.saveEvents(evs);
     } else {
       this.addEvent({ individualId: id, type: 'distribution', date: d,
-        data: { price: won ? String(won) : '', notes: buyer ? '분양처: ' + buyer : '' } });
+        data: { price: won ? String(won) : '', free, notes: buyer ? '분양처: ' + buyer : '' } });
     }
-    return { won, buyer, date: d };
+    return { won, free, buyer, date: d };
+  },
+
+  /* ── 알 하나하나의 기록 ──
+     산란 한 건 안에 알이 여러 개일 때, 알마다 겉보기 상태와 결과를 따로 남깁니다. */
+  setEggUnits(layingId, units) {
+    const ev = this.getEvents().find(e => e.id === layingId);
+    if (!ev) return null;
+    const clean = (units || []).map(u => ({
+      look: u.look || '', status: u.status || 'pending',
+      reason: u.reason || '', note: u.note || '', date: u.date || '',
+    }));
+    const data = { ...(ev.data || {}), eggUnits: clean };
+    // 알이 전부 무정란이면 예전 방식(메모의 '무정')과도 맞춰 둡니다 — 옛 화면에서도 같게 보이도록
+    const allInf = clean.length > 0 && clean.every(u => u.status === 'infertile');
+    const notes = String(data.notes || '');
+    if (allInf && !/무정/.test(notes)) data.notes = (notes ? notes + ' · ' : '') + '무정';
+    if (!allInf && /무정/.test(notes)) {
+      data.notes = notes.split('·').map(x => x.trim()).filter(x => x && !/^무정/.test(x)).join(' · ');
+    }
+    this.updateEvent(layingId, { data });
+    return clean;
   },
 
   /* ── KEEP 표시 ──
@@ -548,7 +573,7 @@ const SERVER = {
 
    인터넷이 없거나 파일을 못 받으면 아무 것도 막지 않습니다(앱은 그대로 씁니다).
    ══════════════════════════════════════════ */
-const APP_VERSION = '3.7';
+const APP_VERSION = '3.8';
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -955,6 +980,7 @@ const EVENT_TYPES = [
   { key: 'distribution', label: '분양',   emoji: '🤝', color: '#8A64A8' },
   { key: 'shed',         label: '탈피',   emoji: '🌿', color: '#6E8B74' },
   { key: 'feeding',      label: '먹이',   emoji: '🍽️', color: '#C87F2F' },
+  { key: 'health',       label: '이상',   emoji: '⚠️', color: '#B3261E' },
   { key: 'photo',        label: '사진',   emoji: '📷', color: '#8A8177' },
   { key: 'memo',         label: '메모',   emoji: '📝', color: '#A08D7C' },
 ];
@@ -987,10 +1013,24 @@ function parseMoney(text) {
 }
 const wonText = w => (w || w === 0) ? Number(w).toLocaleString() + '원' : '';
 
-/* 분양완료인데 분양가가 비어 있는 아이들 */
+/* 분양완료인데 분양가를 아직 안 적은 아이들 — 무료로 보낸 아이는 뺍니다 */
 function soldMissingPrice(individuals) {
   const list = individuals || DB.getIndividuals();
-  return list.filter(i => (i.status || 'own') === 'sold' && !i.isExternal && !salePriceOf(i));
+  return list.filter(i => (i.status || 'own') === 'sold' && !i.isExternal
+    && !salePriceOf(i) && !saleIsFree(i));
+}
+/* 무료로 보낸 아이인지 — 개체 표시 → 분양 기록 순으로 봅니다 */
+function saleIsFree(ind) {
+  if (!ind) return false;
+  if (ind.saleFree) return true;
+  return DB.getEventsFor(ind.id).some(e => e.type === 'distribution' && e.data && e.data.free
+    && !Number(e.data.price || 0));
+}
+/* 화면에 보여줄 분양가 글자 — 값이 있으면 금액, 무료면 '무료', 아직 안 적었으면 빈 글자 */
+function salePriceLabel(ind) {
+  const w = salePriceOf(ind);
+  if (w > 0) return wonText(w);
+  return saleIsFree(ind) ? '무료' : '';
 }
 // 개체에 붙은 분양가(원). 개체 필드 → 분양 기록 순으로 찾습니다
 function salePriceOf(ind) {
@@ -1000,6 +1040,99 @@ function salePriceOf(ind) {
   const ev = DB.getEventsFor(ind.id).filter(e => e.type === 'distribution' && e.data && Number(e.data.price) > 0)
     .sort((a, b) => (a.date < b.date ? 1 : -1))[0];
   return ev ? Number(ev.data.price) : 0;
+}
+
+/* ── 알 하나하나(클러치 안의 개별 알) ──
+   겉보기 상태는 산란 직후 불빛을 비춰 보고 적습니다. 결과는 알마다 따로 남습니다. */
+const EGG_LOOKS = ['정상', '크기 작음', '껍질 얇음', '금 갔음', '함몰', '곰팡이'];
+const EGG_PROBLEMS = ['곰팡이', '함몰·건조', '깨짐', '중도 폐사', '기타'];
+const EGG_STATE = {
+  pending:   { label: '대기',   color: 'var(--accent2)' },
+  hatched:   { label: '부화',   color: '#2E7D46' },
+  infertile: { label: '무정란', color: '#8A8177' },
+  problem:   { label: '문제',   color: '#C87F2F' },
+};
+
+/* 산란 기록 하나를 알 개수만큼의 줄로 펴 줍니다.
+   ★ 저장된 게 없으면 그 자리에서 만들어 냅니다(예전 기록도 그대로 보이게):
+     - 부화한 클러치면 부화 마릿수만큼 '부화', 나머지는 '대기'
+     - '무정' 표시가 있으면 전부 '무정란'
+   손대기 전에는 저장하지 않으므로 옛 기록이 마음대로 바뀌지 않습니다. */
+function eggUnitsOf(ev, opt) {
+  const o = opt || {};
+  const d = (ev && ev.data) || {};
+  const n = Math.max(1, parseInt(d.eggCount || 0, 10) || 1);
+  const saved = Array.isArray(d.eggUnits) ? d.eggUnits : null;
+  const out = [];
+  const hatchedCount = o.hatched ? Math.max(1, parseInt((o.hatched.data && o.hatched.data.count) || 0, 10) || n) : 0;
+  for (let i = 0; i < n; i++) {
+    if (saved && saved[i]) { out.push({ look: '', status: 'pending', reason: '', note: '', date: '', ...saved[i] }); continue; }
+    let status = 'pending', date = '';
+    if (o.infertile) status = 'infertile';
+    else if (o.hatched && i < hatchedCount) { status = 'hatched'; date = o.hatched.date; }
+    out.push({ look: '', status, reason: '', note: '', date });
+  }
+  return out;
+}
+const eggDone = u => u.status !== 'pending';
+
+/* 개체 이상 기록 — 대화·프로필 어느 쪽에서 적어도 같은 항목을 씁니다 */
+const HEALTH_ISSUES = ['거식', '탈피부전', '꼬리 자절', '외상', '설사', '폐사', '기타'];
+
+/* ── 가계부 ──
+   수입은 분양 기록에서 저절로 생깁니다(두 번 적지 않게).
+   지출과 분양 외 수입만 직접 적습니다. */
+const EXPENSE_CATS = ['사료·먹이', '용품', '개체 구입', '전기·난방', '택배·포장', '병원', '기타'];
+const INCOME_CATS = ['분양', '용품 판매', '기타'];
+
+/* 가계부에 올릴 줄 만들기 —
+   ★ 분양 수입은 분양 기록에서 그대로 가져옵니다. 따로 또 적지 않습니다(두 번 적히지 않게).
+   분양가를 아직 안 적은 건은 넣지 않고, 무료 분양은 0원 수입으로 남깁니다. */
+function ledgerRows(events, individuals) {
+  const evs = events || DB.getEvents();
+  const inds = individuals || DB.getIndividuals();
+  const byId = {}; inds.forEach(i => { byId[i.id] = i; });
+  const rows = [];
+  evs.forEach(e => {
+    if (e.type === 'distribution') {
+      const won = Number((e.data && e.data.price) || 0);
+      const free = !!(e.data && e.data.free);
+      if (!won && !free) return;
+      const nm = (byId[e.individualId] || {}).name || '개체';
+      rows.push({ id: 'S:' + e.id, date: e.date, flow: 'in', category: '분양', amount: won,
+                  label: nm + ' 분양' + (free ? ' (무료)' : ''), auto: true,
+                  indId: e.individualId, ref: e.id });
+    } else if (e.type === 'ledger') {
+      const d = e.data || {};
+      rows.push({ id: e.id, date: e.date, flow: d.flow === 'in' ? 'in' : 'out',
+                  category: d.category || '기타', amount: Number(d.amount || 0),
+                  label: d.notes || '', auto: false, indId: d.indId || null, ref: e.id });
+    }
+  });
+  rows.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+  return rows;
+}
+const monthKeyOf = iso => String(iso || '').slice(0, 7);
+const yearKeyOf = iso => String(iso || '').slice(0, 4);
+function ledgerSum(rows) {
+  let income = 0, expense = 0;
+  rows.forEach(r => { if (r.flow === 'in') income += r.amount; else expense += r.amount; });
+  return { income, expense, net: income - expense, count: rows.length };
+}
+/* 이 아이에게 들어간 돈(개체 구입비 등) — 가계부에서 개체를 지정한 지출만 셉니다 */
+function costOfIndividual(id, events) {
+  return (events || DB.getEvents())
+    .filter(e => e.type === 'ledger' && e.data && e.data.flow === 'out' && e.data.indId === id)
+    .reduce((a, e) => a + Number(e.data.amount || 0), 0);
+}
+/* 개체 손익 = 분양가 − 그 아이에게 쓴 돈. 분양 전이면 아직 계산하지 않습니다 */
+function profitOfIndividual(ind, events) {
+  if (!ind) return null;
+  const sold = (ind.status || 'own') === 'sold';
+  const cost = costOfIndividual(ind.id, events);
+  const got = salePriceOf(ind);
+  if (!sold && !cost) return null;
+  return { sold, cost, got, net: got - cost };
 }
 
 /* 목록 정렬 — 지금까지는 등록순 고정이었습니다 */
@@ -1031,7 +1164,7 @@ function sortList(list, key, pinTop) {
 
 /* 캘린더에 띄울 종류 — 날짜가 의미 있는 "일정"만.
    메모·사진·성장(무게)·탈피는 개체 프로필의 활동 기록에서 봅니다. */
-const CALENDAR_TYPES = ['mating', 'laying', 'hatching', 'feeding'];
+const CALENDAR_TYPES = ['mating', 'laying', 'hatching', 'feeding', 'health'];
 
 // 예정일 자동 계산 기준 (일)
 const LAYING_AFTER_MATING = 30;   // 메이팅 → 산란 예정
@@ -1135,15 +1268,23 @@ function clutchRows(individuals, events) {
     const infertile = /무정/.test(notes);
     const hatched = hatchOf[e.id] || null;
     const babies = babiesOf[e.id] || [];
+    /* 알 하나하나의 결과도 여기서 한 번만 정합니다 (화면마다 답이 달라지지 않도록) */
+    const units = eggUnitsOf(e, { hatched, infertile });
+    const nProblem = units.filter(u => u.status === 'problem').length;
+    const nPending = units.filter(u => u.status === 'pending').length;
+    const allDone = nPending === 0;
     let state = `D-${d}`, tone = d <= 7 ? '#B3261E' : 'var(--accent2)';
     if (infertile) { state = '무정'; tone = '#8A8177'; }
     else if (hatched) { state = '부화완료'; tone = '#2E7D46'; }
+    else if (allDone && nProblem) { state = '문제'; tone = '#C87F2F'; }
+    else if (allDone) { state = '종료'; tone = '#8A8177'; }
     else if (d < -14) { state = '경과'; tone = '#8A8177'; }
     else if (d < 0) { state = `지연 ${-d}일`; tone = '#C87F2F'; }
     else if (d === 0) { state = '오늘 예정'; tone = '#B3261E'; }
-    const waiting = !infertile && !hatched && d >= -14;
+    const waiting = !infertile && !hatched && !allDone && d >= -14;
     return { e, mom, momName, dad, dadId, dadName, pairKey, pairName, nth,
-             eggs, notes, etaISO, expISO: etaISO, d, state, tone, infertile, hatched, babies, waiting };
+             eggs, notes, etaISO, expISO: etaISO, d, state, tone, infertile, hatched, babies, waiting,
+             units, nProblem, nPending, allDone };
   });
 }
 
@@ -1336,7 +1477,7 @@ function makeBabyNames(momName, dadName, count, existingNames) {
   return names;
 }
 
-const MAIN_FIELD = { growth: ['weight', '몸무게(g)'], laying: ['eggCount', '알 개수'], hatching: ['count', '마릿수'], distribution: ['price', '분양가(원)'] };
+const MAIN_FIELD = { growth: ['weight', '몸무게(g)'], laying: ['eggCount', '알 개수'], hatching: ['count', '마릿수'], distribution: ['price', '분양가(원)'], health: ['issue', '증상'] };
 const mainKeyOf = ev => (MAIN_FIELD[ev.type] || [null])[0];
 const mainLabelOf = ev => (MAIN_FIELD[ev.type] || [null, ''])[1];
 const mainValOf = ev => { const k = mainKeyOf(ev); return k ? (ev.data && ev.data[k]) || '' : ''; };
@@ -1405,6 +1546,16 @@ const RE_MATE  = /메이팅|교배|합사|짝짓기|붙였|붙여\s*놨|합방|�
 const RE_SHED  = /탈피|허물|각질\s*벗|껍질\s*벗/;
 const RE_FEED  = /피딩|먹이|밥|먹였|먹었|먹임|먹여|급여|사료|줬어|줬음|줬고|줬다|주었|급식/;
 const RE_NOFEED = /안\s*먹|못\s*먹|먹지\s*않|거식|남겼|안먹|입질\s*없/;
+/* 개체 이상 — 말한 그대로 항목을 잡습니다.
+   ⚠️ '죽었'처럼 다른 뜻으로도 쓰는 말(귀뚜라미가 죽었어)은 일부러 넣지 않았습니다. */
+const HEALTH_RULES = [
+  [/거식/, '거식'],
+  [/탈피\s*부전|탈피부전|허물\s*(안|못)\s*벗|묵은\s*허물/, '탈피부전'],
+  [/꼬리\s*(자절|잘렸|잘림|끊|떨어|빠졌)|자절/, '꼬리 자절'],
+  [/다쳤|상처|물렸|찢어|피\s*났|화상/, '외상'],
+  [/설사|묽은\s*변|변이\s*묽/, '설사'],
+  [/폐사|무지개다리/, '폐사'],
+];
 
 function extractFacts(text) {
   const facts = [];
@@ -1442,8 +1593,11 @@ function extractFacts(text) {
     push('distribution', { price });
   }
 
-  // 탈피
-  if (RE_SHED.test(text)) push('shed', {});
+  // 탈피 — '탈피부전'은 탈피 완료가 아니라 이상 기록입니다
+  if (RE_SHED.test(text) && !/부전/.test(text)) push('shed', {});
+
+  // 개체 이상 — 거식·탈피부전·자절 같은 것을 따로 남깁니다
+  HEALTH_RULES.forEach(([re, issue]) => { if (re.test(text)) push('health', { issue, notes: '' }); });
 
   // 먹이: 충식(귀뚜라미 계열)과 일반식(슈퍼푸드) 구분
   const feedTrigger = RE_FEED.test(text) || CRICKET_RE.test(text) || SUPU_RE.test(text);
@@ -1748,6 +1902,7 @@ function factLabel(f) {
     case 'hatching':     d = f.data.count ? f.data.count + '마리' : ''; break;
     case 'distribution': d = f.data.price ? Number(f.data.price).toLocaleString() + '원' : ''; break;
     case 'feeding':      d = f.data.foodType === '충식' ? '🦗 충식' : f.data.foodType === '슈푸' ? '🥣 슈푸' : ''; break;
+    case 'health':       d = f.data.issue || ''; break;
     case 'memo':         d = (f.data.notes || '').slice(0, 18); break;
     case 'photo':        d = '1장'; break;
     default: break;
@@ -1793,15 +1948,14 @@ function answerQuery(target, text) {
   }
 
   if (asksNext && /해칭|부화/.test(text)) {
-    const lays = evs.filter(e => e.type === 'laying')
-      .filter(e => !/무정/.test((e.data && e.data.notes) || ''))
-      .sort((a, b) => (a.date < b.date ? 1 : -1));
-    if (!lays.length) return none('산란', '🥚');
-    const pending = lays.map(e => ({ e, eta: hatchETA(e.date) })).filter(x => daysUntil(x.eta) >= -14);
+    /* 부화 대기 판정은 clutchRows 한 곳에서만 합니다.
+       무정란·문제로 정리한 알까지 여기서 다시 세지 않도록(화면마다 답이 달라지지 않게). */
+    const rows = clutchRows().filter(r => r.e.individualId === target.id);
+    if (!rows.length) return none('산란', '🥚');
+    const pending = rows.filter(r => r.waiting).sort((a, b) => a.d - b.d);
     if (!pending.length) return `${target.name}의 알은 부화 예정일이 모두 지났어요. 산란기록 탭에서 확인해보세요 🐣`;
-    pending.sort((a, b) => daysUntil(a.eta) - daysUntil(b.eta));
     const x = pending[0];
-    return `${target.name}의 알은 ${fmtDate(x.eta)}쯤 부화 예정이에요 🐣 (${inDays(x.eta)})\n`
+    return `${target.name}의 알은 ${fmtDate(x.etaISO)}쯤 부화 예정이에요 🐣 (${inDays(x.etaISO)})\n`
       + `${fmtDate(x.e.date)} 산란 · 인큐 ${incubateTemp()}°C 기준 ${hatchDaysNow()}일`
       + (pending.length > 1 ? `\n부화 대기 중인 알 묶음이 ${pending.length}개 있어요.` : '');
   }
@@ -1966,6 +2120,9 @@ function useToast() {
 /* ══════════════════════════════════════════
    앱 루트
    ══════════════════════════════════════════ */
+/* 하단 탭에 있는 화면들 — 설정은 v3.8부터 탭이 아니라 홈 오른쪽 위 ⚙️ 로 들어갑니다 */
+const TAB_SCREENS = ['home', 'calendar', 'reminders', 'ledger'];
+
 function App() {
   const [screen, setScreen] = useState({ name: 'home', props: {} });
   const [tab, setTab] = useState('home');
@@ -2021,7 +2178,7 @@ function App() {
     stackRef.current.push({ name, props });
     try { window.history.pushState({ cgDepth: stackRef.current.length }, ''); } catch {}
     setScreen({ name, props });
-    if (['home','calendar','reminders','settings'].includes(name)) setTab(name);
+    if (TAB_SCREENS.includes(name)) setTab(name);
   };
 
   useEffect(() => {
@@ -2030,7 +2187,7 @@ function App() {
       stackRef.current.pop();
       const prev = stackRef.current[stackRef.current.length - 1] || { name: 'home', props: {} };
       setScreen(prev);
-      if (['home','calendar','reminders','settings'].includes(prev.name)) setTab(prev.name);
+      if (TAB_SCREENS.includes(prev.name)) setTab(prev.name);
     };
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
@@ -2078,12 +2235,15 @@ function App() {
       {screen.name === 'reminders' && (
         <RemindersScreen navigate={navigate} onChanged={refreshReminders} />
       )}
+      {screen.name === 'ledger' && (
+        <LedgerScreen individuals={individuals} navigate={navigate} showToast={showToast} refreshIndividuals={refreshIndividuals} />
+      )}
       {screen.name === 'settings' && (
         <SettingsScreen navigate={navigate} showToast={showToast} refreshIndividuals={refreshIndividuals} />
       )}
 
       {/* 하단 탭바 */}
-      {['home','calendar','reminders','settings'].includes(screen.name) && (
+      {[...TAB_SCREENS, 'settings'].includes(screen.name) && (
         <div className="tabbar">
           <button className={`tab-btn ${tab==='home'?'active':''}`} onClick={() => navigate('home')}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
@@ -2103,9 +2263,9 @@ function App() {
             알림
             {badgeCount > 0 && <span className="notif-badge">{badgeCount}</span>}
           </button>
-          <button className={`tab-btn ${tab==='settings'?'active':''}`} onClick={() => navigate('settings')}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-            설정
+          <button className={`tab-btn ${tab==='ledger'?'active':''}`} onClick={() => navigate('ledger')}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4z"/></svg>
+            가계부
           </button>
         </div>
       )}
@@ -2120,17 +2280,15 @@ function App() {
    ══════════════════════════════════════════ */
 function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view: initialView }) {
   const [search, setSearch] = useState('');
-  const [view, setView] = useState(initialView || 'own'); // own | sale | mating | laying | hatch
-  const [saleFilter, setSaleFilter] = useState('available');
+  // 분양은 v3.8부터 가계부 탭으로 옮겼습니다 (옛 링크로 들어오면 축양으로 보냅니다)
+  const [view, setView] = useState(initialView === 'sale' ? 'own' : (initialView || 'own')); // own | mating | laying | hatch
   const [favOnly, setFavOnly] = useState(false);
   const [keepOnly, setKeepOnly] = useState(false);
   // 정렬은 골라둔 것을 기억합니다
   const [sortKey, setSortKey] = useState(() => (DB.getSettings().listSort || SORT_DEFAULT));
   const [sortOpen, setSortOpen] = useState(false);
-  const [fillQueue, setFillQueue] = useState([]);   // 분양가 채우기 대기줄
   const pickSort = (k) => { setSortKey(k); setSortOpen(false); DB.saveSettings({ ...DB.getSettings(), listSort: k }); };
   const activeInds = individuals.filter(i => (i.status || 'own') !== 'sold' && !i.isExternal);
-  const missingPrice = soldMissingPrice(individuals);
   const namePlans = nameFixPlan(individuals);   // 형제와 이름 규칙이 다른 아이
   const stats = {
     total: activeInds.length,
@@ -2147,9 +2305,6 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
   let ownList = sortList(bySearch(activeInds), sortKey);
   if (favOnly) ownList = ownList.filter(i => i.favorite);
   if (keepOnly) ownList = ownList.filter(i => i.keep);
-  // KEEP인 아이는 "분양가능" 목록에 올리지 않습니다 (실수로 내놓지 않게)
-  const saleList = sortList(bySearch(individuals.filter(i =>
-    (i.status || 'own') === saleFilter && !i.isExternal && !(saleFilter === 'available' && i.keep))), sortKey);
   const toggleFav = (g) => { DB.updateIndividual(g.id, { favorite: !g.favorite }); refreshIndividuals(); };
 
   return (
@@ -2165,8 +2320,14 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
                 <div className="header-sub">💬 대화 하나로 등록부터 기록까지</div>
               </div>
             </div>
-            <div style={{display:'flex', gap:6}}>
-              {stats.fromCG > 0 && <span className="badge badge-gold">CG {stats.fromCG}</span>}
+            {/* 설정은 v3.8부터 여기(예전 CG 배지 자리)로 올라왔습니다. 그 자리의 탭은 가계부가 씁니다 */}
+            <div style={{display:'flex', alignItems:'center', gap:7, flexShrink:0}}>
+              {stats.fromCG > 0 && <span className="badge badge-gold" style={{fontSize:10.5}}>CG {stats.fromCG}</span>}
+              <button onClick={() => navigate('settings')} aria-label="설정"
+                style={{background:'var(--bg3)', border:'1px solid var(--border)', borderRadius:10, padding:'6px 7px',
+                        cursor:'pointer', display:'flex', alignItems:'center', color:'var(--text2)'}}>
+                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+              </button>
             </div>
           </div>
         </div>
@@ -2220,31 +2381,12 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
 
         {individuals.length > 0 && (
           <div className="chip-row" style={{padding:'10px 16px 2px', marginTop:0}}>
-            {[['own','🏠 축양'],['sale','🏷️ 분양'],['mating','💞 메이팅'],['laying','🥚 산란'],['hatch','🐣 해칭']].map(([k, l]) => (
+            {[['own','🏠 축양'],['mating','💞 메이팅'],['laying','🥚 산란'],['hatch','🐣 해칭']].map(([k, l]) => (
               <button key={k} className="chip-btn"
                 style={{flexShrink:0, whiteSpace:'nowrap', ...(view === k ? {background:'var(--accent-soft)', fontWeight:700} : {})}}
                 onClick={() => setView(k)}>{l}</button>
             ))}
           </div>
-        )}
-
-        {view === 'sale' && individuals.length > 0 && (
-          <>
-            <div style={{display:'flex', gap:6, padding:'10px 16px 0'}}>
-              {[['available','분양가능'],['reserved','예약중'],['sold',`분양완료${stats.sold ? ' ' + stats.sold : ''}`]].map(([k, l]) => (
-                <button key={k} className="chip-btn" style={{fontSize:12, padding:'6px 11px', ...(saleFilter === k ? {background:'var(--accent-soft)', fontWeight:700} : {})}} onClick={() => setSaleFilter(k)}>{l}</button>
-              ))}
-            </div>
-            {/* 분양가가 비어 있는 아이들 — 한 번에 채울 수 있게 */}
-            {missingPrice.length > 0 && (
-              <div style={{margin:'10px 16px 0', padding:'9px 12px', borderRadius:10, background:'var(--accent-soft)',
-                           border:'1px solid var(--accent-edge)', display:'flex', alignItems:'center', gap:10, fontSize:12.5}}>
-                <span style={{color:'var(--accent2)', flex:1}}>분양가가 비어 있는 아이 <b>{missingPrice.length}마리</b></span>
-                <button className="btn btn-primary btn-sm" style={{width:'auto', padding:'6px 12px'}}
-                  onClick={() => setFillQueue(missingPrice.map(i => i.id))}>채우기</button>
-              </div>
-            )}
-          </>
         )}
 
         {view === 'own' && namePlans.length > 0 && (
@@ -2281,20 +2423,6 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
           </>
         )}
 
-        {view === 'sale' && (
-          <>
-            {saleList.length === 0 && (
-              <div className="empty" style={{padding:'40px 20px'}}>
-                <div className="empty-icon" style={{fontSize:36}}>🏷️</div>
-                <p>이 상태의 아이가 없어요.{'\n'}프로필이나 대화에서 분양 상태를 바꿀 수 있어요.</p>
-              </div>
-            )}
-            {saleList.map(gecko => (
-              <GeckoCard key={gecko.id} gecko={gecko} onClick={() => navigate('profile', { gecko })} onToggleFav={toggleFav} />
-            ))}
-          </>
-        )}
-
         {view === 'mating' && <MatingView individuals={individuals} navigate={navigate} showToast={showToast} />}
         {view === 'laying' && <LayingView individuals={individuals} navigate={navigate} showToast={showToast} />}
         {view === 'hatch' && <HatchView individuals={individuals} refreshIndividuals={refreshIndividuals} showToast={showToast} navigate={navigate} />}
@@ -2302,18 +2430,6 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
         <div style={{height: 16}} />
       </div>
 
-      {/* 빠진 분양가를 앞에서부터 하나씩 채웁니다 */}
-      {fillQueue.length > 0 && (
-        <SalePrompt
-          gecko={individuals.find(i => i.id === fillQueue[0])}
-          onClose={() => setFillQueue([])}
-          onDone={() => {
-            const rest = fillQueue.slice(1);
-            setFillQueue(rest);
-            refreshIndividuals();
-            if (!rest.length) showToast('🤝 분양가 정리 완료');
-          }} />
-      )}
     </>
   );
 }
@@ -2602,6 +2718,10 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals }) {
   const [dateVal, setDateVal] = useState('');
   const [eggEdit, setEggEdit] = useState(false);
   const [eggVal, setEggVal] = useState('');
+  const [morph, setMorph] = useState('');           // 부화한 아이들 모프
+  const [morphUnknown, setMorphUnknown] = useState(false);
+  const [openEgg, setOpenEgg] = useState(null);     // 펼쳐 본 알 (몇 번째)
+  const [probFor, setProbFor] = useState(null);     // 문제 사유를 고르는 중 (-1 = 남은 알 전부)
   const fileRef = useRef(null);
   const bump = () => { setVer(v => v + 1); refreshIndividuals(); };
 
@@ -2627,15 +2747,26 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals }) {
   const expDate = new Date(new Date(ev.date).getTime() + hatchDaysNow() * 86400000);
   const expISO = localISO(expDate);
   const d = daysUntil(expISO);
-  const infertile = /무정/.test(notes);
+  // 무정 여부도 clutchRows가 정한 것을 씁니다 (판정 사본을 두지 않습니다)
+  const infertile = row ? row.infertile : false;
   // 부화 기록·아기는 clutchRows에서 "한 클러치에 하나씩만" 배정한 결과를 그대로 씁니다.
   // (예전엔 여기서 따로 찾느라 같은 아기가 1차·2차에 겹쳐 나왔습니다)
   const hatched = row ? row.hatched : null;
   const babies = row ? row.babies : [];
 
+  /* 알 하나하나 — clutchRows가 정한 것을 그대로 씁니다 (목록과 답이 달라지지 않게) */
+  const units = row ? row.units : eggUnitsOf(ev, { hatched, infertile });
+  const nProblem = units.filter(u => u.status === 'problem').length;
+  const nPending = units.filter(u => u.status === 'pending').length;
+  const allDone = nPending === 0;
+  const setUnits = (next, msg) => { DB.setEggUnits(ev.id, next); setProbFor(null); bump(); if (msg) showToast(msg); };
+  const setUnit = (i, up, msg) => setUnits(units.map((u, k) => k === i ? { ...u, ...up } : u), msg);
+
   let state = `부화까지 D-${d}`, tone = d <= 7 ? '#B3261E' : 'var(--accent2)';
   if (infertile) { state = '무정란'; tone = '#8A8177'; }
   else if (hatched) { state = '부화 완료'; tone = '#2E7D46'; }
+  else if (allDone && nProblem) { state = '문제로 종료'; tone = '#C87F2F'; }
+  else if (allDone) { state = '종료'; tone = '#8A8177'; }
   else if (d < 0) { state = `예정일 ${-d}일 지남`; tone = '#C87F2F'; }
   else if (d === 0) { state = '오늘이 예정일'; tone = '#B3261E'; }
 
@@ -2656,19 +2787,23 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals }) {
     if (date > todayStr()) return showToast('⚠️ 아직 오지 않은 날짜예요');
     const all = DB.getIndividuals();
     const mode = DB.getSettings().babyNaming || 'combo';
+    const mo = morphUnknown ? '' : morph.trim();
     let made = 0;
     if (mode !== 'off') {
       const names = makeBabyNames(mom ? mom.name : '', dadName, n, all.map(i => i.name));
       names.slice(0, n).forEach(nm => {
         DB.addIndividual({
-          name: nm, gender: 'unknown', morph: '', hatchDate: date,
+          name: nm, gender: 'unknown', morph: mo, morphUnknown: !mo, hatchDate: date,
           isFromCreGunseol: true, status: 'own', sireId: dadId, damId: ev.individualId,
           shareCode: Math.random().toString(36).slice(2, 8).toUpperCase(),
         });
         made++;
       });
     }
-    DB.addEvent({ individualId: ev.individualId, type: 'hatching', date, data: { count: n, layingId: ev.id } });
+    DB.addEvent({ individualId: ev.individualId, type: 'hatching', date, data: { count: n, layingId: ev.id, morph: mo } });
+    // 부화한 만큼 알을 '부화'로 표시합니다 (남은 알은 그대로 대기)
+    let left = n;
+    DB.setEggUnits(ev.id, units.map(u => (u.status === 'pending' && left-- > 0) ? { ...u, status: 'hatched', date } : u));
     // 이 클러치는 부화 완료로 표시
     // (부화 예정 알림은 저장하지 않고 계산으로 만들기 때문에 따로 지울 게 없습니다)
     bump();
@@ -2737,6 +2872,82 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals }) {
           </div>
         </div>
 
+        {/* ── 알 하나하나 ──
+            밖(홈·산란기록)에서는 산란 한 건이지만, 여기서는 알마다 따로 적을 수 있습니다.
+            한 알은 정상, 다른 알은 곰팡이 — 같은 경우를 그대로 남기기 위한 칸입니다. */}
+        <div className="card" style={{margin:'0 0 12px'}}>
+          <div style={{display:'flex', alignItems:'baseline', gap:6, marginBottom:8}}>
+            <span style={{fontSize:12, fontWeight:700, color:'var(--text2)'}}>🥚 알별 기록</span>
+            <span style={{fontSize:11, color:'var(--text3)'}}>알마다 상태를 따로 적을 수 있어요</span>
+          </div>
+          {units.map((u, i) => {
+            const st = EGG_STATE[u.status] || EGG_STATE.pending;
+            const open = openEgg === i;
+            const memo = [u.look, u.reason, u.note].filter(Boolean).join(' · ');
+            return (
+              <div key={i} style={{border:'1px solid var(--border)', borderRadius:10, padding:'9px 10px', marginBottom:6, background:'var(--bg3)'}}>
+                <div style={{display:'flex', alignItems:'center', gap:8, cursor:'pointer'}}
+                  onClick={() => { setOpenEgg(open ? null : i); setProbFor(null); }}>
+                  <span style={{fontSize:13, fontWeight:700, flexShrink:0}}>알 {i + 1}</span>
+                  <span className="badge" style={{fontSize:10, flexShrink:0, background:'var(--bg2)', color:st.color, border:'1px solid var(--border)'}}>{st.label}</span>
+                  <span style={{flex:1, minWidth:0, fontSize:11.5, color:'var(--text3)', textAlign:'right', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
+                    {memo || (open ? '' : '눌러서 적기')}
+                  </span>
+                  <span style={{fontSize:11, color:'var(--text3)', flexShrink:0}}>{open ? '▲' : '▼'}</span>
+                </div>
+
+                {open && (
+                  <div style={{marginTop:9}}>
+                    <div style={{fontSize:11, color:'var(--text3)', marginBottom:5}}>겉보기 상태</div>
+                    <div style={{display:'flex', flexWrap:'wrap', gap:5, marginBottom:9}}>
+                      {EGG_LOOKS.map(L => (
+                        <button key={L} className="chip-btn"
+                          style={{fontSize:11.5, padding:'5px 10px', ...(u.look === L ? {background:'var(--accent-soft)', fontWeight:700} : {})}}
+                          onClick={() => setUnit(i, { look: u.look === L ? '' : L })}>{L}</button>
+                      ))}
+                    </div>
+                    <input className="input" style={{padding:'8px 10px', fontSize:12.5}} placeholder="메모 (선택)"
+                      defaultValue={u.note}
+                      onBlur={e => { if (e.target.value !== u.note) setUnit(i, { note: e.target.value }); }} />
+
+                    {probFor === i ? (
+                      <div style={{marginTop:9}}>
+                        <div style={{fontSize:11, color:'var(--text3)', marginBottom:5}}>어떤 문제였나요?</div>
+                        <div style={{display:'flex', flexWrap:'wrap', gap:5}}>
+                          {EGG_PROBLEMS.map(R => (
+                            <button key={R} className="chip-btn" style={{fontSize:11.5, padding:'5px 10px'}}
+                              onClick={() => setUnit(i, { status: 'problem', reason: R }, `알 ${i + 1} · ${R}으로 적었어요`)}>{R}</button>
+                          ))}
+                        </div>
+                        <button className="btn btn-secondary btn-sm" style={{marginTop:7}} onClick={() => setProbFor(null)}>취소</button>
+                      </div>
+                    ) : u.status === 'pending' ? (
+                      <div style={{display:'flex', gap:6, marginTop:9}}>
+                        <button className="btn btn-secondary btn-sm" style={{flex:1}}
+                          onClick={() => setUnit(i, { status: 'infertile' }, `알 ${i + 1}은 무정란으로 적었어요`)}>무정란</button>
+                        <button className="btn btn-secondary btn-sm" style={{flex:1}} onClick={() => setProbFor(i)}>⚠️ 문제</button>
+                      </div>
+                    ) : (
+                      <div style={{display:'flex', alignItems:'center', gap:8, marginTop:9}}>
+                        <span style={{flex:1, fontSize:11.5, color:st.color, fontWeight:700}}>
+                          {st.label}{u.reason ? ` · ${u.reason}` : ''}{u.date ? ` · ${fmtDate(u.date)}` : ''}
+                        </span>
+                        <button className="btn btn-secondary btn-sm" style={{width:'auto', padding:'5px 11px', fontSize:12}}
+                          onClick={() => setUnit(i, { status: 'pending', reason: '' }, `알 ${i + 1}을 대기로 되돌렸어요`)}>되돌리기</button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {units.length === 1 && (
+            <div style={{fontSize:11, color:'var(--text3)', marginTop:2}}>
+              알 개수를 고치면 그만큼 줄이 늘어납니다.
+            </div>
+          )}
+        </div>
+
         <div className="card" style={{margin:'0 0 12px'}}>
           <div className="confirm-row"><span className="confirm-key">산란일</span><span className="confirm-val">{fmtDate(ev.date)}</span></div>
           <div className="confirm-row"><span className="confirm-key">해칭 예정일</span><span className="confirm-val">{fmtDate(expISO)}</span></div>
@@ -2799,6 +3010,19 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals }) {
             <div style={{fontSize:11, color:'var(--text3)', margin:'0 2px 4px'}}>몇 마리</div>
             <input className="input" type="number" min="1" placeholder={eggs ? `기본 ${eggs}마리` : '마릿수'}
               value={count} onChange={e => setCount(e.target.value)} />
+
+            {/* 모프 — 갓 나온 아이는 색이 안 잡혀 있으니 '아직 모르겠어요'를 눌러 비워둘 수 있습니다 */}
+            <div style={{fontSize:11, color:'var(--text3)', margin:'8px 2px 4px'}}>모프</div>
+            <input className="input" placeholder="예) 릴리화이트 · 할리퀸 · 50헷초초"
+              value={morph} disabled={morphUnknown}
+              style={morphUnknown ? {opacity:.5} : undefined}
+              onChange={e => setMorph(e.target.value)} />
+            <button className="btn btn-secondary btn-sm"
+              style={{width:'auto', padding:'6px 12px', marginTop:6,
+                      ...(morphUnknown ? {borderColor:'var(--accent)', color:'var(--accent)', fontWeight:700} : {})}}
+              onClick={() => { setMorphUnknown(v => !v); setMorph(''); }}>
+              {morphUnknown ? '✓ 아직 모르겠어요' : '아직 모르겠어요'}
+            </button>
             <div style={{fontSize:11, color:'var(--text3)', margin:'8px 2px'}}>
               {hDate !== todayStr() ? `${fmtDate(hDate)}로 기록됩니다. ` : ''}
               베이비가 자동 등록되고 부모(아빠 {dadName || '미상'} · 엄마 {mom ? mom.name : '미상'})가 연결돼요.
@@ -2810,12 +3034,31 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals }) {
           </div>
         ) : (
           <div style={{display:'flex', flexDirection:'column', gap:8}}>
-            <button className="btn btn-primary" onClick={() => { setCount(eggs ? String(eggs) : ''); setHDate(todayStr()); setHatchOpen(true); }}>🐣 해칭했어요</button>
-            {!infertile && (
+            <button className="btn btn-primary" onClick={() => { setCount(eggs ? String(eggs) : ''); setHDate(todayStr()); setMorph(''); setMorphUnknown(false); setHatchOpen(true); }}>🐣 해칭했어요</button>
+            {nPending > 0 && (
               <button className="btn btn-secondary"
-                onClick={() => { patch({ notes: (notes ? notes + ' · ' : '') + '무정' }); showToast('무정란으로 표시했어요'); }}>
+                onClick={() => setUnits(units.map(u => u.status === 'pending' ? { ...u, status: 'infertile' } : u), '무정란으로 표시했어요')}>
                 무정란이었어요
               </button>
+            )}
+            {nPending > 0 && (probFor === -1 ? (
+              <div className="card" style={{margin:0}}>
+                <div style={{fontSize:12, color:'var(--text3)', marginBottom:6}}>어떤 문제였나요? <b>남은 알 {nPending}개</b>에 함께 적습니다.</div>
+                <div style={{display:'flex', flexWrap:'wrap', gap:5}}>
+                  {EGG_PROBLEMS.map(R => (
+                    <button key={R} className="chip-btn" style={{fontSize:11.5, padding:'5px 10px'}}
+                      onClick={() => setUnits(units.map(u => u.status === 'pending' ? { ...u, status: 'problem', reason: R } : u), `${R}(으)로 적었어요`)}>{R}</button>
+                  ))}
+                </div>
+                <button className="btn btn-secondary btn-sm" style={{marginTop:8}} onClick={() => setProbFor(null)}>취소</button>
+              </div>
+            ) : (
+              <button className="btn btn-secondary" onClick={() => setProbFor(-1)}>⚠️ 문제가 있었어요</button>
+            ))}
+            {allDone && (
+              <div style={{fontSize:11.5, color:'var(--text3)', textAlign:'center'}}>
+                알을 모두 정리했어요. 되돌리려면 위 알별 기록에서 눌러주세요.
+              </div>
             )}
           </div>
         )}
@@ -2917,8 +3160,11 @@ function SalePrompt({ gecko, onDone, onClose }) {
   const [date, setDate] = useState(todayStr());
   if (!gecko) return null;
   const won = parseMoney(price);
-  const save = (noPrice) => {
-    const r = DB.recordSale(gecko.id, { won: noPrice ? 0 : (won || 0), buyer, date });
+  /* free=true 는 "무료로 보냈다"는 뜻입니다. 아직 안 적은 것과 구분해서 저장해야
+     홈의 '분양가가 비어 있는 아이' 안내에 다시 잡히지 않습니다. */
+  const save = (opt) => {
+    const o = opt || {};
+    const r = DB.recordSale(gecko.id, { won: o.free ? 0 : (won || 0), free: !!o.free, buyer, date });
     onDone && onDone(r);
   };
   return (
@@ -2944,11 +3190,309 @@ function SalePrompt({ gecko, onDone, onClose }) {
         <input className="input" type="date" value={date} onChange={e => setDate(e.target.value)} />
 
         <div style={{display:'flex', gap:6, marginTop:14}}>
-          <button className="btn btn-primary btn-sm" style={{flex:1}} disabled={!!price && !won} onClick={() => save(false)}>저장</button>
-          <button className="btn btn-secondary btn-sm" style={{flex:1}} onClick={() => save(true)}>가격 없이</button>
+          <button className="btn btn-primary btn-sm" style={{flex:1}} disabled={!!price && !won} onClick={() => save()}>저장</button>
+          <button className="btn btn-secondary btn-sm" style={{flex:1}} onClick={() => save({ free: true })}>🎁 무료로 보냄</button>
         </div>
-        <button className="btn btn-secondary btn-sm" style={{width:'100%', marginTop:6}} onClick={onClose}>취소</button>
+        <div style={{fontSize:11, color:'var(--text3)', margin:'7px 2px 0', lineHeight:1.5}}>
+          무료로 보내셨으면 <b>무료로 보냄</b>을 눌러주세요. 목록에 <b>무료</b>로 적히고, 분양가를 채우라는 안내도 뜨지 않습니다.
+        </div>
+        <button className="btn btn-secondary btn-sm" style={{width:'100%', marginTop:8}} onClick={onClose}>나중에 적기</button>
       </div>
+    </div>
+  );
+}
+
+
+/* ══════════════════════════════════════════
+   가계부 — [분양] · [수입지출]
+   분양 목록은 v3.7까지 홈 칩에 있던 것을 그대로 옮겨온 것입니다.
+   수입은 분양 기록에서 저절로 올라오고, 지출만 직접 적습니다.
+   ══════════════════════════════════════════ */
+function SaleSection({ individuals, navigate, showToast, refreshIndividuals }) {
+  const [saleFilter, setSaleFilter] = useState('available');
+  const [fillQueue, setFillQueue] = useState([]);      // 분양가 채우기 대기줄
+  const [search, setSearch] = useState('');
+  const sortKey = DB.getSettings().listSort || SORT_DEFAULT;
+  const missingPrice = soldMissingPrice(individuals);
+  const soldCount = individuals.filter(i => (i.status || 'own') === 'sold' && !i.isExternal).length;
+  const bySearch = list => list.filter(i =>
+    i.name.toLowerCase().includes(search.toLowerCase()) ||
+    (i.morph || '').toLowerCase().includes(search.toLowerCase()));
+  // KEEP인 아이는 "분양가능" 목록에 올리지 않습니다 (실수로 내놓지 않게)
+  const saleList = sortList(bySearch(individuals.filter(i =>
+    (i.status || 'own') === saleFilter && !i.isExternal && !(saleFilter === 'available' && i.keep))), sortKey);
+  const toggleFav = (g) => { DB.updateIndividual(g.id, { favorite: !g.favorite }); refreshIndividuals(); };
+  return (
+    <>
+      <div style={{padding:'12px 16px 0'}}>
+        <input className="input" placeholder="🔍 이름 또는 모프 검색" value={search} onChange={e => setSearch(e.target.value)} />
+      </div>
+      <div style={{display:'flex', gap:6, padding:'10px 16px 0'}}>
+        {[['available','분양가능'],['reserved','예약중'],['sold',`분양완료${soldCount ? ' ' + soldCount : ''}`]].map(([k, l]) => (
+          <button key={k} className="chip-btn" style={{fontSize:12, padding:'6px 11px', ...(saleFilter === k ? {background:'var(--accent-soft)', fontWeight:700} : {})}}
+            onClick={() => setSaleFilter(k)}>{l}</button>
+        ))}
+      </div>
+
+      {/* 분양가를 아직 안 적은 아이들 — 무료로 보낸 아이는 여기 잡히지 않습니다 */}
+      {missingPrice.length > 0 && (
+        <div style={{margin:'10px 16px 0', padding:'9px 12px', borderRadius:10, background:'var(--accent-soft)',
+                     border:'1px solid var(--accent-edge)', display:'flex', alignItems:'center', gap:10, fontSize:12.5}}>
+          <span style={{color:'var(--accent2)', flex:1}}>분양가를 아직 안 적은 아이 <b>{missingPrice.length}마리</b></span>
+          <button className="btn btn-primary btn-sm" style={{width:'auto', padding:'6px 12px'}}
+            onClick={() => setFillQueue(missingPrice.map(i => i.id))}>채우기</button>
+        </div>
+      )}
+
+      <div style={{height:8}} />
+      {saleList.length === 0 ? (
+        <div className="empty" style={{padding:'40px 20px'}}>
+          <div className="empty-icon" style={{fontSize:36}}>🏷️</div>
+          <p>이 상태의 아이가 없어요.{'\n'}프로필이나 대화에서 분양 상태를 바꿀 수 있어요.</p>
+        </div>
+      ) : saleList.map(gecko => (
+        <div key={gecko.id}>
+          <GeckoCard gecko={gecko} onClick={() => navigate('profile', { gecko })} onToggleFav={toggleFav} />
+          {saleFilter === 'sold' && (
+            <div style={{margin:'-6px 16px 10px', fontSize:11.5, color: salePriceLabel(gecko) ? 'var(--accent2)' : 'var(--text3)'}}>
+              {salePriceLabel(gecko) ? `분양가 ${salePriceLabel(gecko)}` : '분양가 미기록'}
+            </div>
+          )}
+        </div>
+      ))}
+
+      {/* 빠진 분양가를 앞에서부터 하나씩 채웁니다 */}
+      {fillQueue.length > 0 && (
+        <SalePrompt
+          gecko={individuals.find(i => i.id === fillQueue[0])}
+          onClose={() => setFillQueue([])}
+          onDone={() => {
+            const rest = fillQueue.slice(1);
+            setFillQueue(rest);
+            refreshIndividuals();
+            if (!rest.length) showToast('🤝 분양가 정리 완료');
+          }} />
+      )}
+    </>
+  );
+}
+
+/* ── 수입지출 ── */
+function MoneySection({ individuals, navigate, showToast, refreshIndividuals }) {
+  const [ver, setVer] = useState(0);
+  const [mk, setMk] = useState(() => monthKeyOf(todayStr()));
+  const [form, setForm] = useState(null);            // {flow, category, amount, unit, date, notes, indId}
+  const [confirmDel, setConfirmDel] = useState(null);
+  const refresh = () => { setVer(v => v + 1); refreshIndividuals && refreshIndividuals(); };
+  const evs = DB.getEvents();
+  const rows = ledgerRows(evs, individuals);
+  const monthRows = rows.filter(r => monthKeyOf(r.date) === mk);
+  const yearRows = rows.filter(r => yearKeyOf(r.date) === mk.slice(0, 4));
+  const m = ledgerSum(monthRows), y = ledgerSum(yearRows);
+  const byId = {}; individuals.forEach(i => { byId[i.id] = i; });
+  const shiftMonth = (k) => {
+    const [yy, mm] = mk.split('-').map(Number);
+    const d = new Date(yy, mm - 1 + k, 1);
+    setMk(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+  };
+  const openForm = (flow) => setForm({
+    flow, category: flow === 'out' ? EXPENSE_CATS[0] : INCOME_CATS[1],
+    amount: '', unit: '원', date: todayStr(), notes: '', indId: '',
+  });
+  const amountOf = (f) => {
+    const n = parseFloat(String(f.amount).replace(/,/g, ''));
+    if (!isFinite(n) || n < 0) return null;
+    return Math.round(n * (f.unit === '만원' ? 10000 : 1));
+  };
+  const saveForm = () => {
+    const won = amountOf(form);
+    if (won === null) return showToast('⚠️ 금액을 숫자로 적어주세요');
+    DB.addEvent({
+      individualId: null, type: 'ledger', date: form.date || todayStr(),
+      data: { flow: form.flow, category: form.category, amount: won,
+              notes: (form.notes || '').trim(), indId: form.indId || null },
+    });
+    setForm(null); refresh();
+    showToast(form.flow === 'out' ? `💸 지출 ${wonText(won)} 기록` : `💰 수입 ${wonText(won)} 기록`);
+  };
+  const Money = ({ v, color }) => <b style={{color, fontSize:15}}>{Number(v).toLocaleString()}</b>;
+
+  return (
+    <div style={{padding:'12px 16px 0'}}>
+      {/* 달 고르기 */}
+      <div style={{display:'flex', alignItems:'center', justifyContent:'center', gap:14, marginBottom:10}}>
+        <button className="btn btn-secondary btn-sm" style={{width:'auto', padding:'5px 12px'}} onClick={() => shiftMonth(-1)}>‹</button>
+        <span style={{fontSize:15, fontWeight:800}}>{mk.slice(0, 4)}년 {Number(mk.slice(5, 7))}월</span>
+        <button className="btn btn-secondary btn-sm" style={{width:'auto', padding:'5px 12px'}}
+          disabled={mk >= monthKeyOf(todayStr())} onClick={() => shiftMonth(1)}>›</button>
+      </div>
+
+      <div className="card" style={{margin:'0 0 12px'}}>
+        <div style={{display:'flex', textAlign:'center'}}>
+          <div style={{flex:1}}>
+            <div style={{fontSize:11, color:'var(--text3)'}}>수입</div>
+            <div style={{marginTop:3}}><Money v={m.income} color="#2E7D46" /><span style={{fontSize:11, color:'var(--text3)'}}>원</span></div>
+          </div>
+          <div style={{flex:1, borderLeft:'1px solid var(--border)', borderRight:'1px solid var(--border)'}}>
+            <div style={{fontSize:11, color:'var(--text3)'}}>지출</div>
+            <div style={{marginTop:3}}><Money v={m.expense} color="var(--danger)" /><span style={{fontSize:11, color:'var(--text3)'}}>원</span></div>
+          </div>
+          <div style={{flex:1}}>
+            <div style={{fontSize:11, color:'var(--text3)'}}>남은 것</div>
+            <div style={{marginTop:3}}><Money v={m.net} color={m.net >= 0 ? 'var(--accent2)' : 'var(--danger)'} /><span style={{fontSize:11, color:'var(--text3)'}}>원</span></div>
+          </div>
+        </div>
+        <div style={{fontSize:11.5, color:'var(--text3)', textAlign:'center', marginTop:9, paddingTop:9, borderTop:'1px solid var(--border)'}}>
+          {mk.slice(0, 4)}년 누계 · 수입 {y.income.toLocaleString()} · 지출 {y.expense.toLocaleString()} ·{' '}
+          <b style={{color: y.net >= 0 ? 'var(--accent2)' : 'var(--danger)'}}>{y.net.toLocaleString()}원</b>
+        </div>
+      </div>
+
+      {form ? (
+        <div className="card" style={{margin:'0 0 12px'}}>
+          <div style={{fontSize:13, fontWeight:800, marginBottom:9}}>{form.flow === 'out' ? '💸 지출 적기' : '💰 수입 적기'}</div>
+
+          <div style={{fontSize:11, color:'var(--text3)', marginBottom:5}}>항목</div>
+          <div style={{display:'flex', flexWrap:'wrap', gap:5, marginBottom:10}}>
+            {(form.flow === 'out' ? EXPENSE_CATS : INCOME_CATS).map(c => (
+              <button key={c} className="chip-btn" style={{fontSize:11.5, padding:'5px 10px', ...(form.category === c ? {background:'var(--accent-soft)', fontWeight:700} : {})}}
+                onClick={() => setForm(f => ({ ...f, category: c }))}>{c}</button>
+            ))}
+          </div>
+
+          <div style={{fontSize:11, color:'var(--text3)', marginBottom:4}}>금액</div>
+          <div style={{display:'flex', gap:6}}>
+            <input className="input" inputMode="decimal" placeholder="예) 30000" value={form.amount}
+              onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} autoFocus />
+            {['원','만원'].map(u => (
+              <button key={u} className="chip-btn" style={{fontSize:12, padding:'6px 11px', flexShrink:0, ...(form.unit === u ? {background:'var(--accent-soft)', fontWeight:700} : {})}}
+                onClick={() => setForm(f => ({ ...f, unit: u }))}>{u}</button>
+            ))}
+          </div>
+          <div style={{fontSize:11.5, minHeight:17, margin:'5px 2px 8px', color: amountOf(form) ? 'var(--accent2)' : 'var(--text3)'}}>
+            {form.amount ? (amountOf(form) !== null ? wonText(amountOf(form)) + ' 으로 적을게요' : '숫자로 적어주세요') : ' '}
+          </div>
+
+          <div style={{fontSize:11, color:'var(--text3)', marginBottom:4}}>날짜</div>
+          <input className="input" type="date" value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} />
+
+          <div style={{fontSize:11, color:'var(--text3)', margin:'10px 0 4px'}}>메모 <span style={{opacity:.65}}>(선택)</span></div>
+          <input className="input" placeholder="예) 판게아 2봉" value={form.notes}
+            onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
+
+          {form.flow === 'out' && (
+            <>
+              <div style={{fontSize:11, color:'var(--text3)', margin:'10px 0 4px'}}>
+                어느 아이에게 쓴 돈인가요? <span style={{opacity:.65}}>(선택 · 개체 손익 계산에 씁니다)</span>
+              </div>
+              <select className="input" value={form.indId} onChange={e => setForm(f => ({ ...f, indId: e.target.value }))}>
+                <option value="">— 특정 아이 아님 —</option>
+                {individuals.filter(i => !i.isExternal).map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
+              </select>
+            </>
+          )}
+
+          <div style={{display:'flex', gap:6, marginTop:13}}>
+            <button className="btn btn-primary btn-sm" style={{flex:1}} onClick={saveForm}>저장</button>
+            <button className="btn btn-secondary btn-sm" style={{flex:1}} onClick={() => setForm(null)}>취소</button>
+          </div>
+        </div>
+      ) : (
+        <div style={{display:'flex', gap:6, marginBottom:12}}>
+          <button className="btn btn-primary btn-sm" style={{flex:1}} onClick={() => openForm('out')}>＋ 지출</button>
+          <button className="btn btn-secondary btn-sm" style={{flex:1}} onClick={() => openForm('in')}>＋ 수입</button>
+        </div>
+      )}
+
+      {monthRows.length === 0 ? (
+        <div className="empty" style={{padding:'34px 20px'}}>
+          <div className="empty-icon" style={{fontSize:36}}>💰</div>
+          <p>이 달에는 오간 돈이 없어요.{'\n'}분양가를 적으면 수입은 저절로 올라옵니다.</p>
+        </div>
+      ) : monthRows.map(r => {
+        const isIn = r.flow === 'in';
+        const ind = r.indId ? byId[r.indId] : null;
+        return (
+          <div key={r.id} className="card" style={{margin:'0 0 8px', padding:'11px 13px'}}>
+            <div style={{display:'flex', alignItems:'center', gap:9}}>
+              <span style={{fontSize:17}}>{isIn ? '💰' : '💸'}</span>
+              <div style={{flex:1, minWidth:0}}>
+                <div style={{fontSize:13.5, fontWeight:700, display:'flex', alignItems:'center', gap:6, flexWrap:'wrap'}}>
+                  <span>{r.category}</span>
+                  {r.auto && <span className="badge" style={{fontSize:9.5, background:'var(--bg3)', color:'var(--text3)', border:'1px solid var(--border)'}}>자동</span>}
+                </div>
+                <div style={{fontSize:11.5, color:'var(--text3)', marginTop:2, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
+                  {fmtDate(r.date)}{r.label ? ' · ' + r.label : ''}{ind && !r.auto ? ' · ' + ind.name : ''}
+                </div>
+              </div>
+              <div style={{fontSize:13.5, fontWeight:800, color: isIn ? '#2E7D46' : 'var(--danger)', flexShrink:0}}>
+                {isIn ? '+' : '−'}{Number(r.amount).toLocaleString()}
+              </div>
+              {!r.auto && (
+                <button onClick={() => setConfirmDel(confirmDel === r.id ? null : r.id)}
+                  style={{background:'none', border:'none', cursor:'pointer', fontSize:13, color:'var(--text3)', flexShrink:0}}>🗑️</button>
+              )}
+              {r.auto && ind && (
+                <button onClick={() => navigate('profile', { gecko: ind })}
+                  style={{background:'none', border:'none', cursor:'pointer', color:'var(--text3)', flexShrink:0}}>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 18 15 12 9 6"/></svg>
+                </button>
+              )}
+            </div>
+            {confirmDel === r.id && (
+              <div style={{marginTop:8}}>
+                <div style={{fontSize:12, color:'var(--danger)', marginBottom:6}}>이 기록을 지울까요?</div>
+                <div style={{display:'flex', gap:6}}>
+                  <button className="btn btn-danger btn-sm" style={{flex:1}}
+                    onClick={() => { DB.deleteEvent(r.ref); setConfirmDel(null); refresh(); showToast('가계부에서 지웠어요'); }}>삭제</button>
+                  <button className="btn btn-secondary btn-sm" style={{flex:1}} onClick={() => setConfirmDel(null)}>취소</button>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      <div style={{fontSize:11, color:'var(--text3)', lineHeight:1.6, margin:'12px 2px 0'}}>
+        · 분양 수입은 <b>분양가를 적는 순간</b> 여기에 저절로 올라옵니다. 따로 또 적지 않으셔도 됩니다.<br />
+        · 개체 구입비를 그 아이에게 연결해 두면, 프로필에서 <b>그 아이의 손익</b>이 보입니다.
+      </div>
+      <div style={{height:16}} />
+    </div>
+  );
+}
+
+function LedgerScreen({ individuals, navigate, showToast, refreshIndividuals }) {
+  const [seg, setSeg] = useState('sale');
+  return (
+    <div className="screen">
+      <div className="header">
+        <div className="header-row">
+          <div style={{minWidth:0}}>
+            <h1>가계부</h1>
+            <div className="header-sub">🏷️ 분양과 오가는 돈을 한자리에서</div>
+          </div>
+          <button onClick={() => navigate('settings')} aria-label="설정"
+            style={{background:'var(--bg3)', border:'1px solid var(--border)', borderRadius:10, padding:'6px 7px',
+                    cursor:'pointer', display:'flex', alignItems:'center', color:'var(--text2)', flexShrink:0}}>
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div style={{display:'flex', gap:6, padding:'12px 16px 0'}}>
+        {[['sale','🏷️ 분양'],['money','💰 수입지출']].map(([k, l]) => (
+          <button key={k} className="chip-btn" style={{flex:1, fontSize:13, padding:'8px 0', textAlign:'center',
+            ...(seg === k ? {background:'var(--accent-soft)', fontWeight:700} : {})}}
+            onClick={() => setSeg(k)}>{l}</button>
+        ))}
+      </div>
+
+      {seg === 'sale'
+        ? <SaleSection individuals={individuals} navigate={navigate} showToast={showToast} refreshIndividuals={refreshIndividuals} />
+        : <MoneySection individuals={individuals} navigate={navigate} showToast={showToast} refreshIndividuals={refreshIndividuals} />}
+
+      <div style={{height:16}} />
     </div>
   );
 }
@@ -2980,7 +3524,7 @@ function GeckoCard({ gecko, onClick, onToggleFav }) {
         {/* 모프 / 생일 / 최근기록을 한 줄씩 — 없는 항목도 칸은 그대로 비워 둡니다 */}
         <div className="gecko-line">
           <span className={`gender-dot ${gecko.gender}`}></span>
-          {gecko.morph || '모프 미등록'}
+          {gecko.morph || (gecko.morphUnknown ? ' ' : '모프 미등록')}
         </div>
         <div className="gecko-line">
           {gecko.hatchDate ? `🎂 ${fmtDate(gecko.hatchDate)}` : ' '}
@@ -3497,7 +4041,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       if (pm2) patch.salePrice = String(Math.round(parseFloat(pm2[1]) * 10000));
       DB.updateIndividual(target.id, patch);
       refreshIndividuals();
-      bot(`${target.name}, 분양가능으로 올려뒀어요 🏷️${patch.salePrice ? ` · ${Number(patch.salePrice).toLocaleString()}원` : ''}\n홈의 분양가능 필터에서 볼 수 있어요.`);
+      bot(`${target.name}, 분양가능으로 올려뒀어요 🏷️${patch.salePrice ? ` · ${Number(patch.salePrice).toLocaleString()}원` : ''}\n가계부 탭 › 분양에서 볼 수 있어요.`);
       return;
     }
     if (/예약(?:됐|중|으로|잡혔)/.test(text) && /분양|예약/.test(text) && !/병원|부화|해칭/.test(text)) {
@@ -3680,6 +4224,12 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
         if (dup) DB.deleteEvent(dup.id);
       }
       DB.addEvent({ individualId: f.targetId, type: f.type, date: fDate, data: f.data || {} });
+      // 산란에 겉보기 상태를 적었으면 알마다 같은 상태로 채워 둡니다 (나중에 알별로 고칠 수 있습니다)
+      if (f.type === 'laying' && f.data && f.data.eggLook) {
+        const lay = DB.getEvents().filter(e => e.individualId === f.targetId && e.type === 'laying' && e.date === fDate)
+          .sort((a, b) => (a.createdAt || '') < (b.createdAt || '') ? 1 : -1)[0];
+        if (lay) DB.setEggUnits(lay.id, eggUnitsOf(lay, {}).map(u => ({ ...u, look: f.data.eggLook })));
+      }
 
       // 메이팅 → 산란 예정 알림 자동 생성 (암컷 기준)
       if (f.type === 'mating') {
@@ -3701,7 +4251,8 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       }
       if (f.type === 'distribution') {
         // 대화로 분양을 적어도 KEEP은 함께 풀립니다 (한 아이가 KEEP이면서 분양완료일 수는 없으므로)
-        DB.updateIndividual(f.targetId, { status: 'sold', keep: false, salePrice: f.data.price || '' });
+        DB.updateIndividual(f.targetId, { status: 'sold', keep: false, salePrice: f.data.price || '',
+                                          saleFree: !f.data.price && !!f.data.free });
       }
       if (f.type === 'hatching') {
         const mode = DB.getSettings().babyNaming || 'combo';
@@ -3716,9 +4267,10 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
           const dadId = (lay && lay.data.sireId) || (mate2 && mate2.data.partnerId) || null;
           const dad = all.find(i => i.id === dadId) || null;
           const names = named || makeBabyNames(mom ? mom.name : '', dad ? dad.name : '', count, all.map(i => i.name));
+          const mo = (f.data.morph || '').trim();
           names.slice(0, count).forEach(nm => {
             DB.addIndividual({
-              name: nm, gender: 'unknown', morph: '', hatchDate: f.date || todayStr(),
+              name: nm, gender: 'unknown', morph: mo, morphUnknown: !mo, hatchDate: f.date || todayStr(),
               isFromCreGunseol: true, status: 'own',
               sireId: dadId, damId: f.targetId,
               shareCode: Math.random().toString(36).slice(2, 8).toUpperCase(),
@@ -3864,6 +4416,31 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
             </label>
           )}
 
+          {/* 산란을 적었으면 알 겉보기 상태를 여기서 함께 남깁니다 (불빛 비춰 보고 바로 적을 수 있게) */}
+          {pending.filter(f => f.type === 'laying').map((f, i) => (
+            <div key={'lk' + i} style={{margin:'0 4px 14px'}}>
+              <div style={{fontSize:12, color:'var(--text2)', marginBottom:6}}>🥚 알 상태는 어떤가요? <span style={{color:'var(--text3)'}}>(선택)</span></div>
+              <div style={{display:'flex', flexWrap:'wrap', gap:5}}>
+                {EGG_LOOKS.map(L => (
+                  <button key={L} className="chip-btn" style={{fontSize:11.5, padding:'5px 10px', ...((f.data.eggLook || '') === L ? {background:'var(--accent-soft)', fontWeight:700} : {})}}
+                    onClick={() => updatePending(p => p.map(x => x === f ? { ...x, data: { ...x.data, eggLook: (x.data.eggLook === L ? '' : L) } } : x))}>{L}</button>
+                ))}
+              </div>
+            </div>
+          ))}
+
+          {/* 부화를 적었으면 모프를 함께 물어봅니다 — 모르면 비워두면 됩니다 */}
+          {pending.filter(f => f.type === 'hatching').map((f, i) => (
+            <div key={'hm' + i} style={{margin:'0 4px 14px'}}>
+              <div style={{fontSize:12, color:'var(--text2)', marginBottom:6}}>🐣 나온 아이들 모프는요? <span style={{color:'var(--text3)'}}>(모르면 비워두세요)</span></div>
+              <input className="input" placeholder="예) 릴리화이트 · 할리퀸" value={f.data.morph || ''}
+                onChange={e => { const v = e.target.value; updatePending(p => p.map(x => x === f ? { ...x, data: { ...x.data, morph: v } } : x)); }} />
+              <div style={{fontSize:11, color:'var(--text3)', marginTop:5}}>
+                비워두면 <b>아직 모르겠어요</b>로 남고, 홈 목록에는 모프 줄이 뜨지 않습니다.
+              </div>
+            </div>
+          ))}
+
           <div style={{display:'flex', flexDirection:'column', gap:8}}>
             <button className="btn btn-primary" onClick={doSave}>✅ 기록마무리하기 ({pending.length}건)</button>
             <button className="btn btn-secondary" onClick={() => setPhase('chat')}>← 더 기록하기</button>
@@ -3879,7 +4456,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
    ══════════════════════════════════════════ */
 function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndividuals, individuals }) {
   const [gecko, setGecko] = useState(() => DB.getIndividuals().find(i => i.id === initialGecko.id) || initialGecko);
-  const [events, setEvents] = useState(() => DB.getEventsFor(initialGecko.id));
+  const [events, setEvents] = useState(() => DB.getEventsFor(initialGecko.id).filter(e => e.type !== 'ledger'));
   const [showShare, setShowShare] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -3890,6 +4467,10 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
   const [keepAsk, setKeepAsk] = useState(null);          // KEEP인데 분양 상태로 바꾸려 할 때
   const [nameEdit, setNameEdit] = useState(false);       // 이름 수정
   const [nameVal, setNameVal] = useState('');
+  const [healthOpen, setHealthOpen] = useState(false);   // 이상 기록
+  const [hIssue, setHIssue] = useState('');
+  const [hNote, setHNote] = useState('');
+  const [hWhen, setHWhen] = useState(todayStr());
   const eventPhotoRef = useRef(null);
   const avatarFileRef = useRef(null);
 
@@ -3915,7 +4496,7 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
 
   const refreshLocal = () => {
     setGecko(DB.getIndividuals().find(i => i.id === gecko.id) || gecko);
-    setEvents(DB.getEventsFor(gecko.id));
+    setEvents(DB.getEventsFor(gecko.id).filter(e => e.type !== 'ledger'));
     refreshIndividuals();
   };
 
@@ -4071,19 +4652,69 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
         </button>
       </div>
 
+      {/* ── 이상이 있어요 ──
+          거식·탈피부전 같은 것을 눌러서 바로 남깁니다. 대화로 말해도 같은 기록이 됩니다. */}
+      <div style={{padding:'0 16px 10px'}}>
+        {healthOpen ? (
+          <div className="card" style={{margin:0}}>
+            <div style={{fontSize:13, fontWeight:800, marginBottom:8}}>⚠️ 어떤 이상이 있나요?</div>
+            <div style={{display:'flex', flexWrap:'wrap', gap:5, marginBottom:10}}>
+              {HEALTH_ISSUES.map(it => (
+                <button key={it} className="chip-btn" style={{fontSize:12, padding:'6px 11px', ...(hIssue === it ? {background:'var(--accent-soft)', fontWeight:700} : {})}}
+                  onClick={() => setHIssue(it)}>{it}</button>
+              ))}
+            </div>
+            <div style={{fontSize:11, color:'var(--text3)', marginBottom:4}}>언제</div>
+            <input className="input" type="date" value={hWhen} max={todayStr()} onChange={e => setHWhen(e.target.value)} />
+            <div style={{fontSize:11, color:'var(--text3)', margin:'10px 0 4px'}}>메모 <span style={{opacity:.65}}>(선택)</span></div>
+            <input className="input" placeholder="예) 사흘째 안 먹음 · 병원 다녀옴" value={hNote} onChange={e => setHNote(e.target.value)} />
+            <div style={{display:'flex', gap:6, marginTop:12}}>
+              <button className="btn btn-primary btn-sm" style={{flex:1}} onClick={() => {
+                if (!hIssue) return showToast('⚠️ 어떤 이상인지 골라주세요');
+                DB.addEvent({ individualId: gecko.id, type: 'health', date: hWhen || todayStr(),
+                              data: { issue: hIssue, notes: hNote.trim() } });
+                setHealthOpen(false); setHIssue(''); setHNote(''); setHWhen(todayStr());
+                refreshLocal(); showToast('⚠️ 이상 기록을 남겼어요');
+              }}>기록하기</button>
+              <button className="btn btn-secondary btn-sm" style={{flex:1}} onClick={() => setHealthOpen(false)}>취소</button>
+            </div>
+          </div>
+        ) : (
+          <button className="btn btn-secondary" onClick={() => { setHealthOpen(true); setHWhen(todayStr()); }}>
+            ⚠️ 이상이 있어요
+          </button>
+        )}
+      </div>
+
       <div style={{padding:'0 16px 4px'}}>
         <div style={{fontSize:11, color:'var(--text3)', marginBottom:4}}>
-          분양 상태{salePriceOf(gecko) ? ` · 분양가 ${wonText(salePriceOf(gecko))}` : ''}
-          {gecko.status === 'sold' && !salePriceOf(gecko) && (
+          분양 상태{salePriceLabel(gecko) ? ` · 분양가 ${salePriceLabel(gecko)}` : ''}
+          {gecko.status === 'sold' && !salePriceLabel(gecko) && (
             <button onClick={() => setSalePrompt(true)}
               style={{background:'none', border:'none', padding:'0 0 0 6px', cursor:'pointer', fontSize:11, color:'var(--accent2)', fontWeight:700, textDecoration:'underline'}}>
               분양가 적기
             </button>
           )}
         </div>
+        {(() => {
+          // 개체 손익 — 가계부에서 이 아이에게 연결한 지출과 분양가를 견줍니다
+          const pr = profitOfIndividual(gecko, DB.getEvents());
+          if (!pr) return null;
+          return (
+            <div style={{fontSize:11, color:'var(--text3)', marginBottom:6}}>
+              {pr.cost ? `들인 돈 ${wonText(pr.cost)}` : '들인 돈 없음'}
+              {pr.sold ? ` · 받은 돈 ${salePriceLabel(gecko) || '미기록'}` : ''}
+              {pr.sold && (pr.got || pr.cost) ? (
+                <b style={{color: pr.net >= 0 ? 'var(--accent2)' : 'var(--danger)'}}>
+                  {` · 손익 ${pr.net >= 0 ? '+' : ''}${Number(pr.net).toLocaleString()}원`}
+                </b>
+              ) : ''}
+            </div>
+          );
+        })()}
         <div style={{display:'flex', gap:6, overflowX:'auto', paddingBottom:8}}>
           {Object.entries(STATUS).map(([k, s]) => (
-            <button key={k} className="chip-btn" style={(gecko.status || 'own') === k ? {background:'var(--accent-soft)', fontWeight:700} : {}}
+            <button key={k} className="chip-btn" style={{whiteSpace:'nowrap', flexShrink:0, ...((gecko.status || 'own') === k ? {background:'var(--accent-soft)', fontWeight:700} : {})}}
               onClick={() => {
                 if ((gecko.status || 'own') === k) { if (k === 'sold') setSalePrompt(true); return; }
                 // KEEP인 아이를 내놓으려 하면 한 번 물어봅니다 (실수 방지)
@@ -4263,7 +4894,8 @@ function formatEventDetail(ev) {
       const base = d.count ? `${d.count}마리 부화` : '해칭 기록';
       return d.diffDays !== undefined ? `${base} · 🎯 ${diffPhrase(d.diffDays)}` : base;
     }
-    case 'distribution': return d.price ? `${Number(d.price).toLocaleString()}원에 분양` : '분양 기록';
+    case 'distribution': return d.price ? `${Number(d.price).toLocaleString()}원에 분양` : (d.free ? '무료로 분양' : '분양 기록');
+    case 'health':       return `${d.issue || '이상'}${d.notes ? ' · ' + d.notes : ''}`;
     case 'shed':         return '탈피 완료';
     case 'feeding': {
       if (d.skipped) return '⏭️ 오늘은 안 줌';
@@ -4920,7 +5552,9 @@ function saleInfo(ind) {
   const buyer = (notes.match(/분양처\s*:\s*([^·]+)/) || [])[1];
   const won = ev && ev.data ? Number(ev.data.price || 0) : Number(ind.salePrice || 0);
   const rest = notes.split('·').map(s => s.trim()).filter(s => s && !/^분양처\s*:/.test(s)).join(' · ');
-  return { buyer: (buyer || '').trim(), man: won ? String(won / 10000) : (ev ? '0' : ''), note: rest };
+  const free = !won && (!!(ev && ev.data && ev.data.free) || !!ind.saleFree);
+  return { buyer: (buyer || '').trim(), man: won ? String(won / 10000) : (ev ? '0' : ''),
+           note: [free ? '무료 분양' : '', rest].filter(Boolean).join(' · ') };
 }
 
 function buildWorkbook(XLSX) {
@@ -5002,6 +5636,20 @@ function buildWorkbook(XLSX) {
   // 원본과 같은 자리(M4·N4·O4)에 합계
   a6[3][12] = '분양가 합'; a6[3][13] = saleSum ? Math.round(saleSum * 100) / 100 : ''; a6[3][14] = '만원';
   add('분양리스트', a6, [3, 6, 12, 10, 8, 16, 9, 16, 8, 22]);
+
+  /* ── 5. 가계부 ── */
+  const lrows = ledgerRows(DB.getEvents(), inds);
+  const a7 = [['', '', '', '크레건설 가계부'], [], [],
+    ['', '날짜', '구분', '항목', '내용', '개체', '금액(원)']];
+  let inSum = 0, outSum = 0;
+  [...lrows].reverse().forEach(r => {
+    if (r.flow === 'in') inSum += r.amount; else outSum += r.amount;
+    a7.push(['', r.date, r.flow === 'in' ? '수입' : '지출', r.category, r.label || '',
+             r.indId ? nameOf(r.indId) : '', r.amount]);
+  });
+  a7.push([]);
+  a7.push(['', '', '합계', '수입', inSum, '지출', outSum, '남은 것', inSum - outSum]);
+  add('가계부', a7, [3, 12, 7, 14, 24, 12, 12]);
 
   return wb;
 }
