@@ -1,9 +1,10 @@
 # 예약 배포 — GitHub가 정해진 시각에 알아서 올려줍니다.
 #
 # 쓰는 법
-#   1) 새 버전 파일을 staging 가지에 올립니다 (최신 main에서 받은 파일로!)
+#   0) Actions → "staging 준비 (main과 맞추기)" 를 먼저 누릅니다
+#   1) 새로 만든 파일(index.html, app.min.js, sw.js, version.json 등)을 staging 에 올립니다
 #   2) staging의 deploy.json 에 올릴 시각을 적습니다
-#        { "at": "2026-08-27 03:00", "note": "v4.2 무엇무엇" }
+#        { "at": "2026-08-27 03:00", "note": "v4.3 무엇무엇" }
 #   3) 그 시각이 지나면 GitHub가 staging 내용을 main으로 옮깁니다 (= 배포)
 #
 # 취소하려면 시각 전에 deploy.json 의 at 을 "" 로 비우면 됩니다.
@@ -89,11 +90,11 @@ jobs:
         id: diff
         if: steps.check.outputs.go == 'yes'
         run: |
-          # staging이 main보다 뒤처져 있으면 절대 배포하지 않습니다.
+          # 안전장치: staging이 main보다 뒤처져 있으면 절대 배포하지 않습니다
           # (뒤처진 staging을 올리면 지금 쓰는 앱이 옛 버전으로 되돌아갑니다)
           if ! git merge-base --is-ancestor origin/main origin/staging; then
             echo "::warning::staging이 main보다 뒤처져 있습니다. 되돌림 방지를 위해 배포하지 않습니다."
-            echo "staging에 올리기 전에 최신 main 파일을 먼저 받아 두세요."
+            echo "Actions → 'staging 준비 (main과 맞추기)' 를 먼저 돌려 주세요."
             echo "changed=no" >> "$GITHUB_OUTPUT"; exit 0
           fi
           if git diff --quiet origin/main origin/staging -- . ':(exclude)deploy.json'; then
@@ -110,9 +111,11 @@ jobs:
           git config user.name  "crebot"
           git config user.email "crebot@users.noreply.github.com"
           git checkout -B main origin/main
-          git checkout origin/staging -- .
+          # staging 트리를 통째로 반영합니다.
+          # (checkout -- . 는 "지운 파일"을 반영하지 못해 read-tree 를 씁니다)
+          git read-tree --reset -u origin/staging
           rm -f deploy.json
-          git add -A
+          git rm -q --cached deploy.json 2>/dev/null || true
           git commit -m "예약 배포: ${{ steps.check.outputs.note }}" || echo "커밋할 내용 없음"
           git push origin main
           echo "배포했습니다."
