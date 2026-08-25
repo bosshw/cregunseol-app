@@ -1,0 +1,51 @@
+# staging 준비 — 버튼 한 번으로 staging을 지금 서비스 중인 main과 똑같이 맞춥니다.
+#
+# 언제 쓰나
+#   새 버전을 예약하기 "전에" 항상 먼저 눌러주세요.
+#   staging이 옛 버전인 채로 예약하면 앱이 옛날로 되돌아갑니다.
+#   (예약 배포 워크플로가 그런 경우 배포를 거부하도록 막아두긴 했습니다)
+#
+# 하는 일
+#   staging = 지금의 main + 비어 있는 deploy.json
+
+name: staging 준비 (main과 맞추기)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: staging-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 저장소 받기
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: staging을 main과 맞추기
+        run: |
+          git config user.name  "crebot"
+          git config user.email "crebot@users.noreply.github.com"
+
+          git checkout -B staging origin/main
+
+          cat > deploy.json <<'JSON'
+          {
+            "at": "",
+            "note": "",
+            "안내": "at 에 올릴 시각을 한국 시간으로 적으면 그 때 배포됩니다. 예) 2026-08-27 03:00 / 비워두면 배포 안 함"
+          }
+          JSON
+
+          git add deploy.json
+          git commit -m "staging 준비: main과 맞춤" || echo "바뀐 내용 없음"
+          git push -f origin staging
+
+          echo "staging이 main과 같아졌습니다. 이제 바뀐 파일만 staging에 올리시면 됩니다."
