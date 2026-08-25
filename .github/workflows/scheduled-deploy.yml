@@ -1,9 +1,9 @@
 # 예약 배포 — GitHub가 정해진 시각에 알아서 올려줍니다.
 #
 # 쓰는 법
-#   1) 새 버전 파일을 staging 가지에 올립니다
+#   1) 새 버전 파일을 staging 가지에 올립니다 (최신 main에서 받은 파일로!)
 #   2) staging의 deploy.json 에 올릴 시각을 적습니다
-#        { "at": "2026-08-20 03:00", "note": "v3.8 급여 개선" }
+#        { "at": "2026-08-27 03:00", "note": "v4.2 무엇무엇" }
 #   3) 그 시각이 지나면 GitHub가 staging 내용을 main으로 옮깁니다 (= 배포)
 #
 # 취소하려면 시각 전에 deploy.json 의 at 을 "" 로 비우면 됩니다.
@@ -85,10 +85,17 @@ jobs:
             echo "go=no" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: 바뀐 게 있는지 확인
+      - name: 되돌림 방지 + 바뀐 게 있는지 확인
         id: diff
         if: steps.check.outputs.go == 'yes'
         run: |
+          # staging이 main보다 뒤처져 있으면 절대 배포하지 않습니다.
+          # (뒤처진 staging을 올리면 지금 쓰는 앱이 옛 버전으로 되돌아갑니다)
+          if ! git merge-base --is-ancestor origin/main origin/staging; then
+            echo "::warning::staging이 main보다 뒤처져 있습니다. 되돌림 방지를 위해 배포하지 않습니다."
+            echo "staging에 올리기 전에 최신 main 파일을 먼저 받아 두세요."
+            echo "changed=no" >> "$GITHUB_OUTPUT"; exit 0
+          fi
           if git diff --quiet origin/main origin/staging -- . ':(exclude)deploy.json'; then
             echo "main과 staging이 같습니다. 올릴 게 없습니다."
             echo "changed=no" >> "$GITHUB_OUTPUT"
