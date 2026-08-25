@@ -1,4 +1,4 @@
-const CACHE = 'creg-v40';
+const CACHE = 'creg-v41';
 
 // 화면을 그리는 데 꼭 필요한 바깥 부품 — 이것도 폰에 저장해둬야 인터넷 없이 열립니다
 const LIBS = [
@@ -43,4 +43,4 @@ self.addEventListener('fetch', e => {
     }))
   );
 });
-// v4.0 deploy 2026-08-23 (엑셀 입양가 가계부 반영 · 인스타 링크 내장)
+// v4.1 deploy 2026-08-25 (저장 문구·기록마무리 · 성별 자동인식 · 혈통 이름 클릭 · 해칭 아이콘)

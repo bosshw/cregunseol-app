@@ -579,7 +579,7 @@ const SERVER = {
 
    인터넷이 없거나 파일을 못 받으면 아무 것도 막지 않습니다(앱은 그대로 씁니다).
    ══════════════════════════════════════════ */
-const APP_VERSION = '4.0';
+const APP_VERSION = '4.1';
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -977,6 +977,86 @@ function GenderTag({ g, size = 13 }) {
   return <span style={{ color: genderColor(g), fontWeight: 800, fontSize: size }}>{genderMark(g)}</span>;
 }
 const genderEmoji = g => genderMark(g);
+
+/* ── 해칭 커스텀 아이콘: 알에서 나오는 도마뱀 픽셀아트 ── */
+const HATCH_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" shape-rendering="crispEdges">
+  <!-- 게코 머리 / 볏 -->
+  <rect x="28" y="0" width="8" height="4" fill="#3D7018"/>
+  <rect x="30" y="0" width="4" height="4" fill="#6DB033"/>
+  <!-- 머리 윗줄 테두리 -->
+  <rect x="18" y="4" width="28" height="4" fill="#3D7018"/>
+  <rect x="22" y="4" width="20" height="4" fill="#6DB033"/>
+  <!-- 눈 줄 -->
+  <rect x="18" y="8" width="4" height="4" fill="#3D7018"/>
+  <rect x="22" y="8" width="4" height="4" fill="#0A0400"/>
+  <rect x="22" y="8" width="2" height="2" fill="#FFFFFF"/>
+  <rect x="26" y="8" width="12" height="4" fill="#6DB033"/>
+  <rect x="38" y="8" width="4" height="4" fill="#0A0400"/>
+  <rect x="38" y="8" width="2" height="2" fill="#FFFFFF"/>
+  <rect x="42" y="8" width="4" height="4" fill="#3D7018"/>
+  <!-- 턱/주둥이 -->
+  <rect x="18" y="12" width="4" height="4" fill="#3D7018"/>
+  <rect x="22" y="12" width="20" height="4" fill="#6DB033"/>
+  <rect x="42" y="12" width="4" height="4" fill="#3D7018"/>
+  <rect x="27" y="14" width="10" height="2" fill="#3D7018"/>
+  <!-- 목 -->
+  <rect x="22" y="16" width="4" height="4" fill="#3D7018"/>
+  <rect x="26" y="16" width="12" height="4" fill="#6DB033"/>
+  <rect x="38" y="16" width="4" height="4" fill="#3D7018"/>
+  <!-- 몸통 + 앞발 -->
+  <rect x="10" y="20" width="4" height="4" fill="#3D7018"/>
+  <rect x="14" y="20" width="36" height="4" fill="#6DB033"/>
+  <rect x="50" y="20" width="4" height="4" fill="#3D7018"/>
+  <!-- 알 균열: 왼쪽 껍데기 조각 -->
+  <rect x="2" y="24" width="4" height="4" fill="#7A5820"/>
+  <rect x="6" y="24" width="8" height="4" fill="#F5E5BE"/>
+  <rect x="14" y="24" width="4" height="4" fill="#5A3810"/>
+  <!-- 균열 사이 게코 몸통 -->
+  <rect x="18" y="24" width="28" height="4" fill="#6DB033"/>
+  <!-- 알 균열: 오른쪽 껍데기 조각 -->
+  <rect x="46" y="24" width="4" height="4" fill="#5A3810"/>
+  <rect x="50" y="24" width="8" height="4" fill="#F5E5BE"/>
+  <rect x="58" y="24" width="4" height="4" fill="#7A5820"/>
+  <!-- 알 몸통 -->
+  <rect x="10" y="28" width="4" height="4" fill="#7A5820"/>
+  <rect x="14" y="28" width="36" height="4" fill="#F5E5BE"/>
+  <rect x="50" y="28" width="4" height="4" fill="#7A5820"/>
+  <rect x="6" y="32" width="4" height="4" fill="#7A5820"/>
+  <rect x="10" y="32" width="44" height="4" fill="#F5E5BE"/>
+  <rect x="54" y="32" width="4" height="4" fill="#7A5820"/>
+  <rect x="4" y="36" width="4" height="8" fill="#7A5820"/>
+  <rect x="8" y="36" width="48" height="8" fill="#F5E5BE"/>
+  <rect x="56" y="36" width="4" height="8" fill="#7A5820"/>
+  <rect x="6" y="44" width="4" height="4" fill="#7A5820"/>
+  <rect x="10" y="44" width="44" height="4" fill="#F5E5BE"/>
+  <rect x="54" y="44" width="4" height="4" fill="#7A5820"/>
+  <rect x="10" y="48" width="4" height="4" fill="#7A5820"/>
+  <rect x="14" y="48" width="36" height="4" fill="#F5E5BE"/>
+  <rect x="50" y="48" width="4" height="4" fill="#7A5820"/>
+  <rect x="14" y="52" width="4" height="4" fill="#7A5820"/>
+  <rect x="18" y="52" width="28" height="4" fill="#F5E5BE"/>
+  <rect x="46" y="52" width="4" height="4" fill="#7A5820"/>
+  <rect x="18" y="56" width="4" height="4" fill="#7A5820"/>
+  <rect x="22" y="56" width="20" height="4" fill="#F5E5BE"/>
+  <rect x="42" y="56" width="4" height="4" fill="#7A5820"/>
+  <rect x="22" y="60" width="20" height="4" fill="#7A5820"/>
+  <!-- 알 그림자(오른쪽 안쪽) -->
+  <rect x="46" y="32" width="8" height="4" fill="#C8A870"/>
+  <rect x="50" y="36" width="6" height="8" fill="#C8A870"/>
+  <rect x="46" y="44" width="8" height="4" fill="#C8A870"/>
+  <rect x="42" y="48" width="8" height="4" fill="#C8A870"/>
+  <rect x="36" y="52" width="8" height="4" fill="#C8A870"/>
+</svg>`;
+const HATCH_ICON_URI = 'data:image/svg+xml,' + encodeURIComponent(HATCH_ICON_SVG);
+function HatchIcon({ size = 20 }) {
+  return React.createElement('img', {
+    src: HATCH_ICON_URI,
+    width: size,
+    height: size,
+    alt: '🐣',
+    style: { imageRendering: 'pixelated', verticalAlign: 'middle', display: 'inline-block' }
+  });
+}
 
 const EVENT_TYPES = [
   { key: 'growth',       label: '성장',   emoji: '📏', color: '#8E3B45' },
@@ -1385,13 +1465,14 @@ function clutchRows(individuals, events) {
     const allDone = nPending === 0;
     let state = `D-${d}`, tone = d <= 7 ? '#B3261E' : 'var(--accent2)';
     if (infertile) { state = '무정'; tone = '#8A8177'; }
-    else if (hatched) { state = '부화완료'; tone = '#2E7D46'; }
+    else if (hatched && nPending === 0) { state = '부화완료'; tone = '#2E7D46'; }
+    else if (hatched && nPending > 0) { state = `일부부화 (${nPending}개 대기)`; tone = '#C87F2F'; }
     else if (allDone && nProblem) { state = '문제'; tone = '#C87F2F'; }
     else if (allDone) { state = '종료'; tone = '#8A8177'; }
     else if (d < -14) { state = '경과'; tone = '#8A8177'; }
     else if (d < 0) { state = `지연 ${-d}일`; tone = '#C87F2F'; }
     else if (d === 0) { state = '오늘 예정'; tone = '#B3261E'; }
-    const waiting = !infertile && !hatched && !allDone && d >= -14;
+    const waiting = !infertile && !allDone && d >= -14;
     return { e, mom, momName, dad, dadId, dadName, pairKey, pairName, nth,
              eggs, notes, etaISO, expISO: etaISO, d, state, tone, infertile, hatched, babies, waiting,
              units, nProblem, nPending, allDone };
@@ -2879,7 +2960,8 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals }) {
 
   let state = `부화까지 D-${d}`, tone = d <= 7 ? '#B3261E' : 'var(--accent2)';
   if (infertile) { state = '무정란'; tone = '#8A8177'; }
-  else if (hatched) { state = '부화 완료'; tone = '#2E7D46'; }
+  else if (hatched && nPending === 0) { state = '부화 완료'; tone = '#2E7D46'; }
+  else if (hatched && nPending > 0) { state = `일부 부화 (${nPending}개 대기)`; tone = '#C87F2F'; }
   else if (allDone && nProblem) { state = '문제로 종료'; tone = '#C87F2F'; }
   else if (allDone) { state = '종료'; tone = '#8A8177'; }
   else if (d < 0) { state = `예정일 ${-d}일 지남`; tone = '#C87F2F'; }
@@ -3071,7 +3153,7 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals }) {
 
         {hatched ? (
           <div className="card" style={{margin:'0 0 12px'}}>
-            <div style={{fontSize:12, fontWeight:700, color:'var(--text2)', marginBottom:8}}>🐣 부화한 아이들</div>
+            <div style={{fontSize:12, fontWeight:700, color:'var(--text2)', marginBottom:8}}><HatchIcon size={14}/> 부화한 아이들</div>
 
             {/* 부화일 수정 — 날짜를 잘못 적었을 때 여기서 바로 고칩니다 */}
             <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', gap:8, marginBottom:8}}>
@@ -3107,7 +3189,7 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals }) {
           </div>
         ) : hatchOpen ? (
           <div className="card" style={{margin:'0 0 12px'}}>
-            <div style={{fontSize:13, fontWeight:700, marginBottom:8}}>🐣 언제, 몇 마리 나왔나요?</div>
+            <div style={{fontSize:13, fontWeight:700, marginBottom:8}}><HatchIcon size={14}/> 언제, 몇 마리 나왔나요?</div>
             <div style={{fontSize:11, color:'var(--text3)', margin:'0 2px 4px'}}>부화한 날</div>
             <input className="input" type="date" value={hDate} min={ev.date} max={todayStr()}
               onChange={e => setHDate(e.target.value)} />
@@ -3149,7 +3231,7 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals }) {
           </div>
         ) : (
           <div style={{display:'flex', flexDirection:'column', gap:8}}>
-            <button className="btn btn-primary" onClick={() => { setCount(eggs ? String(eggs) : ''); setHDate(todayStr()); setMorph(''); setMorphUnknown(false); setHatchOpen(true); }}>🐣 해칭했어요</button>
+            <button className="btn btn-primary" onClick={() => { setCount(eggs ? String(eggs) : ''); setHDate(todayStr()); setMorph(''); setMorphUnknown(false); setHatchOpen(true); }}><HatchIcon size={16}/> 해칭했어요</button>
             {nPending > 0 && (
               <button className="btn btn-secondary"
                 onClick={() => setUnits(units.map(u => u.status === 'pending' ? { ...u, status: 'infertile' } : u), '무정란으로 표시했어요')}>
@@ -3193,7 +3275,7 @@ function HatchView({ individuals, refreshIndividuals, showToast, navigate }) {
   if (!babies.length) {
     return (
       <div className="empty" style={{padding:'40px 20px'}}>
-        <div className="empty-icon" style={{fontSize:36}}>🐣</div>
+        <div className="empty-icon" style={{fontSize:36, lineHeight:1}}><HatchIcon size={48}/></div>
         <p>아직 해칭 기록이 없어요.{'\n'}"2마리 부화했어"라고 기록하면 베이비가 자동 등록돼요.</p>
       </div>
     );
@@ -3208,7 +3290,7 @@ function HatchView({ individuals, refreshIndividuals, showToast, navigate }) {
             setOpen(b.id);
           }}>
             <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
-              <div style={{fontSize:15, fontWeight:700}}>🐣 {b.name} {genderEmoji(b.gender)}</div>
+              <div style={{fontSize:15, fontWeight:700}}><HatchIcon size={18}/> {b.name} {genderEmoji(b.gender)}</div>
               <div style={{fontSize:12, color:'var(--text3)'}}>{fmtDate(b.hatchDate)} {open === b.id ? '▲' : '▼'}</div>
             </div>
             <div style={{fontSize:12, color:'var(--text3)', marginTop:4}}>
