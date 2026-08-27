@@ -357,7 +357,7 @@ const SERVER = {
 
    인터넷이 없거나 파일을 못 받으면 아무 것도 막지 않습니다(앱은 그대로 씁니다).
    ══════════════════════════════════════════ */
-const APP_VERSION = '4.2';
+const APP_VERSION = '4.3';
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -1280,6 +1280,7 @@ function layingForecasts(individuals, events) {
   const inds = individuals || DB.getIndividuals();
   const evs = events || DB.getEvents();
   const byId = {}; inds.forEach(i => { byId[i.id] = i; });
+  const rows = clutchRows(inds, evs);
   const laysBy = {}, matesBy = {};
   evs.forEach(e => {
     if (e.type === 'laying') (laysBy[e.individualId] = laysBy[e.individualId] || []).push(e);
@@ -1313,9 +1314,11 @@ function layingForecasts(individuals, events) {
     const lastMate = ms.length ? ms[ms.length - 1] : null;
     const dadName = (lastMate && lastMate.data && lastMate.data.partnerName)
       || ((byId[(lastMate && lastMate.data && lastMate.data.partnerId)] || {}).name) || null;
+    const pairKey = i.id + '|' + (dadName || '?');
+    const nth = rows.filter(r => r.pairKey === pairKey).length + 1;
     out.push({
       indId: i.id, name: i.name, pairName: i.name + (dadName ? ' × ' + dadName : ''),
-      eta, interval, basis, count: ls.length, lastLay: ls.length ? ls[ls.length - 1].date : null,
+      eta, interval, basis, count: ls.length, nth, lastLay: ls.length ? ls[ls.length - 1].date : null,
     });
   });
   return out;
@@ -1331,7 +1334,9 @@ function allAlerts() {
     geckoName: r.pairName,
     type: 'hatching_expected',
     date: r.etaISO,
-    message: `${r.nth}차 산란 · 부화 예정 (${fmtDate(r.e.date)} 산란)`,
+    nth: r.nth,
+    message: `${r.nth}차 부화 예정 · ${fmtDate(r.e.date)} 산란`,
+    detail: `${fmtDate(r.e.date)} 산란`,
     layingId: r.e.id,
     derived: true,
   }));
@@ -1341,9 +1346,11 @@ function allAlerts() {
     geckoName: f.pairName,
     type: 'laying_expected',
     date: f.eta,
+    nth: f.nth,
     message: f.count
-      ? `다음 산란 예정 · 약 ${f.interval}일 간격 (${f.basis})`
-      : `첫 산란 예정 · 메이팅 +${f.interval}일`,
+      ? `${f.nth}차 산란 예정 · 약 ${f.interval}일 간격 (${f.basis})`
+      : `${f.nth}차 산란 예정 · 메이팅 +${f.interval}일`,
+    detail: f.count ? `약 ${f.interval}일 간격 · ${f.basis}` : `메이팅 +${f.interval}일`,
     derived: true,
   }));
   return [...stored, ...hatch, ...lay].sort((a, b) => (a.date > b.date ? 1 : -1));
@@ -1889,8 +1896,13 @@ function factLabel(f) {
 function answerQuery(target, text) {
   if (/할까|좋을까|추천|어떻게\s*(해|하)/.test(text)) return null;
   const explicit = /(언제|몇\s*(개|마리|살|그램|번)?|얼마|뭐야|뭐지|뭐였|무엇|누구야|누구지|누구랑\s*했|알려\s*줘|알려줄래|보여\s*줘|보여줄래)/.test(text);
-  const tailQ = /[?？]\s*$/.test(text) && /최근|마지막|산란|몸무게|무게|메이팅|탈피|밥|먹이|기록|모프|성별|해칭|부화|분양/.test(text);
-  if (!explicit && !tailQ) return null;
+  const tailQ = /[?？]\s*$/.test(text) && /최근|마지막|산란|몸무게|무게|메이팅|탈피|밥|먹이|기록|모프|성별|해칭|부화|분양|생일|출생|나이|혈통|엄마|아빠/.test(text);
+  // "크한이 생일?", "크한이 밥"처럼 이름 + 핵심 단어만 말해도 조회로 알아듣습니다.
+  const compactText = text
+    .replace(new RegExp(escapeReg(target.name) + '(?:이|가|은|는)?', 'g'), '')
+    .replace(/[?？!！.,\s]/g, '');
+  const compactQ = /^(생일|부화일|출생일|나이|밥|먹이|피딩|최근기록|기록|몸무게|무게|산란|메이팅|탈피|해칭|부화|모프|성별|분양|분양가|혈통|엄마|아빠)$/.test(compactText);
+  if (!explicit && !tailQ && !compactQ) return null;
 
   const evs = DB.getEventsFor(target.id).sort((a, b) =>
     (b.date + (b.createdAt || '')) > (a.date + (a.createdAt || '')) ? 1 : -1);
@@ -2298,7 +2310,7 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
                 style={{display:'block', flexShrink:0, imageRendering:'auto'}} />
               <div style={{minWidth:0}}>
                 <h1>크레건설 브리딩비서</h1>
-                <div className="header-sub">💬 대화 하나로 등록부터 기록까지</div>
+                <div className="header-sub">💬 대화로 등록부터 기록까지</div>
               </div>
             </div>
             {/* 설정은 v3.8부터 여기(예전 CG 배지 자리)로 올라왔습니다. 그 자리의 탭은 가계부가 씁니다 */}
@@ -4768,9 +4780,9 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
             </div>
           );
         })()}
-        <div style={{display:'flex', gap:6, overflowX:'auto', paddingBottom:8}}>
+        <div data-testid="status-grid" style={{display:'grid', gridTemplateColumns:'repeat(4,minmax(0,1fr))', gap:5, paddingBottom:8}}>
           {Object.entries(STATUS).map(([k, s]) => (
-            <button key={k} className="chip-btn" style={{whiteSpace:'nowrap', flexShrink:0, ...((gecko.status || 'own') === k ? {background:'var(--accent-soft)', fontWeight:700} : {})}}
+            <button key={k} className="chip-btn" style={{whiteSpace:'nowrap', minWidth:0, width:'100%', padding:'7px 2px', fontSize:'clamp(9px,2.8vw,12px)', ...((gecko.status || 'own') === k ? {background:'var(--accent-soft)', fontWeight:700} : {})}}
               onClick={() => {
                 if ((gecko.status || 'own') === k) { if (k === 'sold') setSalePrompt(true); return; }
                 // KEEP인 아이를 내놓으려 하면 한 번 물어봅니다 (실수 방지)
@@ -4982,35 +4994,73 @@ function CalendarScreen({ navigate, individuals, showToast, onRemindersChanged }
   const byId = {};
   individuals.forEach(i => { byId[i.id] = i; });
 
-  // 이 달의 항목 수집: 예정(리마인더) + 실제(이벤트, 전체 종류)
-  const items = {}; // 'YYYY-MM-DD' -> [{emoji, label, name, planned, reminder?, event?}]
+  // 이 달의 항목 수집: 예정(리마인더·다음 먹이일) + 실제 일정
+  const items = {}; // 'YYYY-MM-DD' -> [{emoji, label, detail, name, planned, reminder?, event?}]
   const add = (ds, it) => { (items[ds] = items[ds] || []).push(it); };
   allAlerts().forEach(r => {
-    const base = r.type === 'laying_expected' ? { emoji: '🥚', label: '산란 예정' }
-      : r.type === 'hatching_expected' ? { emoji: '🐣', label: r.message || '부화 예정' }
-      : { emoji: '🔔', label: r.message || '알림' };
+    const base = r.type === 'laying_expected'
+      ? { emoji: '🥚', label: r.nth ? `${r.nth}차 산란 예정` : '산란 예정', detail: r.detail || '' }
+      : r.type === 'hatching_expected'
+        ? { emoji: '🐣', label: r.nth ? `${r.nth}차 부화 예정` : '부화 예정', detail: r.detail || '' }
+        : { emoji: '🔔', label: '알림', detail: r.message || '' };
     add(r.date, { ...base, name: r.geckoName || '', planned: true, reminder: r });
   });
+  const calendarEvents = DB.getEvents();
+  const fp = feedPlan(individuals, calendarEvents);
+  if (fp.inds.length) {
+    add(fp.nextDay, {
+      emoji: '🍽️', label: '먹이 예정', detail: `전체 ${fp.inds.length}마리 · ${fp.interval}일 간격`,
+      name: '', planned: true, feed: true,
+    });
+  }
   // 캘린더에는 "일정"만 — 개체별 메모·사진·무게 같은 기록은 각 개체 프로필에서 봅니다
   // 산란·해칭은 알림과 같은 양식("엄마 × 아빠 · N차")으로 맞춥니다
-  const cRows = clutchRows(individuals, DB.getEvents());
+  const cRows = clutchRows(individuals, calendarEvents);
   const byLaying = {}; cRows.forEach(r => { byLaying[r.e.id] = r; });
   const byHatchEv = {}; cRows.forEach(r => { if (r.hatched) byHatchEv[r.hatched.id] = r; });
-  DB.getEvents().forEach(e => {
+  calendarEvents.forEach(e => {
     if (!CALENDAR_TYPES.includes(e.type)) return;
     const t = EVENT_TYPES.find(x => x.key === e.type) || {};
     let name = (byId[e.individualId] || {}).name || '';
     let label = t.label || e.type;
+    let detail = '';
     if (e.type === 'laying' && byLaying[e.id]) {
       name = byLaying[e.id].pairName; label = `${byLaying[e.id].nth}차 산란`;
+      const d = e.data || {};
+      detail = [d.eggCount ? `알 ${d.eggCount}개` : '', d.diffDays !== undefined ? `🎯 ${diffPhrase(d.diffDays)}` : ''].filter(Boolean).join(' · ');
     } else if (e.type === 'hatching' && byHatchEv[e.id]) {
-      name = byHatchEv[e.id].pairName; label = `${byHatchEv[e.id].nth}차 해칭`;
+      name = byHatchEv[e.id].pairName; label = `${byHatchEv[e.id].nth}차 부화`;
+      const d = e.data || {};
+      detail = [d.count ? `${d.count}마리` : '', d.diffDays !== undefined ? `🎯 ${diffPhrase(d.diffDays)}` : ''].filter(Boolean).join(' · ');
     } else if (e.type === 'mating') {
       const p = (e.data && e.data.partnerName) || (byId[e.data && e.data.partnerId] || {}).name;
       if (p) name = `${name} × ${p}`;
+    } else {
+      label = formatEventDetail(e) || label;
     }
-    add(e.date, { emoji: t.emoji || '📌', label, name, event: e });
+    add(e.date, { emoji: t.emoji || '📌', label, detail, name, event: e });
   });
+
+  const itemText = it => [it.name, it.label, it.detail].filter(Boolean).join(' · ');
+  const openCalendarItem = (it) => {
+    closePanels();
+    const r = it.reminder;
+    const ev = it.event;
+    if (it.feed || (ev && ev.type === 'feeding')) return navigate('feeding');
+    if (r && r.type === 'hatching_expected' && r.layingId) {
+      return navigate('clutch', { layingId: r.layingId });
+    }
+    if (r && r.type === 'laying_expected') return navigate('home', { view: 'laying' });
+    if (ev && ev.type === 'laying') return navigate('clutch', { layingId: ev.id });
+    if (ev && ev.type === 'hatching') {
+      const row = byHatchEv[ev.id];
+      return row ? navigate('clutch', { layingId: row.e.id }) : navigate('home', { view: 'hatch' });
+    }
+    if (ev && ev.type === 'mating') return navigate('home', { view: 'mating' });
+    const ind = byId[(ev && ev.individualId) || (r && r.individualId)];
+    if (ind) return navigate('profile', { gecko: ind });
+    return navigate('reminders');
+  };
 
   const startDow = new Date(cur.y, cur.m, 1).getDay();
   const daysInMonth = new Date(cur.y, cur.m + 1, 0).getDate();
@@ -5140,13 +5190,16 @@ function CalendarScreen({ navigate, individuals, showToast, onRemindersChanged }
               return (
                 <div key={j} style={{borderBottom:'1px solid var(--border)', padding:'7px 0'}}>
                   <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
-                    <div style={{fontSize:13, color:'var(--text2)'}}>
-                      {it.emoji} {it.name ? it.name + ' · ' : ''}{ev ? formatEventDetail(ev) || it.label : it.label}{it.planned ? ' (예정)' : ''}
-                    </div>
+                    <button data-testid="calendar-item-open" onClick={() => openCalendarItem(it)}
+                      style={{background:'none', border:'none', padding:0, minWidth:0, flex:1, cursor:'pointer', textAlign:'left',
+                              fontSize:13, color:'var(--text2)', display:'flex', alignItems:'center', gap:5}}>
+                      <span style={{minWidth:0, flex:1}}>{it.emoji} {itemText(it)}</span>
+                      <span aria-hidden="true" style={{color:'var(--accent2)', fontSize:17}}>›</span>
+                    </button>
                     <div style={{display:'flex', gap:10, flexShrink:0}}>
                       {ev && <button onClick={() => isEditing ? setEditingEv(null) : startEdit(ev)} style={{background:'none', border:'none', cursor:'pointer', fontSize:13, color:'var(--text3)'}}>✏️</button>}
                       {/* 부화 예정은 산란기록에서 계산한 것이라 따로 지우지 않습니다 */}
-                      {!(it.reminder && it.reminder.derived) && (
+                      {(ev || (it.reminder && !it.reminder.derived)) && (
                         <button onClick={() => { setEditingEv(null); setAdding(false); setConfirmDel(confirmDel === delKey ? null : delKey); }} style={{background:'none', border:'none', cursor:'pointer', fontSize:13, color:'var(--text3)'}}>🗑️</button>
                       )}
                     </div>
@@ -5211,17 +5264,22 @@ function CalendarScreen({ navigate, individuals, showToast, onRemindersChanged }
         ) : monthItems.map(([ds, its]) => {
           const dleft = Math.ceil((new Date(ds) - new Date(today)) / 86400000);
           return (
-            <div className="card" key={ds} style={{margin:'8px 0 0', padding:'10px 14px', cursor:'pointer'}} onClick={() => { setSelected(ds); closePanels(); }}>
-              <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:4}}>
+            <div className="card" key={ds} style={{margin:'8px 0 0', padding:'10px 14px'}}>
+              <button onClick={() => { setSelected(ds); closePanels(); }}
+                style={{display:'flex', width:'100%', justifyContent:'space-between', alignItems:'center', marginBottom:4,
+                        background:'none', border:'none', padding:0, cursor:'pointer', textAlign:'left'}}>
                 <div style={{fontSize:12, fontWeight:700, color:'var(--accent2)'}}>{fmtDate(ds)}</div>
                 <div style={{fontSize:11, color: dleft === 0 ? 'var(--accent)' : 'var(--text3)'}}>
-                  {dleft === 0 ? '오늘' : dleft > 0 ? `D-${dleft}` : `${-dleft}일 전`}
+                  {dleft === 0 ? '오늘' : dleft > 0 ? `D-${dleft}` : `${-dleft}일 전`} · 날짜 관리
                 </div>
-              </div>
+              </button>
               {its.map((it, j) => (
-                <div key={j} style={{fontSize:13, color:'var(--text2)', padding:'2px 0'}}>
-                  {it.emoji} {it.name ? it.name + ' · ' : ''}{it.label}{it.planned ? ' (예정)' : ''}
-                </div>
+                <button key={j} data-testid="calendar-month-item" onClick={() => openCalendarItem(it)}
+                  style={{display:'flex', width:'100%', alignItems:'center', gap:6, background:'none', border:'none',
+                          fontSize:13, color:'var(--text2)', padding:'4px 0', cursor:'pointer', textAlign:'left'}}>
+                  <span style={{minWidth:0, flex:1}}>{it.emoji} {itemText(it)}</span>
+                  <span aria-hidden="true" style={{color:'var(--accent2)', fontSize:17}}>›</span>
+                </button>
               ))}
             </div>
           );
