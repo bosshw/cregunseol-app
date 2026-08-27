@@ -357,7 +357,7 @@ const SERVER = {
 
    인터넷이 없거나 파일을 못 받으면 아무 것도 막지 않습니다(앱은 그대로 씁니다).
    ══════════════════════════════════════════ */
-const APP_VERSION = '4.3';
+const APP_VERSION = '4.4';
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -4994,12 +4994,15 @@ function CalendarScreen({ navigate, individuals, showToast, onRemindersChanged }
   const byId = {};
   individuals.forEach(i => { byId[i.id] = i; });
 
+  const CALENDAR_FED_EMOJI = '🍽️🥩';
+  const CALENDAR_FEED_PLAN_EMOJI = '🍽️';
+
   // 이 달의 항목 수집: 예정(리마인더·다음 먹이일) + 실제 일정
   const items = {}; // 'YYYY-MM-DD' -> [{emoji, label, detail, name, planned, reminder?, event?}]
   const add = (ds, it) => { (items[ds] = items[ds] || []).push(it); };
   allAlerts().forEach(r => {
     const base = r.type === 'laying_expected'
-      ? { emoji: '🥚', label: r.nth ? `${r.nth}차 산란 예정` : '산란 예정', detail: r.detail || '' }
+      ? { emoji: '🥚', label: r.nth ? `${r.nth}차 산란 예정` : '산란 예정', detail: '' }
       : r.type === 'hatching_expected'
         ? { emoji: '🐣', label: r.nth ? `${r.nth}차 부화 예정` : '부화 예정', detail: r.detail || '' }
         : { emoji: '🔔', label: '알림', detail: r.message || '' };
@@ -5009,7 +5012,7 @@ function CalendarScreen({ navigate, individuals, showToast, onRemindersChanged }
   const fp = feedPlan(individuals, calendarEvents);
   if (fp.inds.length) {
     add(fp.nextDay, {
-      emoji: '🍽️', label: '먹이 예정', detail: `전체 ${fp.inds.length}마리 · ${fp.interval}일 간격`,
+      emoji: CALENDAR_FEED_PLAN_EMOJI, label: '먹이 예정', detail: `전체 ${fp.inds.length}마리 · ${fp.interval}일 간격`,
       name: '', planned: true, feed: true,
     });
   }
@@ -5038,7 +5041,8 @@ function CalendarScreen({ navigate, individuals, showToast, onRemindersChanged }
     } else {
       label = formatEventDetail(e) || label;
     }
-    add(e.date, { emoji: t.emoji || '📌', label, detail, name, event: e });
+    const emoji = e.type === 'feeding' ? CALENDAR_FED_EMOJI : (t.emoji || '📌');
+    add(e.date, { emoji, label, detail, name, event: e });
   });
 
   const itemText = it => [it.name, it.label, it.detail].filter(Boolean).join(' · ');
@@ -5167,7 +5171,7 @@ function CalendarScreen({ navigate, individuals, showToast, onRemindersChanged }
         </div>
 
         <div style={{fontSize:12, color:'var(--text3)', margin:'8px 4px 4px', lineHeight:1.6}}>
-          💞 메이팅 · 🥚 산란 · 🐣 해칭 · 🍽️ 먹이 · <span style={{opacity:.55}}>흐린 아이콘은 예정일</span><br/>
+          💞 메이팅 · 🥚 산란 · 🐣 해칭 · {CALENDAR_FED_EMOJI} 먹인 날 · {CALENDAR_FEED_PLAN_EMOJI} 먹이 예정<br/>
           메모·사진·몸무게는 각 개체 프로필에서 볼 수 있어요 · 날짜를 누르면 추가/수정
         </div>
 

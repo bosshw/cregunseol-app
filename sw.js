@@ -1,4 +1,4 @@
-const CACHE = 'creg-v43';
+const CACHE = 'creg-v44';
 
 // 화면을 그리는 데 꼭 필요한 파일 — 이것도 폰에 저장해둬야 인터넷 없이 열립니다
 const ASSETS = [
@@ -46,4 +46,4 @@ self.addEventListener('fetch', e => {
     }))
   );
 });
-// v4.3 deploy 2026-08-27 (캘린더 예정일·차수·이동 · 짧은 질문 · 모바일 상태 버튼)
+// v4.4 deploy 2026-08-27 (캘린더 산란 예정 문구 간소화 · 먹이 실제/예정 아이콘 구분)
