@@ -357,7 +357,7 @@ const SERVER = {
 
    인터넷이 없거나 파일을 못 받으면 아무 것도 막지 않습니다(앱은 그대로 씁니다).
    ══════════════════════════════════════════ */
-const APP_VERSION = '4.4';
+const APP_VERSION = '4.5';
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -845,6 +845,7 @@ const EVENT_TYPES = [
   { key: 'shed',         label: '탈피',   emoji: '🌿', color: '#6E8B74' },
   { key: 'feeding',      label: '먹이',   emoji: '🍽️', color: '#C87F2F' },
   { key: 'health',       label: '이상',   emoji: '⚠️', color: '#B3261E' },
+  { key: 'env',          label: '온습도', emoji: '🌡️', color: '#3F7C8C' },
   { key: 'photo',        label: '사진',   emoji: '📷', color: '#8A8177' },
   { key: 'memo',         label: '메모',   emoji: '📝', color: '#A08D7C' },
 ];
@@ -1455,7 +1456,7 @@ function makeBabyNames(momName, dadName, count, existingNames) {
   return names;
 }
 
-const MAIN_FIELD = { growth: ['weight', '몸무게(g)'], laying: ['eggCount', '알 개수'], hatching: ['count', '마릿수'], distribution: ['price', '분양가(원)'], health: ['issue', '증상'] };
+const MAIN_FIELD = { growth: ['weight', '몸무게(g)'], laying: ['eggCount', '알 개수'], hatching: ['count', '마릿수'], distribution: ['price', '분양가(원)'], health: ['issue', '증상'], env: ['temp', '온도(°C)'] };
 const mainKeyOf = ev => (MAIN_FIELD[ev.type] || [null])[0];
 const mainLabelOf = ev => (MAIN_FIELD[ev.type] || [null, ''])[1];
 const mainValOf = ev => { const k = mainKeyOf(ev); return k ? (ev.data && ev.data[k]) || '' : ''; };
@@ -1505,21 +1506,52 @@ function extractPartnerNames(text, excludeName) {
   return out;
 }
 
-// 날짜 해석: "7월 10일", "2026-07-10", 어제/그제, 기본 오늘
+/* ── 상대 날짜 ──
+   "어제"만 알던 것을 내일·모레·3일 전·지난주·지난달까지 넓혔습니다.
+   ⚠️ "이번 주"·"이번 달"은 하루가 아니라 기간이라 일부러 넣지 않았습니다(가계부 질문과도 겹칩니다). */
+const shiftDays = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return localISO(d); };
+const shiftMonths = (n) => { const d = new Date(); d.setMonth(d.getMonth() + n); return localISO(d); };
+const REL_DAY = [
+  [/그끄저께|그끄제/, -3], [/그저께|그제|엊그제/, -2], [/어제|어저께/, -1],
+  [/내일/, 1], [/모레/, 2], [/글피/, 3], [/오늘/, 0],
+];
+function relDate(text) {
+  let m = text.match(/(\d+)\s*일\s*(?:전|앞)/);   if (m) return shiftDays(-parseInt(m[1], 10));
+  m = text.match(/(\d+)\s*일\s*(?:뒤|후)/);        if (m) return shiftDays(parseInt(m[1], 10));
+  m = text.match(/(\d+)\s*주\s*(?:전|앞)/);        if (m) return shiftDays(-7 * parseInt(m[1], 10));
+  m = text.match(/(\d+)\s*주\s*(?:뒤|후)/);        if (m) return shiftDays(7 * parseInt(m[1], 10));
+  if (/지지난\s*주/.test(text)) return shiftDays(-14);
+  if (/(?:지난|저번)\s*주/.test(text)) return shiftDays(-7);
+  if (/(?:다음|담)\s*주/.test(text)) return shiftDays(7);
+  if (/(?:지난|저번)\s*달|지난달|저번달/.test(text)) return shiftMonths(-1);
+  if (/(?:다음|담)\s*달|다음달/.test(text)) return shiftMonths(1);
+  for (const [re, n] of REL_DAY) if (re.test(text)) return shiftDays(n);
+  return null;
+}
+// 날짜 해석: "7월 10일", "2026-07-10", 어제/내일/3일 전…, 기본 오늘
 function parseKDate(text) {
   let m = text.match(/(\d{4})[-./](\d{1,2})[-./](\d{1,2})/);
   if (m) return `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
   m = text.match(/(\d{1,2})월\s*(\d{1,2})일/);
   if (m) return `${new Date().getFullYear()}-${String(m[1]).padStart(2,'0')}-${String(m[2]).padStart(2,'0')}`;
-  const d = new Date();
-  if (/그저께|그제/.test(text)) { d.setDate(d.getDate() - 2); return localISO(d); }
-  if (/어제/.test(text)) { d.setDate(d.getDate() - 1); return localISO(d); }
-  return todayStr();
+  return relDate(text) || todayStr();
+}
+
+/* ── 한글로 쓴 개수 ──
+   "두 마리"·"세 개"도 숫자로 알아듣습니다. */
+const KNUM = { 한:1, 하나:1, 두:2, 둘:2, 세:3, 셋:3, 서:3, 네:4, 넷:4, 너:4,
+               다섯:5, 여섯:6, 일곱:7, 여덟:8, 아홉:9, 열:10, 열한:11, 열하나:11, 열두:12, 열둘:12 };
+const KNUM_ALT = Object.keys(KNUM).sort((a, b) => b.length - a.length).join('|');
+function countIn(text, unit) {
+  const m = String(text).match(new RegExp('(\\d+)\\s*' + unit));
+  if (m) return m[1];
+  const k = String(text).match(new RegExp('(' + KNUM_ALT + ')\\s*' + unit));
+  return k ? String(KNUM[k[1]]) : '';
 }
 
 // 문장에서 기록(팩트) 추출 — 한 문장에 여러 개 가능
 /* ── 같은 뜻을 사람마다 다르게 말합니다. 되도록 넓게 알아듣습니다 ── */
-const RE_LAY   = /산란|알\s*낳|알낳|낳았|낳음|낳으[셨시]|낳더|알\s*깠|알깠|알\s*확인|알\s*나왔|알\s*발견|알\s*받[았아]|클러치|알\s*\d+\s*개|\d+\s*개\s*낳/;
+const RE_LAY   = /산란|알\s*낳|알낳|낳았|낳음|낳으[셨시]|낳더|알\s*깠|알깠|알\s*확인|알\s*나왔|알\s*발견|알\s*받[았아]|클러치|알\s*\d+\s*개|\d+\s*개\s*낳|알\s*(?:한|두|세|네|다섯|여섯)\s*개/;
 const RE_HATCH = /해칭|헤칭|부화|태어났|태어난|태어나|깨어났|깨어남|깨났|껍질\s*(깨|뚫)|알에서\s*나|(알|새끼|베이비|애기|아기)\s*(에서\s*)?(나왔|나옴|나온)/;
 const RE_MATE  = /메이팅|교배|합사|짝짓기|붙였|붙여\s*놨|합방|짝\s*지어|올려\s*놨|올려놨/;
 const RE_SHED  = /탈피|허물|각질\s*벗|껍질\s*벗/;
@@ -1550,16 +1582,14 @@ function extractFacts(text) {
   // 메이팅
   if (RE_MATE.test(text)) push('mating', {});
 
-  // 산란
+  // 산란 — "알 두 개"처럼 한글 숫자도 읽습니다
   if (RE_LAY.test(text)) {
-    const c = text.match(/(\d+)\s*개/);
-    push('laying', { eggCount: c ? c[1] : '' });
+    push('laying', { eggCount: countIn(text, '개') });
   }
 
   // 해칭/부화 — 산란과 함께 잡히지 않게 (알 낳은 말이면 부화가 아닙니다)
   if (RE_HATCH.test(text) && !/알\s*낳|알낳|산란/.test(text)) {
-    const c = text.match(/(\d+)\s*마리/);
-    push('hatching', { count: c ? c[1] : '' });
+    push('hatching', { count: countIn(text, '마리') });
   }
 
   // 분양: "분양 15만원", "150,000원에 분양" (상태 변경 표현은 제외)
@@ -1569,7 +1599,23 @@ function extractFacts(text) {
     const won = text.match(/(\d[\d,]*)\s*원/);
     if (man) price = String(Math.round(parseFloat(man[1]) * 10000));
     else if (won) price = won[1].replace(/,/g, '');
-    push('distribution', { price });
+    /* 분양처도 같이 잡습니다 — "홍길동한테 분양했어".
+       공백을 허용하면 앞의 개체 이름까지 삼키므로 붙여 쓴 이름만 봅니다. */
+    let buyer = '';
+    const bm = text.match(/([가-힣A-Za-z0-9]{2,12})\s*(?:한테|에게|께)/);
+    if (bm) buyer = bm[1];
+    const bm2 = text.match(/분양처\s*[:은는]?\s*([^\s,·]{1,14})/);
+    if (bm2) buyer = bm2[1];
+    push('distribution', { price, buyer });
+  }
+
+  // 온도·습도 — "인큐 28도", "습도 70"
+  {
+    const tm = text.match(/(\d{1,2}(?:\.\d)?)\s*(?:도|℃)/);
+    const hm = text.match(/습도\s*(\d{1,3})|(\d{1,3})\s*%/);
+    const temp = tm ? tm[1] : '';
+    const humid = hm ? (hm[1] || hm[2]) : '';
+    if (temp || humid) push('env', { temp, humid });
   }
 
   // 탈피 — '탈피부전'은 탈피 완료가 아니라 이상 기록입니다
@@ -1590,6 +1636,44 @@ function extractFacts(text) {
   return facts;
 }
 
+
+/* ── 알 사진이라고 말하기 ──
+   "알 사진" · "이거 알이야" · "알 사진이야" */
+const RE_EGGPHOTO = /알\s*사진|^\s*(?:이거|이건|이게|그거|그건|저거)?\s*알\s*(?:이야|이에요|예요|입니다|임|맞아|맞아요)/;
+
+/* ── 말로 취소하기 ──
+   "방금 거 취소" · "그거 지워줘" · "전부 지워" */
+const RE_UNDO     = /^(?:방금|아까|마지막|그거|그건|이거|이건|저거)?\s*(?:거|것|건)?\s*(?:좀\s*)?(?:취소|지워|삭제|빼)(?:줘|주세요|해줘|해|해주세요|자|고)?\s*[.!~]?$/;
+const RE_UNDO_ALL = /^(?:전부|다|모두|싹)\s*(?:취소|지워|삭제)/;
+
+/* ── 알 하나만 콕 집어 말하기 ──
+   "알 하나는 곰팡이야" · "2번 알 무정란이야" · "알 다 무정란이야"
+   index: 숫자면 그 알(1부터), 0이면 남은 것 중 첫 알, null이면 남은 알 전부 */
+const EGG_FIX_WORDS = [
+  [/곰팡이|곰팽이/,              'problem',   '곰팡이'],
+  [/함몰|쭈그|말랐|건조|쪼그/,    'problem',   '함몰·건조'],
+  [/깨졌|깨짐|금\s*갔|터졌|깨서/, 'problem',   '깨짐'],
+  [/중도\s*폐사|사산|썩었|폐사/,  'problem',   '중도 폐사'],
+  [/무정/,                       'infertile', ''],
+  [/부화했|해칭했|나왔/,          'hatched',   ''],
+];
+function extractEggFix(text) {
+  const t = String(text || '');
+  if (!/알/.test(t)) return null;
+  if (RE_LAY.test(t) && !/무정|곰팡이|함몰|깨/.test(t)) return null;   // "알 2개 낳았어"는 산란 기록
+  const hit = EGG_FIX_WORDS.find(([re]) => re.test(t));
+  if (!hit) return null;
+  let index = null;
+  let m = t.match(/(\d+)\s*번(?:째)?\s*알/) || t.match(/알\s*(\d+)\s*번/);
+  if (m) index = parseInt(m[1], 10);
+  if (index === null) {
+    const k = t.match(new RegExp('알\\s*(' + KNUM_ALT + '|\\d+)\\s*(?:개|번|째)'));
+    if (k) index = /^\d+$/.test(k[1]) ? parseInt(k[1], 10) : KNUM[k[1]];
+  }
+  if (index === null && /하나|한\s*개|한개|한\s*알/.test(t)) index = 0;
+  if (/전부|모두|다\s|둘\s*다|싹/.test(t)) index = null;
+  return { index, status: hit[1], reason: hit[2] };
+}
 const CRICKET_RE = /귀뚜라미|귀뚜리|귀뚤이|귀뚤|뚤이|냉뚜리|냉뚤|생뚤|밀웜|슈퍼웜|충식|두비아|레드런/;
 const SUPU_RE = /슈퍼푸드|슈푸|슬러리|판게아|레파시|CGD|일반식/;
 
@@ -1623,14 +1707,13 @@ function profileText(field, v) {
 function explicitDate(text) {
   if (/\d{4}[-./]\d{1,2}[-./]\d{1,2}/.test(text)) return parseKDate(text);
   if (/\d{1,2}월\s*\d{1,2}일/.test(text)) return parseKDate(text);
-  if (/그저께|그제|어제/.test(text)) return parseKDate(text);
-  return null;
+  return relDate(text);
 }
 function detectProfileClaim(text) {
   const birthWord = /(부화일|해칭일|생일|출생일|태어난\s*날)/.test(text);
   const bornVerb = /태어(났|나)/.test(text);
   // "어제 3마리 태어났어"는 그 아이의 생일이 아니라 부화 기록입니다
-  const hasCount = /\d+\s*마리/.test(text);
+  const hasCount = !!countIn(text, '마리');
   if (birthWord || (bornVerb && !hasCount)) {
     const dv = explicitDate(text);
     if (dv) return { field: 'hatchDate', value: dv };
@@ -1886,6 +1969,8 @@ function factLabel(f) {
     case 'distribution': d = f.data.price ? Number(f.data.price).toLocaleString() + '원' : ''; break;
     case 'feeding':      d = f.data.foodType === '충식' ? '🦗 충식' : f.data.foodType === '슈푸' ? '🥣 슈푸' : ''; break;
     case 'health':       d = f.data.issue || ''; break;
+    case 'eggphoto':     return '🥚 알 사진';
+    case 'env':          d = [f.data.temp ? f.data.temp + '°C' : '', f.data.humid ? '습도 ' + f.data.humid + '%' : ''].filter(Boolean).join(' · '); break;
     case 'memo':         d = (f.data.notes || '').slice(0, 18); break;
     case 'photo':        d = '1장'; break;
     default: break;
@@ -3837,6 +3922,10 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       bot(`${g.name}, ${genderLabel(value)}으로 기억할게요. 이제 편하게 이야기해주세요 🙂`);
     } else if (kind === 'save') {
       goConfirm();
+    } else if (kind === 'eggphoto') {
+      markEggPhoto();
+    } else if (kind === 'notegg') {
+      bot('네, 아이 사진으로 둘게요 🦎');
     } else if (kind === 'feed-type' && value) {
       const f = { ...value.fact, data: { ...value.fact.data, foodType: value.foodType } };
       pushPending([f], { name: f.targetName });
@@ -3883,6 +3972,29 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       goConfirm();
       return;
     }
+
+    /* 2.2) 말로 취소 — "방금 거 취소" · "전부 지워"
+       ⚠️ "분양 취소"는 상태 변경이므로 건드리지 않습니다. */
+    if (!pendingNameRef.current && !/분양|예약|보유/.test(text)) {
+      const tt = text.trim();
+      if (RE_UNDO_ALL.test(tt)) {
+        const n = pendingRef.current.length;
+        updatePending(() => []);
+        bot(n ? `담아둔 ${n}건을 모두 지웠어요 🧹` : '아직 담긴 기록이 없어요 🙂');
+        return;
+      }
+      if (RE_UNDO.test(tt)) {
+        const cur = pendingRef.current;
+        if (!cur.length) { bot('아직 담긴 기록이 없어요 🙂'); return; }
+        const last = cur[cur.length - 1];
+        updatePending(p => p.slice(0, -1));
+        bot(`"${factLabel(last)}" 지웠어요 🧹` + (cur.length > 1 ? `\n남은 건 ${cur.length - 1}건이에요.` : ''));
+        return;
+      }
+    }
+
+    /* 2.3) 알 사진이라고 알려주는 말 — "알 사진" · "이거 알이야" */
+    if (RE_EGGPHOTO.test(text.trim())) { markEggPhoto(); return; }
 
     // 2.5) 해칭 베이비 이름 답변 대기 중
     if (pendingBabyRef.current) {
@@ -3940,6 +4052,22 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
 
     let target = geckoRef.current;
     if (names.length) { target = names[0]; setTarget(names[0]); }
+
+    /* 3.1) 여러 아이에게 같은 기록 — "크한이랑 크범이 밥 줬어"
+       예전엔 둘째 이름을 메이팅 상대로 오해했습니다.
+       메이팅·혈통·프로필 정정 문장은 예전 길로 그대로 보냅니다. */
+    if (names.length >= 2 && facts.length && !RE_MATE.test(text) && !morph
+        && !/아빠|아비|엄마|어미/.test(text) && !detectProfileClaim(text)) {
+      const all = [];
+      names.forEach(g => facts.forEach(f => all.push({ ...f, targetId: g.id, targetName: g.name })));
+      updatePending(p => [...p, ...all]);
+      bot(`${names.map(g => g.name).join(' · ')} — ${names.length}마리에 같이 담았어요 🦎\n`
+        + facts.map(f => '· ' + factLabel(f)).join('\n')
+        + '\n\n계속 말씀하셔도 되고, 끝나면 저장을 눌러주세요.', [
+        { label: '💾 이제 저장할래', kind: 'save' },
+      ]);
+      return;
+    }
 
     // 메이팅 파트너: 등록 개체 → "상대/파트너 ○○" → 문장 속 다른 이름(미등록 포함)
     const mating = facts.find(f => f.type === 'mating');
@@ -4097,6 +4225,38 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       return;
     }
 
+    /* 5.555) 알 하나만 콕 집어 말하기 — "알 하나는 곰팡이야" · "2번 알 무정란이야"
+       알별 기록은 저장된 산란 기록 위에서 바로 고칩니다(담아두지 않습니다). */
+    {
+      const ef = extractEggFix(text);
+      if (ef && target) {
+        const rows = clutchRows().filter(r => r.e.individualId === target.id);
+        const row = rows[rows.length - 1];   // clutchRows 는 오래된 순
+        if (!row) { bot(`${target.name}는 아직 산란 기록이 없어요 🥚`); return; }
+        const units = row.units.slice();
+        const touched = [];
+        const mark = (i) => {
+          if (!units[i]) return;
+          units[i] = { ...units[i], status: ef.status, reason: ef.reason || '' };
+          touched.push(i + 1);
+        };
+        if (ef.index >= 1) mark(ef.index - 1);
+        else if (ef.index === 0) { const i = units.findIndex(u => u.status === 'pending'); if (i >= 0) mark(i); }
+        else units.forEach((u, i) => { if (u.status === 'pending') mark(i); });
+        if (!touched.length) {
+          bot(`고칠 알을 못 찾았어요 🥚\n${row.nth}차 산란에 알이 ${units.length}개 있어요. "2번 알"처럼 짚어주시겠어요?`);
+          return;
+        }
+        DB.setEggUnits(row.e.id, units);
+        refreshIndividuals();
+        const label = ef.status === 'infertile' ? '무정란'
+          : ef.status === 'hatched' ? '부화' : (ef.reason || '문제');
+        bot(`🥚 ${row.pairName} ${row.nth}차 산란 · 알 ${touched.join('·')}번을 ${label}으로 적었어요.\n`
+          + '산란기록에서 알별로 다시 고칠 수 있어요.');
+        return;
+      }
+    }
+
     // 5.56) 분양 상태 변경
     if (/분양\s*가능/.test(text)) {
       const pm2 = text.match(/(\d+(?:\.\d+)?)\s*만\s*원?/);
@@ -4239,12 +4399,42 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       addMsg({ role: 'user', photo: dataUrl });
       const g = geckoRef.current;
       const fact = { type: 'photo', data: { photo: dataUrl }, date: todayStr() };
-      if (g) pushPending([{ ...fact, targetId: g.id, targetName: g.name }], g);
-      else {
+      if (g) {
+        pushPending([{ ...fact, targetId: g.id, targetName: g.name }], g);
+        // 최근에 산란을 적었다면 알 사진일 수 있으니 한 번 여쭤봅니다
+        if (eggLikely(g.id)) {
+          bot(`${g.name}는 최근에 산란 기록이 있어요 🥚\n이 사진, 알 사진인가요?`, [
+            { label: '🥚 알 사진이에요', kind: 'eggphoto' },
+            { label: '🦎 아이 사진이에요', kind: 'notegg' },
+          ]);
+        }
+      } else {
         heldRef.current.push(fact);
         bot('예쁜 사진이네요! 담아뒀어요. 어느 아이의 사진인가요? 🦎');
       }
     });
+  };
+
+  /* 최근(120일 안)에 산란을 적었는지 — 담긴 기록도 함께 봅니다 */
+  const eggLikely = (indId) => {
+    if (pendingRef.current.some(f => f.type === 'laying' && f.targetId === indId)) return true;
+    return DB.getEvents().some(e => e.type === 'laying' && e.individualId === indId
+      && daysUntil(e.date) >= -120);
+  };
+
+  /* 방금 담은 사진을 '알 사진'으로 바꿉니다 */
+  const markEggPhoto = () => {
+    const cur = pendingRef.current;
+    let idx = -1;
+    for (let i = cur.length - 1; i >= 0; i--) if (cur[i].type === 'photo') { idx = i; break; }
+    if (idx < 0) {
+      bot('아직 담긴 사진이 없어요 📷\n왼쪽 카메라로 알 사진을 먼저 보내주세요.');
+      return;
+    }
+    updatePending(p => p.map((x, i) => i === idx ? { ...x, type: 'eggphoto' } : x));
+    bot('🥚 알 사진으로 바꿨어요. 저장하면 산란 기록에 붙습니다.', [
+      { label: '💾 이제 저장할래', kind: 'save' },
+    ]);
   };
 
   /* ── 최종 저장 ── */
@@ -4259,6 +4449,8 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
         DB.addEvent({ individualId: null, type: 'ledger', date: f.date || todayStr(), data: f.data || {} });
         return;
       }
+      // 알 사진은 개체가 아니라 산란 기록에 붙습니다 — 아래 두 번째 차례에서 처리
+      if (f.type === 'eggphoto') return;
       if (f.type === 'laying' && !f.data.sireId) {
         const mate = DB.getEventsFor(f.targetId)
           .filter(e => e.type === 'mating' && e.date <= (f.date || todayStr()) && e.data && e.data.partnerId)
@@ -4291,6 +4483,14 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
         const dup = DB.getEvents().find(e => e.individualId === f.targetId && e.type === f.type && e.date === fDate);
         if (dup) DB.deleteEvent(dup.id);
       }
+      /* 분양은 상태·분양가·분양처를 한 번에 맞춥니다 (분양가 입력창과 같은 길) */
+      if (f.type === 'distribution') {
+        DB.recordSale(f.targetId, {
+          won: Number(f.data.price || 0), free: !f.data.price && !!f.data.free,
+          buyer: f.data.buyer || '', date: fDate,
+        });
+        return;
+      }
       DB.addEvent({ individualId: f.targetId, type: f.type, date: fDate, data: f.data || {} });
       // 산란에 겉보기 상태를 적었으면 알마다 같은 상태로 채워 둡니다 (나중에 알별로 고칠 수 있습니다)
       if (f.type === 'laying' && f.data && f.data.eggLook) {
@@ -4316,11 +4516,6 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
             reminderMsg = ' · 🔔 산란 예정 알림 설정';
           }
         }
-      }
-      if (f.type === 'distribution') {
-        // 대화로 분양을 적어도 KEEP은 함께 풀립니다 (한 아이가 KEEP이면서 분양완료일 수는 없으므로)
-        DB.updateIndividual(f.targetId, { status: 'sold', keep: false, salePrice: f.data.price || '',
-                                          saleFree: !f.data.price && !!f.data.free });
       }
       if (f.type === 'hatching') {
         const mode = DB.getSettings().babyNaming || 'combo';
@@ -4353,8 +4548,22 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
         reminderMsg = ' · 🔔 부화 예정 알림 자동';
       }
     });
+
+    /* 알 사진 붙이기 — 산란 기록이 다 저장된 뒤에 해야 이번에 적은 산란에도 붙습니다 */
+    let eggPhotoMsg = '';
+    list.filter(f => f.type === 'eggphoto').forEach(f => {
+      const lay = DB.getEvents()
+        .filter(e => e.type === 'laying' && e.individualId === f.targetId)
+        .sort((a, b) => (a.date + (a.createdAt || '')) < (b.date + (b.createdAt || '')) ? 1 : -1)[0];
+      if (lay) {
+        DB.updateEvent(lay.id, { data: { ...(lay.data || {}), photo: f.data.photo } });
+        eggPhotoMsg = ' · 🥚 알 사진 붙임';
+      } else {
+        DB.addEvent({ individualId: f.targetId, type: 'photo', date: f.date || todayStr(), data: f.data });
+      }
+    });
     refreshIndividuals();
-    showToast(`✅ ${list.length}건 저장 완료!${reminderMsg}${babyMsg}`);
+    showToast(`✅ ${list.length}건 저장 완료!${reminderMsg}${babyMsg}${eggPhotoMsg}`);
     navigate('home');
   };
 
@@ -4964,6 +5173,7 @@ function formatEventDetail(ev) {
     }
     case 'distribution': return d.price ? `${Number(d.price).toLocaleString()}원에 분양` : (d.free ? '무료로 분양' : '분양 기록');
     case 'health':       return `${d.issue || '이상'}${d.notes ? ' · ' + d.notes : ''}`;
+    case 'env':          return [d.temp ? `${d.temp}°C` : '', d.humid ? `습도 ${d.humid}%` : ''].filter(Boolean).join(' · ') || '온습도 기록';
     case 'shed':         return '탈피 완료';
     case 'feeding': {
       if (d.skipped) return '⏭️ 오늘은 안 줌';
