@@ -26,7 +26,7 @@ test("keeps storage, synchronization, and core workflows intact", async () => {
     assert.ok(source.includes(contract), `missing contract: ${contract}`);
   }
 
-  assert.match(source, /const APP_VERSION = '4\.4'/);
+  assert.match(source, /const APP_VERSION = '4\.5'/);
   assert.match(source, /addEvents\(events\)/);
   assert.match(source, /DB\.addEvents\(additions\)/);
   assert.doesNotMatch(
@@ -41,10 +41,10 @@ test("keeps service worker and release metadata aligned", async () => {
     readFile(file("version.json"), "utf8").then(JSON.parse),
   ]);
 
-  assert.equal(version.app, "4.4");
+  assert.equal(version.app, "4.5");
   assert.equal(version.schema, 1);
   assert.equal(version.minSchema, 1);
-  assert.match(worker, /const CACHE = 'creg-v44'/);
+  assert.match(worker, /const CACHE = 'creg-v45'/);
   for (const asset of [
     "./index.html",
     "./app.min.js",
@@ -79,4 +79,29 @@ test("keeps the v4.4 calendar and compact-question fixes", async () => {
   ]) {
     assert.ok(source.includes(contract), `missing v4.4 contract: ${contract}`);
   }
+});
+
+test("keeps the v4.5 conversation upgrades", async () => {
+  const source = await readFile(file("src/app.jsx"), "utf8");
+
+  for (const contract of [
+    "function relDate(text)",
+    "function countIn(text, unit)",
+    "const KNUM_ALT",
+    "const RE_EGGPHOTO",
+    "const RE_UNDO_ALL",
+    "function extractEggFix(text)",
+    "key: 'env'",
+    "const markEggPhoto",
+    "const eggLikely",
+    "type: 'eggphoto'",
+    "DB.recordSale(f.targetId",
+  ]) {
+    assert.ok(source.includes(contract), `missing v4.5 contract: ${contract}`);
+  }
+
+  // 알 사진은 개체가 아니라 산란 기록에 붙습니다 (저장 두 번째 차례)
+  assert.match(source, /list\.filter\(f => f\.type === 'eggphoto'\)/);
+  // "분양 취소"는 담긴 기록 취소로 새지 않습니다
+  assert.match(source, /!\/분양\|예약\|보유\/\.test\(text\)/);
 });
