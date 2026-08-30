@@ -357,7 +357,7 @@ const SERVER = {
 
    인터넷이 없거나 파일을 못 받으면 아무 것도 막지 않습니다(앱은 그대로 씁니다).
    ══════════════════════════════════════════ */
-const APP_VERSION = '4.5';
+const APP_VERSION = '4.6';
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -1325,6 +1325,210 @@ function layingForecasts(individuals, events) {
   return out;
 }
 
+
+/* ══════════════════════════════════════════
+   비서의 말 — 화면에 나가는 문장은 전부 여기서 만듭니다.
+   ★ 문구를 화면마다 흩어 두면 말투가 반드시 어긋납니다.
+     알 판정을 clutchRows 한 곳에 모은 것과 같은 이유입니다.
+   ══════════════════════════════════════════ */
+
+const KIDS = '애깅이들';                       // 아이들을 부르는 말
+const CALL_OPTIONS = [
+  ['breeder', '브리더님'], ['boss', '대표님'], ['sajang', '사장님'],
+  ['nim', '님'], ['custom', '직접 입력'], ['none', '안 부름'],
+];
+const TONE_OPTIONS = [
+  ['polite', '정중히'], ['friendly', '친근히'], ['short', '짧게'],
+];
+const CALL_DEFAULT = 'breeder';
+const TONE_DEFAULT = 'polite';
+
+function voicePrefs() {
+  const s = DB.getSettings() || {};
+  return {
+    call: s.callName || CALL_DEFAULT,
+    custom: String(s.callCustom || '').trim(),
+    tone: s.tone || TONE_DEFAULT,
+  };
+}
+/* 부를 호칭 — 안 부르기로 했으면 빈 글자 */
+function callName() {
+  const v = voicePrefs();
+  if (v.call === 'none') return '';
+  if (v.call === 'custom') return v.custom;
+  return (CALL_OPTIONS.find(c => c[0] === v.call) || [])[1] || '';
+}
+const toneNow = () => voicePrefs().tone;
+
+/* 날짜 수를 한국어 세는 말로 — 열흘까지만, 그 위는 숫자 그대로 */
+const KDAY_WORDS = ['', '하루', '이틀', '사흘', '나흘', '닷새', '엿새', '이레', '여드레', '아흐레', '열흘'];
+const dayWord = (n) => {
+  const k = Math.abs(Math.round(Number(n) || 0));
+  return (k >= 1 && k <= 10) ? KDAY_WORDS[k] : `${k}일`;
+};
+const WEEKDAY_KO = ['일', '월', '화', '수', '목', '금', '토'];
+
+/* 앞으로 올 날을 사람 말로 — "모레", "이번 주 토요일", "9월 18일 금요일" */
+function whenWord(iso) {
+  if (!iso) return '';
+  const d = daysUntil(iso);
+  const near = { '0': '오늘', '1': '내일', '2': '모레', '3': '글피', '-1': '어제', '-2': '그저께' };
+  if (near[String(d)]) return near[String(d)];
+  const wd = WEEKDAY_KO[new Date(iso).getDay()] + '요일';
+  if (d > 0) {
+    const toSat = 6 - new Date(todayStr()).getDay();   // 이번 주 토요일까지 남은 날
+    if (d <= toSat) return '이번 주 ' + wd;
+    if (d <= toSat + 7) return '다음 주 ' + wd;
+  }
+  return `${fmtDate(iso)} ${wd}`;
+}
+/* 지나간 날을 사람 말로 — "사흘 전" */
+function agoWord(iso) {
+  if (!iso) return '';
+  const d = -daysUntil(iso);
+  if (d <= 0) return '오늘';
+  if (d === 1) return '어제';
+  if (d === 2) return '그저께';
+  return `${dayWord(d)} 전`;
+}
+
+/* 받침이 있으면 '이에요/이', 없으면 '예요/가' — 말이 어색해지지 않게 */
+function hasJong(word) {
+  const w = String(word || '').trim();
+  if (!w) return false;
+  const c = w.charCodeAt(w.length - 1);
+  if (c < 0xAC00 || c > 0xD7A3) return false;
+  return (c - 0xAC00) % 28 !== 0;
+}
+const iyeyo = (w) => `${w}${hasJong(w) ? '이에요' : '예요'}`;
+const iga   = (w) => `${w}${hasJong(w) ? '이' : '가'}`;
+
+/* 시간대 인사 */
+function greetLine() {
+  const t = toneNow();
+  if (t === 'short') return '';
+  const h = new Date().getHours();
+  const base = h >= 5 && h < 11 ? '좋은 아침이에요'
+    : h >= 11 && h < 18 ? '안녕하세요'
+    : h >= 18 && h < 22 ? '좋은 저녁이에요'
+    : '늦은 시간까지 고생 많으세요';
+  const call = callName();
+  const tail = t === 'friendly' ? '!' : '';
+  return call ? `${base}, ${call}${tail}` : base + tail;
+}
+
+/* ── 오늘 상황을 한 덩어리로 ──
+   브리핑·홈 인사·대화 인사가 모두 이 결과를 씁니다(같은 날 같은 말이 나오도록). */
+function todaySituation() {
+  const fp = feedPlan();
+  const alerts = allAlerts();
+  const due = alerts.filter(r => daysUntil(r.date) <= 0);
+  return {
+    fp,
+    feedDue: !!(fp.due && fp.remaining.length),
+    feedLate: Math.max(0, -fp.dLeft),
+    feedDone: !!(fp.doneToday.size && !fp.remaining.length),
+    lay: due.filter(r => r.type === 'laying_expected'),
+    hatch: due.filter(r => r.type === 'hatching_expected'),
+    etc: due.filter(r => r.type !== 'laying_expected' && r.type !== 'hatching_expected'),
+    worried: fp.worried,
+    next: alerts.filter(r => daysUntil(r.date) > 0)[0] || null,
+  };
+}
+
+/* 브리핑 문장들 — 인사 한 줄 + 할 일 최대 세 줄 */
+function briefLines() {
+  const t = toneNow();
+  const s = todaySituation();
+  const jobs = [];
+
+  if (s.feedLate > 0 && s.feedDue) {
+    jobs.push(t === 'short' ? `밥 주는 날 ${s.feedLate}일 지남`
+      : `밥 주는 날이 ${dayWord(s.feedLate)} 지났어요.`);
+  } else if (s.feedDue) {
+    jobs.push(t === 'short' ? '오늘 밥 주는 날'
+      : t === 'friendly' ? `오늘은 ${KIDS} 밥 먹이는 날이에요!`
+      : `오늘은 ${KIDS} 밥 먹이는 날이에요.`);
+  }
+  s.lay.slice(0, 2).forEach(r => {
+    const nm = r.momName || r.geckoName;
+    jobs.push(t === 'short' ? `${nm} ${r.nth}차 산란 예정`
+      : `${nm}의 ${r.nth}차 산란 예정일이에요.`);
+  });
+  s.hatch.slice(0, 2).forEach(r => {
+    jobs.push(t === 'short' ? `${r.geckoName} ${r.nth}차 부화 예정`
+      : `${r.geckoName}의 ${r.nth}차 알이 부화할 때가 됐어요.`);
+  });
+  s.etc.slice(0, 1).forEach(r => {
+    jobs.push(t === 'short' ? (r.message || '알림') : `${r.message || '알림'} — 오늘이에요.`);
+  });
+
+  const lines = [];
+  const hi = greetLine();
+  if (hi) lines.push(hi + '.');
+
+  if (!jobs.length && !s.worried.length) {
+    lines.push(t === 'short' ? '오늘 할 일 없음' : '오늘은 특별히 챙기실 일이 없어요 🌿');
+    const rest = [];
+    if (s.fp.dLeft > 0) rest.push(`다음 밥은 ${whenWord(s.fp.nextDay)}`);
+    if (s.next) rest.push(`${s.next.geckoName}의 ${s.next.nth ? s.next.nth + '차 ' : ''}${s.next.type === 'hatching_expected' ? '알은' : '산란은'} ${whenWord(s.next.date)} 예정`);
+    if (rest.length && t !== 'short') lines.push(iyeyo(rest.join(', ')) + '.');
+    return lines;
+  }
+
+  lines.push(...jobs.slice(0, 3));
+  if (jobs.length > 3) lines.push(`그 밖에 ${jobs.length - 3}가지가 더 있어요.`);
+
+  if (s.worried.length) {
+    const w = s.worried[0];
+    const more = s.worried.length > 1 ? ` 외 ${s.worried.length - 1}마리` : '';
+    lines.push(t === 'short'
+      ? `${w.ind.name}${more} ${w.days}일째 안 먹음`
+      : `${iga(w.ind.name + more)} ${dayWord(w.days)}째 밥을 안 먹고 있어요.`);
+  }
+  return lines;
+}
+
+/* 홈 제목 아래 한 줄 */
+function homeLine() {
+  const t = toneNow();
+  if (t === 'short') return '💬 대화로 등록부터 기록까지';
+  const s = todaySituation();
+  const hi = greetLine();
+  let what = '';
+  if (s.feedLate > 0 && s.feedDue) what = `밥 주는 날이 ${dayWord(s.feedLate)} 지났어요`;
+  else if (s.feedDue) what = `오늘은 ${KIDS} 밥 먹이는 날이에요`;
+  else if (s.lay.length) what = `${s.lay[0].momName || s.lay[0].geckoName} 산란 예정일이에요`;
+  else if (s.hatch.length) what = `${s.hatch[0].geckoName} 알이 부화할 때예요`;
+  else if (s.worried.length) what = `${iga(s.worried[0].ind.name)} ${dayWord(s.worried[0].days)}째 안 먹고 있어요`;
+  else if (s.fp.dLeft > 0) what = `다음 밥은 ${iyeyo(whenWord(s.fp.nextDay))}`;
+  return [hi, what].filter(Boolean).join('. ');
+}
+
+/* 대화 화면 첫 인사 — 오늘 할 일부터 짚어드리고 사용법을 안내합니다 */
+function chatHello() {
+  const help = '이름만 알려주셔도 되고, "크한이 12그램"처럼 한 번에 말씀하셔도 제가 알아서 정리해둘게요.\n적어둔 걸 물어보셔도 돼요 🔍\n예) "크인이 생일 언제야?" · "크범이 다음 산란 언제쯤?" · "이번 달 얼마 썼어?"';
+  if (toneNow() === 'short') {
+    return `안녕하세요! 오늘은 어떤 아이 이야기인가요? 🦎\n\n${help}`;
+  }
+  const lines = briefLines();
+  const head = lines.length ? lines.join('\n') : greetLine();
+  return `${head}\n\n어떤 아이 이야기부터 해볼까요? 🦎\n${help}`;
+}
+
+/* 예정 카드 가운데 줄 */
+function alertLine(r) {
+  const t = toneNow();
+  if (t === 'short') return r.message || '';
+  if (r.type === 'hatching_expected') {
+    return `${whenWord(r.date)} ${r.nth}차 알이 부화할 예정이에요` + (r.detail ? ` · ${r.detail}` : '');
+  }
+  if (r.type === 'laying_expected') {
+    return `${whenWord(r.date)} ${r.nth}차 산란이 예상돼요` + (r.detail ? ` · ${r.detail}` : '');
+  }
+  return r.message || '';
+}
+
 /* 화면에 띄울 알림 = 사용자가 직접 만든 알림 + 계산으로 만든 부화·산란 예정
    예정일은 저장하지 않습니다(온도·기록이 바뀌면 바로 따라오게). */
 function allAlerts() {
@@ -1345,6 +1549,7 @@ function allAlerts() {
     id: 'L:' + f.indId,
     individualId: f.indId,
     geckoName: f.pairName,
+    momName: f.name,
     type: 'laying_expected',
     date: f.eta,
     nth: f.nth,
@@ -2395,7 +2600,7 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
                 style={{display:'block', flexShrink:0, imageRendering:'auto'}} />
               <div style={{minWidth:0}}>
                 <h1>크레건설 브리딩비서</h1>
-                <div className="header-sub">💬 대화로 등록부터 기록까지</div>
+                <div className="header-sub" data-testid="home-line">{homeLine()}</div>
               </div>
             </div>
             {/* 설정은 v3.8부터 여기(예전 CG 배지 자리)로 올라왔습니다. 그 자리의 탭은 가계부가 씁니다 */}
@@ -3780,7 +3985,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     role: 'bot',
     text: presetGecko
       ? `${presetGecko.name} 이야기 들려주세요 🦎\n"12그램" · "크순이랑 메이팅" · "알 2개 산란" · "모프는 초초야"처럼 편하게 말씀하시면 제가 알아서 정리할게요.\n궁금한 건 물어보셔도 돼요 — "생일 언제야?" · "최근 기록 보여줘"\n사진은 📷 버튼, 다 끝나면 "저장"이라고 해주세요.`
-      : `안녕하세요! 오늘은 어떤 아이 이야기인가요? 🦎\n\n이름만 알려주셔도 되고, "크한이 12그램"처럼 한 번에 말씀하셔도 제가 알아서 그 아이 기록에 정리해둘게요.\n\n적어둔 걸 물어보셔도 돼요 🔍\n예) "크인이 생일 언제야?" · "크한이 최근 기록 보여줘" · "크범이 다음 산란 언제쯤?"`
+      : chatHello()
   }]);
   const [pending, setPending] = useState([]);
   const [input, setInput] = useState('');
@@ -5533,11 +5738,24 @@ function buildTodo(reminders, navigateTo) {
         : [...evs].filter(e => e.type === 'laying' && e.individualId === r.individualId && e.date <= r.date)
             .sort((a, b) => (a.date < b.date ? 1 : -1))[0])
       : null;
+    const t0 = toneNow();
+    const nm = hatch ? (r.geckoName || '') : (r.momName || r.geckoName || '');
+    const nth = r.nth ? `${r.nth}차 ` : '';
     todo.push({
       id: r.id,
       emoji: hatch ? '🐣' : '🥚',
-      title: r.geckoName || '',
-      sub: r.message || (hatch ? '부화했는지 알을 확인해주세요' : '산란했는지 확인해주세요'),
+      title: t0 === 'short'
+        ? `${r.geckoName || ''} ${nth}${hatch ? '부화' : '산란'} 예정`
+        : late > 0
+          ? (hatch ? `${nm}의 ${nth}알이 예정일보다 ${dayWord(late)} 지났어요`
+                   : `${nm}의 ${nth}산란 예정일이 ${dayWord(late)} 지났어요`)
+          : (hatch ? `${nm}의 ${nth}알, 부화할 때가 됐어요`
+                   : `오늘은 ${nm}의 ${nth}산란 예정일이에요`),
+      sub: t0 === 'short'
+        ? (r.message || '')
+        : hatch
+          ? (r.detail ? `${r.detail} · 알을 한번 살펴봐 주세요` : '알을 한번 살펴봐 주세요')
+          : '둥지 한번 살펴봐 주세요',
       late,
       action: hatch && lay ? { label: '알 보기', go: () => navigateTo('clutch', { layingId: lay.id }) }
         : byId[r.individualId] ? { label: '기록하기', go: () => navigateTo('profile', { gecko: byId[r.individualId] }) } : null,
@@ -5549,9 +5767,16 @@ function buildTodo(reminders, navigateTo) {
   if (fp.due && fp.remaining.length) {
     todo.push({
       id: 'feed', emoji: '🦗', pinned: true,
-      title: fp.dLeft === 0 ? '오늘 밥 주는 날' : `밥 주는 날 ${-fp.dLeft}일 지남`,
-      sub: `${fp.inds.length}마리 중 ${fp.remaining.length}마리 남음` +
-        (fp.lastRound ? ` · 지난 급여 ${fmtDate(fp.lastRound)}` : ' · 첫 급여 기록'),
+      title: toneNow() === 'short'
+        ? (fp.dLeft === 0 ? '오늘 밥 주는 날' : `밥 주는 날 ${-fp.dLeft}일 지남`)
+        : fp.dLeft === 0
+          ? (toneNow() === 'friendly' ? `오늘은 ${KIDS} 밥 먹이는 날이에요!` : `오늘은 ${KIDS} 밥 먹이는 날이에요`)
+          : `밥 주는 날이 ${dayWord(-fp.dLeft)} 지났어요`,
+      sub: toneNow() === 'short'
+        ? `${fp.inds.length}마리 중 ${fp.remaining.length}마리 남음` +
+          (fp.lastRound ? ` · 지난 급여 ${fmtDate(fp.lastRound)}` : ' · 첫 급여 기록')
+        : `${fp.inds.length}마리 중 ${fp.remaining.length}마리가 아직이에요` +
+          (fp.lastRound ? ` · 지난번은 ${agoWord(fp.lastRound)}` : ' · 첫 급여예요'),
       late: Math.max(0, -fp.dLeft),
       action: { label: '밥 주기', go: () => navigateTo('feeding') },
     });
@@ -5559,17 +5784,23 @@ function buildTodo(reminders, navigateTo) {
     // 밥 주는 날이 아니어도 언제든 들어갈 수 있게 (지난 날짜로 적을 때 여기로 들어옵니다)
     todo.push({
       id: 'feed-open', emoji: '🦗', pinned: false,
-      title: '밥 주기 기록',
-      sub: (fp.lastRound ? `지난 급여 ${fmtDate(fp.lastRound)} · ` : '') +
-        (fp.dLeft > 0 ? `다음은 ${fp.dLeft}일 뒤` : '오늘 줘도 됩니다') + ' · 날짜 골라 적기',
+      title: toneNow() === 'short' ? '밥 주기 기록' : '밥은 언제든 적어둘 수 있어요',
+      sub: toneNow() === 'short'
+        ? (fp.lastRound ? `지난 급여 ${fmtDate(fp.lastRound)} · ` : '') +
+          (fp.dLeft > 0 ? `다음은 ${fp.dLeft}일 뒤` : '오늘 줘도 됩니다') + ' · 날짜 골라 적기'
+        : (fp.lastRound ? `지난번은 ${agoWord(fp.lastRound)} · ` : '') +
+          (fp.dLeft > 0 ? `다음은 ${iyeyo(whenWord(fp.nextDay))}` : '오늘 주셔도 괜찮아요') + ' · 날짜를 골라 적을 수 있어요',
       late: -1,
       action: { label: '밥 주기', go: () => navigateTo('feeding') },
     });
   } else if (fp.doneToday.size && !fp.remaining.length) {
     // 오늘 한 바퀴 다 돌았으면 확인 문구로 바꿔줍니다
     todo.push({
-      id: 'feed-done', emoji: '✅', title: '오늘 밥 다 줬어요',
-      sub: `${fp.inds.length}마리 전부 확인 완료 · 다음 급여는 ${fmtDate(fp.nextDay)}`,
+      id: 'feed-done', emoji: '✅',
+      title: toneNow() === 'short' ? '오늘 밥 다 줬어요' : `오늘 ${KIDS} 밥은 다 주셨어요`,
+      sub: toneNow() === 'short'
+        ? `${fp.inds.length}마리 전부 확인 완료 · 다음 급여는 ${fmtDate(fp.nextDay)}`
+        : `${fp.inds.length}마리 전부 확인했어요 · 다음은 ${iyeyo(whenWord(fp.nextDay))}`,
       late: 0, action: { label: '다시 보기', go: () => navigateTo('feeding') },
     });
   }
@@ -5578,9 +5809,13 @@ function buildTodo(reminders, navigateTo) {
   fp.worried.slice(0, 5).forEach(w => {
     todo.push({
       id: 'noeat:' + w.ind.id, emoji: '⚠️',
-      title: `${w.ind.name} ${w.days}일째 안 먹어요`,
-      sub: `마지막 섭취 ${fmtDate(w.last)} · 계속되면 병원 진료를 생각해보세요`,
-      late: w.days,
+      title: toneNow() === 'short'
+        ? `${w.ind.name} ${w.days}일째 안 먹어요`
+        : `${iga(w.ind.name)} ${dayWord(w.days)}째 밥을 안 먹고 있어요`,
+      sub: toneNow() === 'short'
+        ? `마지막 섭취 ${fmtDate(w.last)} · 계속되면 병원 진료를 생각해보세요`
+        : `마지막으로 먹은 건 ${iyeyo(agoWord(w.last))} · 계속되면 병원을 생각해보셔야 할 것 같아요`,
+      late: w.days, hideLate: toneNow() !== 'short',
       action: { label: '프로필', go: () => navigateTo('profile', { gecko: w.ind }) },
     });
   });
@@ -5749,6 +5984,7 @@ function FeedingScreen({ navigate, showToast, refreshIndividuals }) {
 function RemindersScreen({ navigate, onChanged }) {
   const [all, setAll] = useState(() => allAlerts());
   const todo = useMemo(() => buildTodo(all, navigate), [all, navigate]);
+  const brief = useMemo(() => briefLines(), [all]);
   const thisWeek = all.filter(r => { const d = daysUntil(r.date); return d > 0 && d <= WEEK_WINDOW; });
   const later = all.filter(r => daysUntil(r.date) > WEEK_WINDOW);
   const past = all.filter(r => daysUntil(r.date) < 0);
@@ -5774,10 +6010,26 @@ function RemindersScreen({ navigate, onChanged }) {
     <div className="screen">
       <div className="header"><h1>🔔 알림</h1></div>
 
+      {/* 오늘의 브리핑 — 카드를 늘어놓기 전에 하루를 먼저 정리해 드립니다 */}
+      {brief.length > 0 && (
+        <div className="card" data-testid="today-brief"
+          style={{background:'var(--accent-soft)', border:'1px solid var(--accent-edge)'}}>
+          {brief.map((line, i) => (
+            <div key={i} style={{
+              fontSize: i === 0 ? 15 : 14.5,
+              fontWeight: i === 0 ? 800 : 500,
+              color: i === 0 ? 'var(--accent2)' : 'var(--text)',
+              lineHeight: 1.65,
+              marginTop: i === 0 ? 0 : 3,
+            }}>{line}</div>
+          ))}
+        </div>
+      )}
+
       <div className="section-title">✅ 오늘 할 일</div>
       {todo.length === 0 ? (
         <div className="card" style={{textAlign:'center', color:'var(--text3)', fontSize:13, padding:'18px 12px'}}>
-          오늘 급한 일은 없어요. 편히 쉬세요 🌿
+          {toneNow() === 'short' ? '오늘 급한 일은 없어요 🌿' : '오늘은 특별히 챙기실 일이 없어요. 편히 쉬세요 🌿'}
         </div>
       ) : todo.map(t => (
         <div className="card" key={t.id} style={{borderLeft:`3px solid ${t.late > 0 ? 'var(--danger)' : 'var(--accent2)'}`}}>
@@ -5785,10 +6037,10 @@ function RemindersScreen({ navigate, onChanged }) {
             <div style={{minWidth:0, flex:1}}>
               <div style={{fontSize:15, fontWeight:700}}>
                 {t.emoji} {t.title}
-                {t.late > 0 && <span style={{fontSize:11, color:'var(--danger)', marginLeft:6}}>{t.late}일 지남</span>}
+                {t.late > 0 && !t.hideLate && <span style={{fontSize:11, color:'var(--danger)', marginLeft:6}}>{t.late}일 지남</span>}
                 {t.late === 0 && t.id !== 'feed' && <span style={{fontSize:11, color:'var(--accent2)', marginLeft:6}}>오늘</span>}
               </div>
-              <div style={{fontSize:12, color:'var(--text3)', marginTop:3, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{t.sub}</div>
+              <div style={{fontSize:12, color:'var(--text3)', marginTop:3, overflow:'hidden', display:'-webkit-box', WebkitLineClamp:2, WebkitBoxOrient:'vertical', lineHeight:1.45}}>{t.sub}</div>
             </div>
             {t.action && (
               <button className="btn btn-secondary btn-sm" style={{width:'auto', whiteSpace:'nowrap'}}
@@ -5834,9 +6086,9 @@ function ReminderCard({ r, onDelete, past }) {
       <div style={{display:'flex', justifyContent:'space-between', alignItems:'flex-start'}}>
         <div>
           <div style={{fontSize:15, fontWeight:700}}>{REMINDER_EMOJI[r.type] || '🔔'} {r.geckoName}</div>
-          <div style={{fontSize:13, color:'var(--text3)', marginTop:2}}>{r.message}</div>
+          <div style={{fontSize:13, color:'var(--text3)', marginTop:2}}>{alertLine(r)}</div>
           <div style={{fontSize:12, color: past ? 'var(--text3)' : daysLeft <= 7 ? 'var(--warning)' : 'var(--accent2)', marginTop:4}}>
-            {past ? fmtDate(r.date) + ' (지남)' : daysLeft === 0 ? '오늘!' : `D-${daysLeft} · ${fmtDate(r.date)}`}
+            {past ? `${agoWord(r.date)} (지났어요)` : daysLeft === 0 ? '오늘이에요' : `${whenWord(r.date)} · ${fmtDate(r.date)}`}
           </div>
         </div>
         {/* 계산으로 만든 부화 예정은 지울 대상이 아니라 산란기록 자체가 원본입니다 */}
@@ -6292,6 +6544,11 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
     DB.saveSettings(s);
     setSettings(s);
   };
+  const setVoice = (patch) => {
+    const s = { ...settings, ...patch };
+    DB.saveSettings(s);
+    setSettings(s);
+  };
   const setTheme = (key) => {
     const s = { ...settings, theme: key };
     DB.saveSettings(s);
@@ -6362,6 +6619,52 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
     <div className="screen">
       <div className="header"><h1>⚙️ 설정</h1></div>
       <div style={{padding:'16px', display:'flex', flexDirection:'column', gap:12}}>
+        {/* 비서 말투 — 알림·홈·대화에서 부르는 말과 말투를 고릅니다 */}
+        <div className="card" style={{margin:0}} data-testid="voice-card">
+          <div style={{fontSize:13, fontWeight:700, marginBottom:4, color:'var(--text2)'}}>🗣️ 비서 말투</div>
+          <div style={{fontSize:12, color:'var(--text3)', marginBottom:10, lineHeight:1.6}}>
+            알림·홈 화면·대화에서 어떻게 부르고 어떤 말투로 말할지 고릅니다.
+          </div>
+
+          <div style={{fontSize:11.5, color:'var(--text3)', marginBottom:5}}>뭐라고 불러드릴까요</div>
+          <div style={{display:'flex', flexWrap:'wrap', gap:5, marginBottom:8}}>
+            {CALL_OPTIONS.map(([k, label]) => {
+              const on = (settings.callName || CALL_DEFAULT) === k;
+              return (
+                <button key={k} className="chip-btn"
+                  style={{fontSize:12, padding:'6px 11px', ...(on ? {background:'var(--accent-soft)', fontWeight:700} : {})}}
+                  onClick={() => setVoice({ callName: k })}>{label}</button>
+              );
+            })}
+          </div>
+          {(settings.callName || CALL_DEFAULT) === 'custom' && (
+            <input className="input" style={{padding:'9px 11px', fontSize:13, marginBottom:8}}
+              placeholder="예) 원장님 · 형님 · 이름" value={settings.callCustom || ''}
+              onChange={e => setVoice({ callCustom: e.target.value })} />
+          )}
+
+          <div style={{fontSize:11.5, color:'var(--text3)', margin:'10px 0 5px'}}>말투</div>
+          <div style={{display:'flex', gap:5, marginBottom:10}}>
+            {TONE_OPTIONS.map(([k, label]) => {
+              const on = (settings.tone || TONE_DEFAULT) === k;
+              return (
+                <button key={k} className="chip-btn"
+                  style={{flex:1, fontSize:12.5, padding:'8px 0', textAlign:'center', ...(on ? {background:'var(--accent-soft)', fontWeight:700} : {})}}
+                  onClick={() => setVoice({ tone: k })}>{label}</button>
+              );
+            })}
+          </div>
+          <div style={{fontSize:11, color:'var(--text3)', lineHeight:1.6, marginBottom:10}}>
+            <b>짧게</b>는 예전 말투예요. 문장이 부담스러우면 이걸로 돌리시면 됩니다.
+          </div>
+
+          <div style={{padding:'11px 12px', borderRadius:10, background:'var(--accent-soft)',
+                       border:'1px solid var(--accent-edge)', fontSize:13, lineHeight:1.7}}>
+            <div style={{fontSize:11, color:'var(--text3)', marginBottom:4}}>이렇게 말합니다</div>
+            {briefLines().map((l, i) => <div key={i} style={{color: i === 0 ? 'var(--accent2)' : 'var(--text)', fontWeight: i === 0 ? 700 : 400}}>{l}</div>)}
+          </div>
+        </div>
+
         <div className="card" style={{margin:0}}>
           <div style={{fontSize:13, fontWeight:700, marginBottom:4, color:'var(--text2)'}}>🎨 색상 테마</div>
           <div style={{fontSize:12, color:'var(--text3)', marginBottom:10, lineHeight:1.6}}>
