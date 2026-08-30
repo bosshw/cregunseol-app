@@ -26,7 +26,7 @@ test("keeps storage, synchronization, and core workflows intact", async () => {
     assert.ok(source.includes(contract), `missing contract: ${contract}`);
   }
 
-  assert.match(source, /const APP_VERSION = '4\.5'/);
+  assert.match(source, /const APP_VERSION = '4\.6'/);
   assert.match(source, /addEvents\(events\)/);
   assert.match(source, /DB\.addEvents\(additions\)/);
   assert.doesNotMatch(
@@ -41,10 +41,10 @@ test("keeps service worker and release metadata aligned", async () => {
     readFile(file("version.json"), "utf8").then(JSON.parse),
   ]);
 
-  assert.equal(version.app, "4.5");
+  assert.equal(version.app, "4.6");
   assert.equal(version.schema, 1);
   assert.equal(version.minSchema, 1);
-  assert.match(worker, /const CACHE = 'creg-v45'/);
+  assert.match(worker, /const CACHE = 'creg-v46'/);
   for (const asset of [
     "./index.html",
     "./app.min.js",
@@ -104,4 +104,31 @@ test("keeps the v4.5 conversation upgrades", async () => {
   assert.match(source, /list\.filter\(f => f\.type === 'eggphoto'\)/);
   // "분양 취소"는 담긴 기록 취소로 새지 않습니다
   assert.match(source, /!\/분양\|예약\|보유\/\.test\(text\)/);
+});
+
+test("keeps the v4.6 assistant voice in one place", async () => {
+  const source = await readFile(file("src/app.jsx"), "utf8");
+
+  for (const contract of [
+    "const KIDS = '애깅이들'",
+    "const CALL_DEFAULT = 'breeder'",
+    "const TONE_DEFAULT = 'polite'",
+    "function briefLines()",
+    "function homeLine()",
+    "function chatHello()",
+    "function alertLine(r)",
+    "function whenWord(iso)",
+    "function agoWord(iso)",
+    "const dayWord =",
+    "function todaySituation()",
+    'data-testid="today-brief"',
+    'data-testid="voice-card"',
+  ]) {
+    assert.ok(source.includes(contract), `missing v4.6 contract: ${contract}`);
+  }
+
+  // 문구는 VOICE 한 곳에서만 만듭니다 — 화면이 옛 라벨을 그대로 박아두면 FAIL
+  assert.doesNotMatch(source, /header-sub">💬 대화로 등록부터 기록까지/);
+  assert.ok(source.includes("{homeLine()}"), "home subtitle must come from homeLine()");
+  assert.ok(source.includes("{alertLine(r)}"), "reminder card must come from alertLine()");
 });
