@@ -1,4 +1,4 @@
-const CACHE = 'creg-v46';
+const CACHE = 'creg-v47';
 
 // 화면을 그리는 데 꼭 필요한 파일 — 이것도 폰에 저장해둬야 인터넷 없이 열립니다
 const ASSETS = [
@@ -46,4 +46,4 @@ self.addEventListener('fetch', e => {
     }))
   );
 });
-// v4.6 deploy 2026-08-30 (비서 말투 — 오늘의 브리핑 · 문장형 알림 · 호칭/말투 설정)
+// v4.7 deploy 2026-08-31 (공식 영문 브랜드 cre_construct · CC 적용)

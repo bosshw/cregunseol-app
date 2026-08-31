@@ -26,7 +26,9 @@ test("keeps storage, synchronization, and core workflows intact", async () => {
     assert.ok(source.includes(contract), `missing contract: ${contract}`);
   }
 
-  assert.match(source, /const APP_VERSION = '4\.6'/);
+  assert.match(source, /const APP_VERSION = '4\.7'/);
+  assert.match(source, /Powered by cre_construct · CC/);
+  assert.doesNotMatch(source, /Powered by 크레건설/);
   assert.match(source, /addEvents\(events\)/);
   assert.match(source, /DB\.addEvents\(additions\)/);
   assert.doesNotMatch(
@@ -41,10 +43,11 @@ test("keeps service worker and release metadata aligned", async () => {
     readFile(file("version.json"), "utf8").then(JSON.parse),
   ]);
 
-  assert.equal(version.app, "4.6");
+  assert.equal(version.app, "4.7");
   assert.equal(version.schema, 1);
   assert.equal(version.minSchema, 1);
-  assert.match(worker, /const CACHE = 'creg-v46'/);
+  assert.match(worker, /const CACHE = 'creg-v47'/);
+
   for (const asset of [
     "./index.html",
     "./app.min.js",

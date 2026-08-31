@@ -357,7 +357,7 @@ const SERVER = {
 
    인터넷이 없거나 파일을 못 받으면 아무 것도 막지 않습니다(앱은 그대로 씁니다).
    ══════════════════════════════════════════ */
-const APP_VERSION = '4.6';
+const APP_VERSION = '4.7';
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -5118,7 +5118,7 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
           <div className="share-box">
             <div style={{fontSize:12, color:'var(--text3)', marginBottom:6}}>공유 코드</div>
             <div className="share-code">{gecko.shareCode}</div>
-            <div style={{fontSize:11, color:'var(--text3)', marginTop:6}}>Powered by 크레건설</div>
+            <div style={{fontSize:11, color:'var(--text3)', marginTop:6}}>Powered by cre_construct · CC</div>
             <button className="btn btn-ghost btn-sm" style={{marginTop:10}} onClick={() => {
               navigator.clipboard?.writeText(gecko.shareCode);
               showToast('코드 복사됨!');
@@ -6797,7 +6797,7 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
           </div>
         </div>
         <div className="card" style={{margin:0}}>
-          <div style={{fontSize:13, fontWeight:700, marginBottom:6, color:'var(--accent2)'}}>Powered by 크레건설</div>
+          <div style={{fontSize:13, fontWeight:700, marginBottom:6, color:'var(--accent2)'}}>Powered by cre_construct · CC</div>
           <div style={{fontSize:12, color:'var(--text3)'}}>크레스티드 게코 전문 브리더</div>
 
           {/* 문의 창구 — 눌러서 바로 이동합니다 */}
