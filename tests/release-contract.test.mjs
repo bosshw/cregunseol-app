@@ -26,7 +26,7 @@ test("keeps storage, synchronization, and core workflows intact", async () => {
     assert.ok(source.includes(contract), `missing contract: ${contract}`);
   }
 
-  assert.match(source, /const APP_VERSION = '4\.7'/);
+  assert.match(source, /const APP_VERSION = '4\.8'/);
   assert.match(source, /Powered by cre_construct · CC/);
   assert.doesNotMatch(source, /Powered by 크레건설/);
   assert.match(source, /addEvents\(events\)/);
@@ -43,10 +43,10 @@ test("keeps service worker and release metadata aligned", async () => {
     readFile(file("version.json"), "utf8").then(JSON.parse),
   ]);
 
-  assert.equal(version.app, "4.7");
+  assert.equal(version.app, "4.8");
   assert.equal(version.schema, 1);
   assert.equal(version.minSchema, 1);
-  assert.match(worker, /const CACHE = 'creg-v47'/);
+  assert.match(worker, /const CACHE = 'creg-v48'/);
 
   for (const asset of [
     "./index.html",
@@ -134,4 +134,42 @@ test("keeps the v4.6 assistant voice in one place", async () => {
   assert.doesNotMatch(source, /header-sub">💬 대화로 등록부터 기록까지/);
   assert.ok(source.includes("{homeLine()}"), "home subtitle must come from homeLine()");
   assert.ok(source.includes("{alertLine(r)}"), "reminder card must come from alertLine()");
+});
+
+test("keeps the v4.8 kinship, morph and voice contracts", async () => {
+  const source = await readFile(file("src/app.jsx"), "utf8");
+
+  for (const contract of [
+    // 말투 — 세 갈래를 한 자리에서 고릅니다
+    "const say = (polite, friendly, short)",
+    "const twoLine = (head, tail)",
+    "function greetCore()",
+    "function voiceSample()",
+    "const naWord =",
+    // 혈연 — 판정은 relationOf 한 곳에서만
+    "function relationOf(a, b, all)",
+    "function mateWarning(a, b, all)",
+    "function littermatesOf(gecko, all)",
+    "function sibIdsOf(id, byId, list)",
+    "linkClutch(ids)",
+    "unlinkClutch(id)",
+    // 모프 — 확률로 말할 수 있는 것만
+    "function readGenes(gecko)",
+    "function morphForecast(a, b)",
+    "function morphAnswer(a, b)",
+    "function mateSuggestions(target, all, evs)",
+    "function mateAnswer(target)",
+  ]) {
+    assert.ok(source.includes(contract), `missing v4.8 contract: ${contract}`);
+  }
+
+  // 긴 문장은 화면에서 줄이 살아야 합니다
+  assert.ok(source.includes("whiteSpace:'pre-line'"), "long sentences need pre-line rendering");
+  // 혈연 판정을 화면에서 따로 세면 결론이 갈립니다 — mateWarning 만 씁니다
+  assert.ok(source.includes("mateWarning(byId[p.male.id], byId[p.female.id], individuals)"),
+    "mating pairs must use mateWarning()");
+  // 설정 미리보기는 고정 견본으로 — 데이터가 없는 날에도 차이가 보여야 합니다
+  assert.ok(source.includes("{voiceSample().map("), "settings preview must use voiceSample()");
+  // 버전 문자열 4곳
+  assert.ok(source.includes("const APP_VERSION = '4.8'"), "APP_VERSION must be 4.8");
 });
