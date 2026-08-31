@@ -137,6 +137,23 @@ const DB = {
     this.updateIndividual(id, patch);
     return patch;
   },
+  /* ── 동배(같은 클러치) 묶기 ──
+     앱에서 태어난 아이는 부모 기록(sireId·damId)으로 형제를 저절로 압니다.
+     하지만 데려온 아이는 부모를 모르니 "크영이랑 크공이는 동배야" 한마디로 같은 표를 붙여둡니다.
+     한쪽에 이미 표가 있으면 그 표를 단 아이들까지 한 무리로 합칩니다. */
+  linkClutch(ids) {
+    const list = this.getIndividuals();
+    const want = list.filter(i => ids.indexOf(i.id) >= 0);
+    if (want.length < 2) return { linked: 0, group: '' };
+    const olds = [...new Set(want.map(i => i.clutchGroup).filter(Boolean))];
+    const group = olds[0] || ('cl' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6));
+    const target = new Set(ids);
+    list.forEach(i => { if (i.clutchGroup && olds.indexOf(i.clutchGroup) >= 0) target.add(i.id); });
+    this.saveIndividuals(list.map(i => target.has(i.id) ? { ...i, clutchGroup: group } : i));
+    return { linked: target.size, group };
+  },
+  unlinkClutch(id) { this.updateIndividual(id, { clutchGroup: '' }); },
+
   /* 부화일 옮기기 — 부화 기록과 그날 태어난 베이비들의 생일을 한 번에 맞춥니다.
      (같은 알에서 나온 형제는 같은 날이 맞으므로 통째로 움직입니다) */
   moveHatchDate(damId, oldDate, newDate) {
@@ -357,7 +374,7 @@ const SERVER = {
 
    인터넷이 없거나 파일을 못 받으면 아무 것도 막지 않습니다(앱은 그대로 씁니다).
    ══════════════════════════════════════════ */
-const APP_VERSION = '4.7';
+const APP_VERSION = '4.8';
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -1360,6 +1377,16 @@ function callName() {
 }
 const toneNow = () => voicePrefs().tone;
 
+/* 말투 세 갈래를 한 자리에서 고릅니다.
+   ★ 문장마다 삼항을 흩어 두면 "정중히"와 "친근히"가 결국 같은 말이 됩니다.
+     세 개를 나란히 적게 해서 차이를 눈으로 확인하며 쓰기 위한 장치입니다. */
+const say = (polite, friendly, short) => {
+  const t = toneNow();
+  return t === 'friendly' ? friendly : t === 'short' ? short : polite;
+};
+/* 한 문장이 길면 의미 단위로 줄을 나눕니다 (화면은 pre-line 으로 그립니다) */
+const twoLine = (head, tail) => `${head}\n${tail}`;
+
 /* 날짜 수를 한국어 세는 말로 — 열흘까지만, 그 위는 숫자 그대로 */
 const KDAY_WORDS = ['', '하루', '이틀', '사흘', '나흘', '닷새', '엿새', '이레', '여드레', '아흐레', '열흘'];
 const dayWord = (n) => {
@@ -1403,18 +1430,41 @@ function hasJong(word) {
 const iyeyo = (w) => `${w}${hasJong(w) ? '이에요' : '예요'}`;
 const iga   = (w) => `${w}${hasJong(w) ? '이' : '가'}`;
 
-/* 시간대 인사 */
-function greetLine() {
+/* "사흘이나" — 강조할 때 붙이는 조사. 하루는 강조하지 않습니다. */
+const naWord = (n) => {
+  const w = dayWord(n);
+  return Math.abs(Math.round(Number(n) || 0)) >= 2 ? w + (hasJong(w) ? '이나' : '나') : w;
+};
+
+/* 시간대 인사 — 문장부호 없이 알맹이만 */
+function greetCore() {
   const t = toneNow();
   if (t === 'short') return '';
   const h = new Date().getHours();
-  const base = h >= 5 && h < 11 ? '좋은 아침이에요'
-    : h >= 11 && h < 18 ? '안녕하세요'
-    : h >= 18 && h < 22 ? '좋은 저녁이에요'
-    : '늦은 시간까지 고생 많으세요';
   const call = callName();
-  const tail = t === 'friendly' ? '!' : '';
-  return call ? `${base}, ${call}${tail}` : base + tail;
+  if (t === 'friendly') {
+    const base = h >= 5 && h < 11 ? '좋은 아침이에요'
+      : h >= 11 && h < 18 ? '안녕하세요'
+      : h >= 18 && h < 22 ? '좋은 저녁이에요'
+      : '아직 안 주무셨네요';
+    return call ? `${call}, ${base}` : base;
+  }
+  const base = h >= 5 && h < 11 ? '좋은 아침입니다'
+    : h >= 11 && h < 18 ? '안녕하세요'
+    : h >= 18 && h < 22 ? '좋은 저녁입니다'
+    : '늦은 시간까지 고생 많으십니다';
+  return call ? `${base}, ${call}` : base;
+}
+/* 문장부호까지 붙인 완성된 인사 한 줄 */
+const GREET_EMOJI = () => {
+  const h = new Date().getHours();
+  return h >= 5 && h < 11 ? ' ☀️' : h >= 11 && h < 18 ? ' 😊' : ' 🌙';
+};
+function greetLine() {
+  const c = greetCore();
+  if (!c) return '';
+  // 이모지는 문장부호 뒤에 — "안녕하세요 😊!" 처럼 어색해지지 않게
+  return toneNow() === 'friendly' ? c + '!' + GREET_EMOJI() : c + '.';
 }
 
 /* ── 오늘 상황을 한 덩어리로 ──
@@ -1438,55 +1488,82 @@ function todaySituation() {
 
 /* 브리핑 문장들 — 인사 한 줄 + 할 일 최대 세 줄 */
 function briefLines() {
-  const t = toneNow();
   const s = todaySituation();
   const jobs = [];
 
   if (s.feedLate > 0 && s.feedDue) {
-    jobs.push(t === 'short' ? `밥 주는 날 ${s.feedLate}일 지남`
-      : `밥 주는 날이 ${dayWord(s.feedLate)} 지났어요.`);
+    jobs.push(say(
+      `밥 주는 날이 ${dayWord(s.feedLate)} 지났어요.`,
+      `앗, 밥 주는 날이 ${naWord(s.feedLate)} 지났어요!`,
+      `밥 주는 날 ${s.feedLate}일 지남`));
   } else if (s.feedDue) {
-    jobs.push(t === 'short' ? '오늘 밥 주는 날'
-      : t === 'friendly' ? `오늘은 ${KIDS} 밥 먹이는 날이에요!`
-      : `오늘은 ${KIDS} 밥 먹이는 날이에요.`);
+    jobs.push(say(
+      `오늘은 ${KIDS} 밥 먹이는 날이에요.`,
+      `오늘 ${KIDS} 밥 주는 날이에요! 🦗`,
+      '오늘 밥 주는 날'));
   }
   s.lay.slice(0, 2).forEach(r => {
     const nm = r.momName || r.geckoName;
-    jobs.push(t === 'short' ? `${nm} ${r.nth}차 산란 예정`
-      : `${nm}의 ${r.nth}차 산란 예정일이에요.`);
+    const late = -daysUntil(r.date);          // 카드와 같은 기준으로 셉니다
+    jobs.push(late > 0
+      ? say(`${nm}의 ${r.nth}차 산란 예정일이 ${dayWord(late)} 지났어요.`,
+            `${nm} ${r.nth}차 산란 예정일이 ${naWord(late)} 지났어요!`,
+            `${nm} ${r.nth}차 산란 ${late}일 지남`)
+      : say(`${nm}의 ${r.nth}차 산란 예정일이에요.`,
+            `${nm} ${r.nth}차 산란, 오늘이에요! 🥚`,
+            `${nm} ${r.nth}차 산란 예정`));
   });
   s.hatch.slice(0, 2).forEach(r => {
-    jobs.push(t === 'short' ? `${r.geckoName} ${r.nth}차 부화 예정`
-      : `${r.geckoName}의 ${r.nth}차 알이 부화할 때가 됐어요.`);
+    const late = -daysUntil(r.date);
+    jobs.push(late > 0
+      ? say(`${r.geckoName}의 ${r.nth}차 알이 예정일보다 ${dayWord(late)} 지났어요.`,
+            `${r.geckoName} ${r.nth}차 알, 예정일보다 ${naWord(late)} 지났어요!`,
+            `${r.geckoName} ${r.nth}차 부화 ${late}일 지남`)
+      : say(`${r.geckoName}의 ${r.nth}차 알이 부화할 때가 됐어요.`,
+            `${r.geckoName} ${r.nth}차 알, 곧 나올 것 같아요! 🐣`,
+            `${r.geckoName} ${r.nth}차 부화 예정`));
   });
   s.etc.slice(0, 1).forEach(r => {
-    jobs.push(t === 'short' ? (r.message || '알림') : `${r.message || '알림'} — 오늘이에요.`);
+    jobs.push(say(`${r.message || '알림'} — 오늘이에요.`, `${r.message || '알림'} — 오늘이에요!`, r.message || '알림'));
   });
 
   const lines = [];
   const hi = greetLine();
-  if (hi) lines.push(hi + '.');
+  if (hi) lines.push(hi);
 
   if (!jobs.length && !s.worried.length) {
-    lines.push(t === 'short' ? '오늘 할 일 없음' : '오늘은 특별히 챙기실 일이 없어요 🌿');
+    lines.push(say('오늘은 특별히 챙기실 일이 없어요 🌿', '오늘은 한가해요! 좀 쉬셔도 돼요 🌿', '오늘 할 일 없음'));
     const rest = [];
     if (s.fp.dLeft > 0) rest.push(`다음 밥은 ${whenWord(s.fp.nextDay)}`);
     if (s.next) rest.push(`${s.next.geckoName}의 ${s.next.nth ? s.next.nth + '차 ' : ''}${s.next.type === 'hatching_expected' ? '알은' : '산란은'} ${whenWord(s.next.date)} 예정`);
-    if (rest.length && t !== 'short') lines.push(iyeyo(rest.join(', ')) + '.');
+    if (rest.length && toneNow() !== 'short') lines.push(iyeyo(rest.join(', ')) + '.');
     return lines;
   }
 
   lines.push(...jobs.slice(0, 3));
-  if (jobs.length > 3) lines.push(`그 밖에 ${jobs.length - 3}가지가 더 있어요.`);
+  if (jobs.length > 3) lines.push(say(`그 밖에 ${jobs.length - 3}가지가 더 있어요.`, `그 밖에도 ${jobs.length - 3}가지 더 있어요!`, `외 ${jobs.length - 3}건`));
 
   if (s.worried.length) {
     const w = s.worried[0];
     const more = s.worried.length > 1 ? ` 외 ${s.worried.length - 1}마리` : '';
-    lines.push(t === 'short'
-      ? `${w.ind.name}${more} ${w.days}일째 안 먹음`
-      : `${iga(w.ind.name + more)} ${dayWord(w.days)}째 밥을 안 먹고 있어요.`);
+    lines.push(say(
+      `${iga(w.ind.name + more)} ${dayWord(w.days)}째 밥을 안 먹고 있어요.`,
+      `${w.ind.name + more}, ${dayWord(w.days)}째 밥을 안 먹네요 😢`,
+      `${w.ind.name}${more} ${w.days}일째 안 먹음`));
   }
   return lines;
+}
+
+/* 말투 견본 — 오늘 할 일이 없는 날에도 세 말투의 차이를 눈으로 볼 수 있게
+   고정된 예문을 씁니다(설정 화면 미리보기 전용). */
+function voiceSample() {
+  const call = callName();
+  return [
+    say(call ? `안녕하세요, ${call}.` : '안녕하세요.', call ? `${call}, 안녕하세요! 😊` : '안녕하세요! 😊', ''),
+    say(`오늘은 ${KIDS} 밥 먹이는 날이에요.`, `오늘 ${KIDS} 밥 주는 날이에요! 🦗`, '오늘 밥 주는 날'),
+    say('크안이의 2차 산란 예정일이\n사흘 지났어요.', '크안이 2차 산란 예정일이\n사흘이나 지났어요!', '크안이 2차 산란 예정 · 3일 지남'),
+    say('크범이가 아흐레째 밥을 안 먹고 있어요.', '크범이, 아흐레째 밥을 안 먹네요 😢', '크범이 9일째 안 먹음'),
+  ].filter(Boolean);
 }
 
 /* 홈 제목 아래 한 줄 */
@@ -1494,15 +1571,14 @@ function homeLine() {
   const t = toneNow();
   if (t === 'short') return '💬 대화로 등록부터 기록까지';
   const s = todaySituation();
-  const hi = greetLine();
   let what = '';
-  if (s.feedLate > 0 && s.feedDue) what = `밥 주는 날이 ${dayWord(s.feedLate)} 지났어요`;
-  else if (s.feedDue) what = `오늘은 ${KIDS} 밥 먹이는 날이에요`;
+  if (s.feedLate > 0 && s.feedDue) what = say(`밥 주는 날이 ${dayWord(s.feedLate)} 지났어요`, `밥 주는 날이 ${naWord(s.feedLate)} 지났어요`, '');
+  else if (s.feedDue) what = say(`오늘은 ${KIDS} 밥 먹이는 날이에요`, `오늘 ${KIDS} 밥 주는 날이에요`, '');
   else if (s.lay.length) what = `${s.lay[0].momName || s.lay[0].geckoName} 산란 예정일이에요`;
   else if (s.hatch.length) what = `${s.hatch[0].geckoName} 알이 부화할 때예요`;
-  else if (s.worried.length) what = `${iga(s.worried[0].ind.name)} ${dayWord(s.worried[0].days)}째 안 먹고 있어요`;
+  else if (s.worried.length) what = say(`${iga(s.worried[0].ind.name)} ${dayWord(s.worried[0].days)}째 안 먹고 있어요`, `${s.worried[0].ind.name}, ${dayWord(s.worried[0].days)}째 안 먹고 있어요`, '');
   else if (s.fp.dLeft > 0) what = `다음 밥은 ${iyeyo(whenWord(s.fp.nextDay))}`;
-  return [hi, what].filter(Boolean).join('. ');
+  return [greetLine(), what].filter(Boolean).join(' ');
 }
 
 /* 대화 화면 첫 인사 — 오늘 할 일부터 짚어드리고 사용법을 안내합니다 */
@@ -1519,14 +1595,271 @@ function chatHello() {
 /* 예정 카드 가운데 줄 */
 function alertLine(r) {
   const t = toneNow();
-  if (t === 'short') return r.message || '';
+  if (t === 'short') return (r.message || '') + (r.detail ? ` · ${r.detail}` : '');
+  const tail = r.detail ? '\n' + r.detail : '';       // 날짜·부연은 아랫줄로 내립니다
   if (r.type === 'hatching_expected') {
-    return `${whenWord(r.date)} ${r.nth}차 알이 부화할 예정이에요` + (r.detail ? ` · ${r.detail}` : '');
+    return say(`${whenWord(r.date)} ${r.nth}차 알이 부화할 예정이에요`,
+               `${whenWord(r.date)} ${r.nth}차 알이 나올 것 같아요 🐣`, '') + tail;
   }
   if (r.type === 'laying_expected') {
-    return `${whenWord(r.date)} ${r.nth}차 산란이 예상돼요` + (r.detail ? ` · ${r.detail}` : '');
+    return say(`${whenWord(r.date)} ${r.nth}차 산란이 예상돼요`,
+               `${whenWord(r.date)} ${r.nth}차 산란할 것 같아요 🥚`, '') + tail;
   }
   return r.message || '';
+}
+
+/* ══════════════════════════════════════════
+   혈연 — 붙이면 안 되는 짝을 앱이 먼저 알아봅니다
+   ★ 판정은 여기 한 곳에서만 합니다. 화면마다 따로 세면 결론이 갈립니다.
+     (알 판정을 clutchRows 한 곳에 모은 것과 같은 이유입니다)
+   ══════════════════════════════════════════ */
+
+const parentsOf = (i) => [i && i.sireId, i && i.damId].filter(Boolean);
+
+/* 형제(동배·반동배) 목록 — 같은 클러치 표를 달았거나, 부모를 하나라도 공유하면 형제 */
+function sibIdsOf(id, byId, list) {
+  const x = byId[id];
+  if (!x) return [];
+  const px = parentsOf(x);
+  return list.filter(y => y.id !== id && (
+    (x.clutchGroup && y.clutchGroup === x.clutchGroup) ||
+    (px.length > 0 && parentsOf(y).some(p => px.indexOf(p) >= 0))
+  )).map(y => y.id);
+}
+
+/* 같은 클러치(동배) 아이들 — 프로필 혈통 카드가 씁니다 */
+function littermatesOf(gecko, all) {
+  const list = all || DB.getIndividuals();
+  const byId = {}; list.forEach(i => { byId[i.id] = i; });
+  const px = parentsOf(gecko);
+  return list.filter(y => y.id !== gecko.id && (
+    (gecko.clutchGroup && y.clutchGroup === gecko.clutchGroup) ||
+    (px.length === 2 && parentsOf(y).length === 2 && px.every(p => parentsOf(y).indexOf(p) >= 0))
+  ));
+}
+
+/* 두 아이가 어떤 사이인가 — 없으면 null(남남) */
+function relationOf(a, b, all) {
+  if (!a || !b || a.id === b.id) return null;
+  const list = all || DB.getIndividuals();
+  const byId = {}; list.forEach(i => { byId[i.id] = i; });
+  const pa = parentsOf(a), pb = parentsOf(b);
+
+  if (pb.indexOf(a.id) >= 0) return { kind: 'parent', level: 'danger', label: `${a.name}는 ${b.name}의 부모예요` };
+  if (pa.indexOf(b.id) >= 0) return { kind: 'parent', level: 'danger', label: `${b.name}는 ${a.name}의 부모예요` };
+
+  if (a.clutchGroup && a.clutchGroup === b.clutchGroup)
+    return { kind: 'litter', level: 'danger', label: '둘은 같은 클러치에서 나온 동배예요' };
+
+  const shared = pa.filter(x => pb.indexOf(x) >= 0);
+  if (shared.length >= 2) return { kind: 'litter', level: 'danger', label: '아빠·엄마가 모두 같은 동배예요' };
+  if (shared.length === 1) {
+    const p = byId[shared[0]];
+    return { kind: 'half', level: 'caution', label: `${p ? p.name : '부모 한쪽'}${p ? '가' : ''} 같은 반동배예요` };
+  }
+
+  const grandOf = (x) => parentsOf(x).reduce((acc, id) => acc.concat(parentsOf(byId[id])), []);
+  if (grandOf(b).indexOf(a.id) >= 0) return { kind: 'grand', level: 'caution', label: `${a.name}는 ${b.name}의 조부모예요` };
+  if (grandOf(a).indexOf(b.id) >= 0) return { kind: 'grand', level: 'caution', label: `${b.name}는 ${a.name}의 조부모예요` };
+
+  const sibA = sibIdsOf(a.id, byId, list), sibB = sibIdsOf(b.id, byId, list);
+  if (sibA.some(id => pb.indexOf(id) >= 0)) return { kind: 'uncle', level: 'caution', label: `${a.name}는 ${b.name}의 삼촌·이모뻘이에요` };
+  if (sibB.some(id => pa.indexOf(id) >= 0)) return { kind: 'uncle', level: 'caution', label: `${b.name}는 ${a.name}의 삼촌·이모뻘이에요` };
+
+  if (pa.some(x => pb.some(y => sibIdsOf(x, byId, list).indexOf(y) >= 0)))
+    return { kind: 'cousin', level: 'caution', label: '사촌뻘이에요' };
+
+  return null;
+}
+
+/* 붙이기 전에 한마디 — 화면이든 대화든 이 문장을 씁니다 */
+function mateWarning(a, b, all) {
+  const r = relationOf(a, b, all);
+  if (!r) return null;
+  return {
+    ...r,
+    text: r.level === 'danger'
+      ? `⛔ ${r.label} 너무 가까운 사이라 메이팅은 피해 주세요.`
+      : `⚠️ ${r.label} 가까운 사이예요. 붙이시려면 한 번 더 생각해 보시는 게 좋아요.`,
+  };
+}
+
+/* ══════════════════════════════════════════
+   모프 — 확률로 말할 수 있는 것만 확률로 말합니다
+   ★ 크레스티드 게코는 무늬·색 대부분이 여러 유전자가 겹친 결과(다인자)라
+     확률로 딱 잘라 말할 수 없습니다. 단일 유전자로 알려진 것만 계산하고
+     나머지는 "경향"이라고 솔직하게 말합니다. 지어내지 않습니다.
+   ══════════════════════════════════════════ */
+
+/* 릴리화이트 자리 — 우성, 슈퍼(둘 다 릴리)는 살지 못합니다 */
+const LILY_WORDS  = ['릴리화이트', '릴리 화이트', '릴리', 'lilywhite', 'lily white', 'lily', 'lw'];
+/* 카푸치노·사블레 자리 — 같은 자리(대립유전자). 둘이 겹치면 프라푸치노 */
+const CAPP_WORDS  = ['슈퍼카푸치노', '슈퍼 카푸치노', '카푸치노', '카푸', 'cappuccino'];
+const SABLE_WORDS = ['슈퍼사블레', '슈퍼 사블레', '사블레', '세이블', 'sable'];
+const FRAP_WORDS  = ['프라푸치노', 'frappuccino'];
+/* 액시안식 — 열성. 겉으로 안 드러난 보인자(헷)는 앱이 알 수 없습니다 */
+const AXAN_WORDS  = ['액시안식', '액시', '아잔틱', '악산틱', 'axanthic'];
+/* 여러 유전자가 겹쳐 정해지는 것들 — 확률 계산 불가 */
+const POLY_TRAITS = ['할리퀸', '핀스트라이프', '핀스', '달마시안', '브린들', '타이거', '플레임',
+  '익스트림', '엑스트림', '크림시클', '트라이컬러', '바이컬러', '팬텀', '솔리드백', '초초', '크라운'];
+
+const hasWord = (txt, words) => words.some(w => txt.indexOf(w) >= 0);
+
+/* 겉모습에서 유전자형을 읽습니다 — 겉으로 보이는 것만 알 수 있습니다 */
+function readGenes(gecko) {
+  const t = String((gecko && gecko.morph) || '').toLowerCase().replace(/\s+/g, ' ');
+  const lily = hasWord(t, LILY_WORDS);
+  const frap = hasWord(t, FRAP_WORDS);
+  const superCapp = t.indexOf('슈퍼카푸치노') >= 0 || t.indexOf('슈퍼 카푸치노') >= 0;
+  const superSable = t.indexOf('슈퍼사블레') >= 0 || t.indexOf('슈퍼 사블레') >= 0;
+  const capp = !frap && hasWord(t, CAPP_WORDS);
+  const sable = !frap && hasWord(t, SABLE_WORDS);
+  // 카푸치노 자리의 두 짝 (+ = 아무것도 아님)
+  let cs = ['+', '+'];
+  if (frap) cs = ['Ca', 'Sa'];
+  else if (superCapp) cs = ['Ca', 'Ca'];
+  else if (superSable) cs = ['Sa', 'Sa'];
+  else if (capp) cs = ['Ca', '+'];
+  else if (sable) cs = ['Sa', '+'];
+  return {
+    lily,                                  // 보이는 릴리 = 한 짝만 릴리(슈퍼는 못 삽니다)
+    cs,
+    axan: hasWord(t, AXAN_WORDS),          // 보이는 액시 = 열성 두 짝
+    poly: POLY_TRAITS.filter(w => t.indexOf(w.toLowerCase()) >= 0),
+    raw: (gecko && gecko.morph) || '',
+  };
+}
+
+const CS_NAME = { 'Ca+': '카푸치노', '+Ca': '카푸치노', 'Sa+': '사블레', '+Sa': '사블레',
+  'CaCa': '슈퍼 카푸치노', 'SaSa': '슈퍼 사블레', 'CaSa': '프라푸치노', 'SaCa': '프라푸치노' };
+
+/* 두 아이를 붙이면 나올 수 있는 것 — 문장으로 돌려줍니다 */
+function morphForecast(a, b) {
+  const ga = readGenes(a), gb = readGenes(b);
+  const sure = [];      // 확률로 말할 수 있는 것
+  const notes = [];     // 꼭 알려드려야 하는 주의
+
+  // ① 릴리화이트 — 우성, 슈퍼는 살지 못함
+  if (ga.lily && gb.lily) {
+    sure.push('릴리화이트 — 부화한 아이 셋 중 둘꼴 (약 67%)');
+    notes.push('릴리끼리 붙이면 알 넷 중 하나는 슈퍼가 되어 부화하지 못해요. 한쪽만 릴리로 붙이시는 걸 권해드려요.');
+  } else if (ga.lily || gb.lily) {
+    sure.push('릴리화이트 — 절반 (50%)');
+  }
+
+  // ② 카푸치노·사블레 자리 — 같은 자리라 둘을 같이 셉니다
+  if (ga.cs.join('') !== '++' || gb.cs.join('') !== '++') {
+    const tally = {};
+    ga.cs.forEach(x => gb.cs.forEach(y => {
+      const key = [x, y].sort().join('');    // '+Ca' · 'CaSa' · '++' … 두 짝을 늘 같은 순서로
+      tally[key] = (tally[key] || 0) + 1;
+    }));
+    Object.keys(tally).sort().forEach(k => {
+      if (k === '++') return;
+      const nm = CS_NAME[k] || (k === 'CaSa' ? '프라푸치노' : k);
+      sure.push(`${nm} — ${Math.round(tally[k] / 4 * 100)}%`);
+    });
+    if (tally['CaCa'] || tally['SaSa'] || tally['CaSa']) {
+      notes.push('카푸치노와 사블레는 같은 자리의 유전자예요. 둘을 붙이면 프라푸치노가 나옵니다.');
+    }
+  }
+
+  // ③ 액시안식 — 열성. 헷(보인자)은 겉으로 안 보여서 앱이 알 수 없습니다
+  if (ga.axan && gb.axan) {
+    sure.push('액시안식 — 전부 (100%)');
+  } else if (ga.axan || gb.axan) {
+    notes.push('액시안식은 열성이에요. 한쪽만 액시면 베이비는 겉으로 액시가 아니고, 전부 보인자(헷 액시)로 나옵니다. 상대가 헷인지 아닌지는 기록이 없어 앱이 알 수 없어요.');
+  }
+
+  // ④ 무늬·색 — 경향만
+  const bothPoly = ga.poly.filter(w => gb.poly.indexOf(w) >= 0);
+  const anyPoly = [...new Set([...ga.poly, ...gb.poly])];
+  const trend = [];
+  if (bothPoly.length) trend.push(`둘 다 ${bothPoly.join('·')}라서 베이비도 그쪽으로 나올 가능성이 높아요`);
+  else if (anyPoly.length) trend.push(`${anyPoly.join('·')} 쪽 느낌이 섞여 나올 수 있어요`);
+  if (trend.length) trend.push('다만 크레는 무늬와 색이 여러 유전자로 정해져서 확률로 딱 잘라 말하긴 어려워요');
+
+  return { sure, notes, trend, ga, gb };
+}
+
+/* 대화로 답할 문장 — "크한이랑 크룡이 붙이면 뭐 나와?" */
+function morphAnswer(a, b) {
+  const f = morphForecast(a, b);
+  const L = [`${a.name} × ${b.name}, 이렇게 볼 수 있어요 🧬`];
+  const w = mateWarning(a, b);
+  if (w) L.push('', w.text);
+  if (!(a.morph || '').trim() && !(b.morph || '').trim()) {
+    L.push('', '두 아이 모프가 아직 안 적혀 있어요. "크한이 모프는 릴리화이트야"처럼 알려주시면 계산해드릴게요.');
+    return L.join('\n');
+  }
+  L.push('', `· ${a.name} ${(a.morph || '').trim() || '모프 미기재'}`, `· ${b.name} ${(b.morph || '').trim() || '모프 미기재'}`);
+  if (f.sure.length) L.push('', '확률로 말할 수 있는 것', ...f.sure.map(x => '· ' + x));
+  else L.push('', '확률로 계산할 수 있는 유전자(릴리화이트·카푸치노·사블레·액시안식)는 없어요.');
+  if (f.trend.length) L.push('', '경향으로만 말할 수 있는 것', ...f.trend.map(x => '· ' + x));
+  if (f.notes.length) L.push('', '알아두실 점', ...f.notes.map(x => '· ' + x));
+  L.push('', '확률은 알 하나하나에 매번 새로 적용돼요. 네 개 낳는다고 정확히 그 비율로 나오지는 않습니다.');
+  return L.join('\n');
+}
+
+/* ══ 짝 추천 — 붙여도 되는 아이부터 골라 드립니다 ══ */
+const SAFE_FEMALE_G = 35;   // 암컷은 이 정도는 돼야 산란이 안전하다고 봅니다
+
+function lastWeightOf(id, evs) {
+  const g = (evs || DB.getEvents())
+    .filter(e => e.individualId === id && e.type === 'growth' && e.data && e.data.weight)
+    .sort((x, y) => (x.date < y.date ? 1 : -1))[0];
+  return g ? Number(g.data.weight) : null;
+}
+
+function mateSuggestions(target, all, evs) {
+  const list = all || DB.getIndividuals();
+  const events = evs || DB.getEvents();
+  if (!target || !target.gender || target.gender === 'unknown') return { error: 'gender' };
+  const want = target.gender === 'male' ? 'female' : 'male';
+  const pool = list.filter(i => i.id !== target.id && i.gender === want && i.status !== 'sold' && !i.external);
+  if (!pool.length) return { error: 'empty', want };
+
+  const rows = pool.map(i => {
+    const rel = relationOf(target, i, list);
+    const wt = lastWeightOf(i.id, events);
+    const fem = i.gender === 'female' ? i : target;
+    const femW = fem.id === i.id ? wt : lastWeightOf(target.id, events);
+    const f = morphForecast(target, i);
+    const flags = [];
+    if (femW != null && femW < SAFE_FEMALE_G) flags.push(`${fem.name} ${femW}g — 암컷은 ${SAFE_FEMALE_G}g은 넘겨서 붙이시는 게 안전해요`);
+    if (readGenes(target).lily && readGenes(i).lily) flags.push('릴리끼리라 알 넷 중 하나는 부화하지 못해요');
+    return {
+      ind: i, rel, flags, f,
+      score: (rel ? (rel.level === 'danger' ? -100 : -20) : 0) + (flags.length ? -10 : 0) + (f.sure.length ? 5 : 0),
+    };
+  }).sort((x, y) => y.score - x.score);
+
+  return { rows, ok: rows.filter(r => !r.rel || r.rel.level !== 'danger') };
+}
+
+function mateAnswer(target) {
+  const r = mateSuggestions(target);
+  if (r.error === 'gender') return `${target.name}는 성별이 아직 미구분이에요. "${target.name} 수컷이야"처럼 알려주시면 짝을 골라드릴게요 🦎`;
+  if (r.error === 'empty') return `짝이 될 ${r.want === 'male' ? '수컷' : '암컷'}이 아직 없어요.`;
+  const L = [`${target.name}랑 붙일 만한 아이예요 💞`];
+  const good = r.ok.slice(0, 3);
+  if (!good.length) {
+    L.push('', '지금 있는 아이들과는 전부 너무 가까운 사이예요. 밖에서 짝을 찾으시는 게 좋겠어요.');
+  } else {
+    good.forEach((g, n) => {
+      const bits = [];
+      if (g.rel) bits.push(g.rel.label);
+      if (g.f.sure.length) bits.push('나올 수 있는 것 — ' + g.f.sure.join(', '));
+      if (g.flags.length) bits.push(...g.flags);
+      if (!g.rel && !g.flags.length) bits.push('혈연이 겹치지 않아요');
+      L.push('', `${n + 1}. ${genderEmoji(g.ind.gender)} ${g.ind.name}${(g.ind.morph || '').trim() ? ' · ' + g.ind.morph.trim() : ''}`,
+        ...bits.map(b => '   · ' + b));
+    });
+  }
+  const bad = r.rows.filter(x => x.rel && x.rel.level === 'danger');
+  if (bad.length) L.push('', `붙이면 안 되는 아이 — ${bad.map(x => x.ind.name).join(', ')} (${bad[0].rel.kind === 'parent' ? '부모·자식' : '동배'} 관계)`);
+  L.push('', '"크한이랑 크룡이 붙이면 뭐 나와?"라고 물어보시면 모프도 계산해드려요 🧬');
+  return L.join('\n');
 }
 
 /* 화면에 띄울 알림 = 사용자가 직접 만든 알림 + 계산으로 만든 부화·산란 예정
@@ -2186,12 +2519,12 @@ function factLabel(f) {
 function answerQuery(target, text) {
   if (/할까|좋을까|추천|어떻게\s*(해|하)/.test(text)) return null;
   const explicit = /(언제|몇\s*(개|마리|살|그램|번)?|얼마|뭐야|뭐지|뭐였|무엇|누구야|누구지|누구랑\s*했|알려\s*줘|알려줄래|보여\s*줘|보여줄래)/.test(text);
-  const tailQ = /[?？]\s*$/.test(text) && /최근|마지막|산란|몸무게|무게|메이팅|탈피|밥|먹이|기록|모프|성별|해칭|부화|분양|생일|출생|나이|혈통|엄마|아빠/.test(text);
+  const tailQ = /[?？]\s*$/.test(text) && /최근|마지막|산란|몸무게|무게|메이팅|탈피|밥|먹이|기록|모프|성별|해칭|부화|분양|생일|출생|나이|혈통|엄마|아빠|동배|형제/.test(text);
   // "크한이 생일?", "크한이 밥"처럼 이름 + 핵심 단어만 말해도 조회로 알아듣습니다.
   const compactText = text
     .replace(new RegExp(escapeReg(target.name) + '(?:이|가|은|는)?', 'g'), '')
     .replace(/[?？!！.,\s]/g, '');
-  const compactQ = /^(생일|부화일|출생일|나이|밥|먹이|피딩|최근기록|기록|몸무게|무게|산란|메이팅|탈피|해칭|부화|모프|성별|분양|분양가|혈통|엄마|아빠)$/.test(compactText);
+  const compactQ = /^(생일|부화일|출생일|나이|밥|먹이|피딩|최근기록|기록|몸무게|무게|산란|메이팅|탈피|해칭|부화|모프|성별|분양|분양가|혈통|엄마|아빠|동배|형제)$/.test(compactText);
   if (!explicit && !tailQ && !compactQ) return null;
 
   const evs = DB.getEventsFor(target.id).sort((a, b) =>
@@ -2293,12 +2626,14 @@ function answerQuery(target, text) {
     }
     return `${target.name}의 생일은 ${fmtDate(target.hatchDate)}이에요 🎂 (${ageText(target.hatchDate)})`;
   }
-  if (/혈통|부모|아빠|엄마|아비|어미|자식|새끼/.test(text)) {
+  if (/혈통|부모|아빠|엄마|아비|어미|자식|새끼|동배|형제|자매|남매/.test(text)) {
     const all = DB.getIndividuals();
     const sire = all.find(i => i.id === target.sireId);
     const dam = all.find(i => i.id === target.damId);
     const kids = all.filter(i => i.sireId === target.id || i.damId === target.id);
+    const lm = littermatesOf(target, all);
     return `${target.name}의 혈통이에요 🧬\n부(아빠): ${sire ? sire.name : '미등록'}\n모(엄마): ${dam ? dam.name : '미등록'}\n`
+      + (lm.length ? `동배(같은 클러치): ${lm.map(x => x.name).join(', ')} — 서로 붙이면 안 돼요\n` : '')
       + (kids.length ? `자식 ${kids.length}마리: ${kids.map(k => k.name).join(', ')}` : '자식 기록은 아직 없어요.');
   }
   if (/분양가|가격|얼마|값/.test(text)) {
@@ -2347,6 +2682,7 @@ function recordSummary(target) {
   L.push(`· 생일 ${target.hatchDate ? `${fmtDate(target.hatchDate)} (${ageText(target.hatchDate)})` : '미등록'}`);
   L.push(`· 상태 ${st.label}${target.salePrice ? ` · ${Number(target.salePrice).toLocaleString()}원` : ''}`);
   if (sire || dam) L.push(`· 혈통 부 ${sire ? sire.name : '미등록'} · 모 ${dam ? dam.name : '미등록'}`);
+  { const lm = littermatesOf(target, all); if (lm.length) L.push(`· 동배 ${lm.map(x => x.name).join(', ')}`); }
   if (w) L.push(`· 몸무게 ${w.data.weight}g (${fmtDate(w.date)})`);
   if (feed) L.push(`· 마지막 밥 ${fmtDate(feed.date)}${feed.data && feed.data.foodType ? ` · ${feed.data.foodType}` : ''}`);
   if (shed) L.push(`· 마지막 탈피 ${fmtDate(shed.date)}`);
@@ -2802,6 +3138,15 @@ function MatingView({ individuals, navigate, showToast }) {
               </div>
               <div style={{fontSize:12, color:'var(--text3)'}}>메이팅 {mates.length}회 · 산란 {lays.length}회 {open === k ? '▲' : '▼'}</div>
             </div>
+            {/* 혈연이 겹치는 페어는 눈에 띄게 짚어드립니다 */}
+            {(() => {
+              const w = mateWarning(byId[p.male.id], byId[p.female.id], individuals);
+              if (!w) return null;
+              return (
+                <div style={{marginTop:8, fontSize:12, lineHeight:1.5,
+                  color: w.level === 'danger' ? 'var(--danger)' : 'var(--warning)'}}>{w.text}</div>
+              );
+            })()}
             {open === k && (
               <div style={{marginTop:10, borderTop:'1px solid var(--border)', paddingTop:10}}>
                 {mates.map((m, i) => {
@@ -3938,7 +4283,8 @@ function PedigreeCard({ gecko, navigate }) {
   const sire = all.find(i => i.id === gecko.sireId);
   const dam = all.find(i => i.id === gecko.damId);
   const kids = all.filter(i => i.sireId === gecko.id || i.damId === gecko.id);
-  if (!sire && !dam && !kids.length) return null;
+  const mates = littermatesOf(gecko, all);        // 같은 클러치에서 나온 아이들
+  if (!sire && !dam && !kids.length && !mates.length) return null;
   return (
     <div style={{padding:'0 16px 12px'}}>
       <div className="card" style={{margin:0}}>
@@ -3949,8 +4295,20 @@ function PedigreeCard({ gecko, navigate }) {
             {dam && <button className="chip-btn" onClick={() => navigate('profile', { gecko: dam })}>모 {genderEmoji(dam.gender || 'female')} {dam.name}</button>}
           </div>
         )}
-        {kids.length > 0 && (
+        {mates.length > 0 && (
           <div style={{marginTop: (sire || dam) ? 10 : 0}}>
+            <div style={{fontSize:11, color:'var(--text3)', marginBottom:4}}>
+              동배 (같은 클러치) {mates.length}마리 — 서로 붙이면 안 돼요
+            </div>
+            <div style={{display:'flex', flexWrap:'wrap', gap:6}}>
+              {mates.map(m => (
+                <button key={m.id} className="chip-btn" onClick={() => navigate('profile', { gecko: m })}>{genderEmoji(m.gender)} {m.name}</button>
+              ))}
+            </div>
+          </div>
+        )}
+        {kids.length > 0 && (
+          <div style={{marginTop: (sire || dam || mates.length) ? 10 : 0}}>
             <div style={{fontSize:11, color:'var(--text3)', marginBottom:4}}>자식 {kids.length}마리</div>
             <div style={{display:'flex', flexWrap:'wrap', gap:6}}>
               {kids.map(k => (
@@ -4277,6 +4635,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     // 메이팅 파트너: 등록 개체 → "상대/파트너 ○○" → 문장 속 다른 이름(미등록 포함)
     const mating = facts.find(f => f.type === 'mating');
     let unregPartner = null;                            // 미등록 파트너 이름 (등록 유도용)
+    let mateWarnLine = '';                              // 너무 가까운 사이면 담기 전에 알려드립니다
     if (mating) {
       const partner = names.find(n => target && n.id !== target.id);
       if (partner) { mating.data.partnerId = partner.id; mating.data.partnerName = partner.name; }
@@ -4289,6 +4648,61 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
           const others = extractPartnerNames(text, target ? target.name : '');
           if (others.length) { mating.data.partnerName = others[0]; unregPartner = others[0]; }
         }
+      }
+      // 상대를 알아냈으면 혈연부터 짚어드립니다 (막지는 않고 알려만 드립니다)
+      if (mating.data.partnerId && target) {
+        const w = mateWarning(target, inds.find(i => i.id === mating.data.partnerId), inds);
+        if (w) mateWarnLine = w.text;
+      }
+    }
+
+    /* 3.35) 동배 묶기 · 짝 추천 · 모프 계산 — 혈연을 다루는 말들
+       질문 답변(3.45)보다 먼저 봅니다. "누구랑 붙일까?"의 "누구"를 새 이름으로 오해하지 않게. */
+    {
+      const twoOrMore = names.filter((n, i2) => names.findIndex(x => x.id === n.id) === i2);
+      // (가) "크영이 동배 취소" — 묶기보다 먼저 봅니다 ("동배"가 들어 있어 순서가 중요)
+      if (/동배\s*(취소|해제|아니|풀어)|동배\s*표시\s*(취소|해제|지워)/.test(text) && target) {
+        DB.unlinkClutch(target.id); refreshIndividuals();
+        bot(`${target.name}의 동배 표시를 풀었어요.`);
+        return;
+      }
+      // (나) "크영이랑 크공이는 동배야" — 데려온 아이들의 형제 관계를 직접 묶습니다
+      if (/동배|한\s*배|같은\s*배|클러치|남매|형제|자매|같은\s*알/.test(text) && !/붙|메이팅|교배/.test(text)) {
+        let group = twoOrMore;
+        if (group.length === 1 && target && group[0].id !== target.id) group = [target, group[0]];
+        if (group.length >= 2) {
+          const r = DB.linkClutch(group.map(g => g.id));
+          refreshIndividuals();
+          const fresh = DB.getIndividuals();
+          const fam = fresh.filter(i => i.clutchGroup && i.clutchGroup === r.group);
+          bot(`${fam.map(i => i.name).join(' · ')} — ${fam.length}마리를 같은 클러치(동배)로 묶었어요 🧬\n`
+            + '프로필 혈통에 동배로 표시되고, 서로 메이팅하려 하면 제가 먼저 말씀드릴게요.\n'
+            + '잘못 묶였으면 "크영이 동배 취소"라고 말씀해 주세요.');
+          return;
+        }
+        if (group.length < 2) {
+          bot('어느 아이들이 동배인지 두 마리 이상 알려주세요 🙂\n예) "크영이랑 크공이는 동배야"');
+          return;
+        }
+      }
+      // (다) "크한이랑 크룡이 붙이면 뭐 나와?" — 모프 계산
+      if (twoOrMore.length >= 2 && /(붙이|메이팅|교배|합사)/.test(text) && /(뭐|무슨|어떤|모프|나와|나올|나오|확률|어때|괜찮)/.test(text)) {
+        bot(morphAnswer(twoOrMore[0], twoOrMore[1]));
+        return;
+      }
+      // (라) "크한이 짝 추천" · "크한이랑 누구 붙이면 좋을까?"
+      if (/(짝|파트너|메이팅|교배|합사)/.test(text) && /(추천|누구|누굴|어떤\s*애|골라|좋을까|어울)/.test(text)) {
+        const who = twoOrMore[0] || target;
+        if (!who) { bot('어느 아이의 짝을 찾아드릴까요? 이름을 알려주세요 🦎'); return; }
+        bot(mateAnswer(who));
+        return;
+      }
+      // (마) "크한이랑 크룡이 무슨 사이야?"
+      if (twoOrMore.length >= 2 && /(사이|관계|촌수|혈연|근친)/.test(text)) {
+        const r = relationOf(twoOrMore[0], twoOrMore[1]);
+        bot(r ? `${twoOrMore[0].name}랑 ${twoOrMore[1].name}는 ${r.label}\n${mateWarning(twoOrMore[0], twoOrMore[1]).text}`
+              : `${twoOrMore[0].name}랑 ${twoOrMore[1].name}는 기록상 혈연이 겹치지 않아요. 붙이셔도 괜찮습니다 🙂`);
+        return;
       }
     }
 
@@ -4558,8 +4972,9 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     const unknownFeed = facts.find(f => f.type === 'feeding' && !f.data.foodType);
     if (unknownFeed) {
       const rest = facts.filter(f => f !== unknownFeed);
-      if (rest.length) pushPending(rest.map(withTarget), target, morphLine);
-      else if (morphLine) bot(morphLine);
+      const head0 = [mateWarnLine, morphLine].filter(Boolean).join('\n');
+      if (rest.length) pushPending(rest.map(withTarget), target, head0);
+      else if (head0) bot(head0);
       const feedFact = withTarget(unknownFeed);
       bot(`${target.name} 밥 먹었군요! 🍽️ 어떤 먹이였나요?`, [
         { label: '🦗 충식 (귀뚜라미 등)', kind: 'feed-type', value: { fact: feedFact, foodType: '충식' } },
@@ -4570,7 +4985,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     }
 
     const mapped = facts.map(withTarget);
-    pushPending(mapped, target, morphLine);
+    pushPending(mapped, target, [mateWarnLine, morphLine].filter(Boolean).join('\n'));
 
     // 미등록 파트너 → 새 개체로 등록해 혈통 연결 유도
     if (unregPartner && !inds.some(i => i.name === unregPartner)) {
@@ -5741,22 +6156,34 @@ function buildTodo(reminders, navigateTo) {
     const t0 = toneNow();
     const nm = hatch ? (r.geckoName || '') : (r.momName || r.geckoName || '');
     const nth = r.nth ? `${r.nth}차 ` : '';
+    // 한 줄이 길면 읽기 어려워서 "누구의 무엇이" / "어떻게 됐어요" 로 끊습니다
+    const title = late > 0
+      ? (hatch
+          ? say(twoLine(`${nm}의 ${nth}알이 예정일보다`, `${dayWord(late)} 지났어요`),
+                twoLine(`${nm} ${nth}알, 예정일보다`, `${naWord(late)} 지났어요!`),
+                `${r.geckoName || ''} ${nth}부화 예정`)
+          : say(twoLine(`${nm}의 ${nth}산란 예정일이`, `${dayWord(late)} 지났어요`),
+                twoLine(`${nm} ${nth}산란 예정일이`, `${naWord(late)} 지났어요!`),
+                `${r.geckoName || ''} ${nth}산란 예정`))
+      : (hatch
+          ? say(twoLine(`${nm}의 ${nth}알이`, '부화할 때가 됐어요'),
+                twoLine(`${nm} ${nth}알,`, '이제 나올 때가 됐어요! 🐣'),
+                `${r.geckoName || ''} ${nth}부화 예정`)
+          : say(twoLine(`${nm}의 ${nth}산란 예정일이`, '오늘이에요'),
+                twoLine(`${nm} ${nth}산란,`, '오늘이 예정일이에요! 🥚'),
+                `${r.geckoName || ''} ${nth}산란 예정`));
     todo.push({
       id: r.id,
       emoji: hatch ? '🐣' : '🥚',
-      title: t0 === 'short'
-        ? `${r.geckoName || ''} ${nth}${hatch ? '부화' : '산란'} 예정`
-        : late > 0
-          ? (hatch ? `${nm}의 ${nth}알이 예정일보다 ${dayWord(late)} 지났어요`
-                   : `${nm}의 ${nth}산란 예정일이 ${dayWord(late)} 지났어요`)
-          : (hatch ? `${nm}의 ${nth}알, 부화할 때가 됐어요`
-                   : `오늘은 ${nm}의 ${nth}산란 예정일이에요`),
+      title,
       sub: t0 === 'short'
         ? (r.message || '')
         : hatch
-          ? (r.detail ? `${r.detail} · 알을 한번 살펴봐 주세요` : '알을 한번 살펴봐 주세요')
-          : '둥지 한번 살펴봐 주세요',
+          ? (r.detail ? twoLine(r.detail, say('알을 한번 살펴봐 주세요', '알 한번 봐주세요!', '')) : say('알을 한번 살펴봐 주세요', '알 한번 봐주세요!', ''))
+          : say('둥지 한번 살펴봐 주세요', '둥지 한번 봐주실래요?', ''),
       late,
+      // 제목이 이미 "사흘 지났어요 / 오늘이에요" 라고 말하므로 배지는 겹칩니다
+      hideLate: t0 !== 'short', hideToday: t0 !== 'short',
       action: hatch && lay ? { label: '알 보기', go: () => navigateTo('clutch', { layingId: lay.id }) }
         : byId[r.individualId] ? { label: '기록하기', go: () => navigateTo('profile', { gecko: byId[r.individualId] }) } : null,
     });
@@ -5767,29 +6194,37 @@ function buildTodo(reminders, navigateTo) {
   if (fp.due && fp.remaining.length) {
     todo.push({
       id: 'feed', emoji: '🦗', pinned: true,
-      title: toneNow() === 'short'
-        ? (fp.dLeft === 0 ? '오늘 밥 주는 날' : `밥 주는 날 ${-fp.dLeft}일 지남`)
-        : fp.dLeft === 0
-          ? (toneNow() === 'friendly' ? `오늘은 ${KIDS} 밥 먹이는 날이에요!` : `오늘은 ${KIDS} 밥 먹이는 날이에요`)
-          : `밥 주는 날이 ${dayWord(-fp.dLeft)} 지났어요`,
-      sub: toneNow() === 'short'
-        ? `${fp.inds.length}마리 중 ${fp.remaining.length}마리 남음` +
-          (fp.lastRound ? ` · 지난 급여 ${fmtDate(fp.lastRound)}` : ' · 첫 급여 기록')
-        : `${fp.inds.length}마리 중 ${fp.remaining.length}마리가 아직이에요` +
-          (fp.lastRound ? ` · 지난번은 ${agoWord(fp.lastRound)}` : ' · 첫 급여예요'),
-      late: Math.max(0, -fp.dLeft),
+      title: fp.dLeft === 0
+        ? say(twoLine(`오늘은 ${KIDS}`, '밥 먹이는 날이에요'),
+              twoLine(`오늘은 ${KIDS}`, '밥 주는 날이에요! 🦗'),
+              '오늘 밥 주는 날')
+        : say(twoLine('밥 주는 날이', `${dayWord(-fp.dLeft)} 지났어요`),
+              twoLine('밥 주는 날이', `${naWord(-fp.dLeft)} 지났어요!`),
+              `밥 주는 날 ${-fp.dLeft}일 지남`),
+      sub: say(
+        twoLine(`${fp.inds.length}마리 중 ${fp.remaining.length}마리가 아직이에요`,
+                fp.lastRound ? `지난번은 ${agoWord(fp.lastRound)}` : '첫 급여예요'),
+        twoLine(`${fp.remaining.length}마리 남았어요`,
+                fp.lastRound ? `지난번은 ${iyeyo(agoWord(fp.lastRound))}` : '첫 급여네요'),
+        `${fp.inds.length}마리 중 ${fp.remaining.length}마리 남음` +
+          (fp.lastRound ? ` · 지난 급여 ${fmtDate(fp.lastRound)}` : ' · 첫 급여 기록')),
+      late: Math.max(0, -fp.dLeft), hideLate: toneNow() !== 'short',
       action: { label: '밥 주기', go: () => navigateTo('feeding') },
     });
   } else if (!fp.doneToday.size && fp.inds.length) {
     // 밥 주는 날이 아니어도 언제든 들어갈 수 있게 (지난 날짜로 적을 때 여기로 들어옵니다)
     todo.push({
       id: 'feed-open', emoji: '🦗', pinned: false,
-      title: toneNow() === 'short' ? '밥 주기 기록' : '밥은 언제든 적어둘 수 있어요',
-      sub: toneNow() === 'short'
-        ? (fp.lastRound ? `지난 급여 ${fmtDate(fp.lastRound)} · ` : '') +
-          (fp.dLeft > 0 ? `다음은 ${fp.dLeft}일 뒤` : '오늘 줘도 됩니다') + ' · 날짜 골라 적기'
-        : (fp.lastRound ? `지난번은 ${agoWord(fp.lastRound)} · ` : '') +
-          (fp.dLeft > 0 ? `다음은 ${iyeyo(whenWord(fp.nextDay))}` : '오늘 주셔도 괜찮아요') + ' · 날짜를 골라 적을 수 있어요',
+      title: say('밥은 언제든 적어둘 수 있어요', '밥 기록은 아무 때나 괜찮아요', '밥 주기 기록'),
+      sub: say(
+        twoLine((fp.lastRound ? `지난번은 ${agoWord(fp.lastRound)} · ` : '') +
+                (fp.dLeft > 0 ? `다음은 ${iyeyo(whenWord(fp.nextDay))}` : '오늘 주셔도 괜찮아요'),
+                '날짜를 골라 적을 수 있어요'),
+        twoLine((fp.lastRound ? `지난번은 ${agoWord(fp.lastRound)} · ` : '') +
+                (fp.dLeft > 0 ? `다음은 ${iyeyo(whenWord(fp.nextDay))}` : '오늘 줘도 돼요'),
+                '날짜 골라서 적어도 돼요'),
+        (fp.lastRound ? `지난 급여 ${fmtDate(fp.lastRound)} · ` : '') +
+          (fp.dLeft > 0 ? `다음은 ${fp.dLeft}일 뒤` : '오늘 줘도 됩니다') + ' · 날짜 골라 적기'),
       late: -1,
       action: { label: '밥 주기', go: () => navigateTo('feeding') },
     });
@@ -5797,11 +6232,13 @@ function buildTodo(reminders, navigateTo) {
     // 오늘 한 바퀴 다 돌았으면 확인 문구로 바꿔줍니다
     todo.push({
       id: 'feed-done', emoji: '✅',
-      title: toneNow() === 'short' ? '오늘 밥 다 줬어요' : `오늘 ${KIDS} 밥은 다 주셨어요`,
-      sub: toneNow() === 'short'
-        ? `${fp.inds.length}마리 전부 확인 완료 · 다음 급여는 ${fmtDate(fp.nextDay)}`
-        : `${fp.inds.length}마리 전부 확인했어요 · 다음은 ${iyeyo(whenWord(fp.nextDay))}`,
-      late: 0, action: { label: '다시 보기', go: () => navigateTo('feeding') },
+      title: say(`오늘 ${KIDS} 밥은 다 주셨어요`, `오늘 ${KIDS} 밥 다 줬어요! 👏`, '오늘 밥 다 줬어요'),
+      sub: say(
+        twoLine(`${fp.inds.length}마리 전부 확인했어요`, `다음은 ${iyeyo(whenWord(fp.nextDay))}`),
+        twoLine(`${fp.inds.length}마리 다 확인했어요`, `다음은 ${iyeyo(whenWord(fp.nextDay))}`),
+        `${fp.inds.length}마리 전부 확인 완료 · 다음 급여는 ${fmtDate(fp.nextDay)}`),
+      late: 0, hideToday: toneNow() !== 'short',
+      action: { label: '다시 보기', go: () => navigateTo('feeding') },
     });
   }
 
@@ -5809,12 +6246,14 @@ function buildTodo(reminders, navigateTo) {
   fp.worried.slice(0, 5).forEach(w => {
     todo.push({
       id: 'noeat:' + w.ind.id, emoji: '⚠️',
-      title: toneNow() === 'short'
-        ? `${w.ind.name} ${w.days}일째 안 먹어요`
-        : `${iga(w.ind.name)} ${dayWord(w.days)}째 밥을 안 먹고 있어요`,
-      sub: toneNow() === 'short'
-        ? `마지막 섭취 ${fmtDate(w.last)} · 계속되면 병원 진료를 생각해보세요`
-        : `마지막으로 먹은 건 ${iyeyo(agoWord(w.last))} · 계속되면 병원을 생각해보셔야 할 것 같아요`,
+      title: say(
+        twoLine(`${iga(w.ind.name)} ${dayWord(w.days)}째`, '밥을 안 먹고 있어요'),
+        twoLine(`${w.ind.name}, ${dayWord(w.days)}째`, '밥을 안 먹네요 😢'),
+        `${w.ind.name} ${w.days}일째 안 먹어요`),
+      sub: say(
+        twoLine(`마지막으로 먹은 건 ${iyeyo(agoWord(w.last))}`, '계속되면 병원을 생각해보셔야 할 것 같아요'),
+        twoLine(`마지막으로 먹은 게 ${iyeyo(agoWord(w.last))}`, '계속되면 병원 한번 가보는 게 좋겠어요'),
+        `마지막 섭취 ${fmtDate(w.last)} · 계속되면 병원 진료를 생각해보세요`),
       late: w.days, hideLate: toneNow() !== 'short',
       action: { label: '프로필', go: () => navigateTo('profile', { gecko: w.ind }) },
     });
@@ -6021,6 +6460,7 @@ function RemindersScreen({ navigate, onChanged }) {
               color: i === 0 ? 'var(--accent2)' : 'var(--text)',
               lineHeight: 1.65,
               marginTop: i === 0 ? 0 : 3,
+              whiteSpace: 'pre-line',
             }}>{line}</div>
           ))}
         </div>
@@ -6035,12 +6475,12 @@ function RemindersScreen({ navigate, onChanged }) {
         <div className="card" key={t.id} style={{borderLeft:`3px solid ${t.late > 0 ? 'var(--danger)' : 'var(--accent2)'}`}}>
           <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', gap:10}}>
             <div style={{minWidth:0, flex:1}}>
-              <div style={{fontSize:15, fontWeight:700}}>
+              <div style={{fontSize:15, fontWeight:700, whiteSpace:'pre-line', lineHeight:1.4}}>
                 {t.emoji} {t.title}
                 {t.late > 0 && !t.hideLate && <span style={{fontSize:11, color:'var(--danger)', marginLeft:6}}>{t.late}일 지남</span>}
-                {t.late === 0 && t.id !== 'feed' && <span style={{fontSize:11, color:'var(--accent2)', marginLeft:6}}>오늘</span>}
+                {t.late === 0 && t.id !== 'feed' && !t.hideToday && <span style={{fontSize:11, color:'var(--accent2)', marginLeft:6}}>오늘</span>}
               </div>
-              <div style={{fontSize:12, color:'var(--text3)', marginTop:3, overflow:'hidden', display:'-webkit-box', WebkitLineClamp:2, WebkitBoxOrient:'vertical', lineHeight:1.45}}>{t.sub}</div>
+              <div style={{fontSize:12, color:'var(--text3)', marginTop:4, whiteSpace:'pre-line', overflow:'hidden', display:'-webkit-box', WebkitLineClamp:3, WebkitBoxOrient:'vertical', lineHeight:1.5}}>{t.sub}</div>
             </div>
             {t.action && (
               <button className="btn btn-secondary btn-sm" style={{width:'auto', whiteSpace:'nowrap'}}
@@ -6086,7 +6526,7 @@ function ReminderCard({ r, onDelete, past }) {
       <div style={{display:'flex', justifyContent:'space-between', alignItems:'flex-start'}}>
         <div>
           <div style={{fontSize:15, fontWeight:700}}>{REMINDER_EMOJI[r.type] || '🔔'} {r.geckoName}</div>
-          <div style={{fontSize:13, color:'var(--text3)', marginTop:2}}>{alertLine(r)}</div>
+          <div style={{fontSize:13, color:'var(--text3)', marginTop:2, whiteSpace:'pre-line', lineHeight:1.5}}>{alertLine(r)}</div>
           <div style={{fontSize:12, color: past ? 'var(--text3)' : daysLeft <= 7 ? 'var(--warning)' : 'var(--accent2)', marginTop:4}}>
             {past ? `${agoWord(r.date)} (지났어요)` : daysLeft === 0 ? '오늘이에요' : `${whenWord(r.date)} · ${fmtDate(r.date)}`}
           </div>
@@ -6655,13 +7095,16 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
             })}
           </div>
           <div style={{fontSize:11, color:'var(--text3)', lineHeight:1.6, marginBottom:10}}>
-            <b>짧게</b>는 예전 말투예요. 문장이 부담스러우면 이걸로 돌리시면 됩니다.
+            <b>정중히</b>는 차분한 존댓말, <b>친근히</b>는 가볍고 다정한 말투예요.{' '}
+            <b>짧게</b>는 예전처럼 항목 이름만 보여줍니다.
           </div>
 
           <div style={{padding:'11px 12px', borderRadius:10, background:'var(--accent-soft)',
                        border:'1px solid var(--accent-edge)', fontSize:13, lineHeight:1.7}}>
             <div style={{fontSize:11, color:'var(--text3)', marginBottom:4}}>이렇게 말합니다</div>
-            {briefLines().map((l, i) => <div key={i} style={{color: i === 0 ? 'var(--accent2)' : 'var(--text)', fontWeight: i === 0 ? 700 : 400}}>{l}</div>)}
+            {voiceSample().map((l, i) => (
+              <div key={i} style={{color: i === 0 ? 'var(--accent2)' : 'var(--text)', fontWeight: i === 0 ? 700 : 400, whiteSpace:'pre-line'}}>{l}</div>
+            ))}
           </div>
         </div>
 
