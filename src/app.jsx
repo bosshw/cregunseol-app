@@ -1679,8 +1679,8 @@ function mateWarning(a, b, all) {
   return {
     ...r,
     text: r.level === 'danger'
-      ? `⛔ ${r.label} 너무 가까운 사이라 메이팅은 피해 주세요.`
-      : `⚠️ ${r.label} 가까운 사이예요. 붙이시려면 한 번 더 생각해 보시는 게 좋아요.`,
+      ? `⛔ ${r.label}. 너무 가까운 사이라 메이팅은 피해 주세요.`
+      : `⚠️ ${r.label}. 가까운 사이니 붙이시려면 한 번 더 생각해 보시는 게 좋아요.`,
   };
 }
 
@@ -1775,7 +1775,10 @@ function morphForecast(a, b) {
   const bothPoly = ga.poly.filter(w => gb.poly.indexOf(w) >= 0);
   const anyPoly = [...new Set([...ga.poly, ...gb.poly])];
   const trend = [];
-  if (bothPoly.length) trend.push(`둘 다 ${bothPoly.join('·')}라서 베이비도 그쪽으로 나올 가능성이 높아요`);
+  if (bothPoly.length) {
+    const w = bothPoly.join('·');
+    trend.push(`둘 다 ${w}${hasJong(w) ? '이라서' : '라서'} 베이비도 그쪽으로 나올 가능성이 높아요`);
+  }
   else if (anyPoly.length) trend.push(`${anyPoly.join('·')} 쪽 느낌이 섞여 나올 수 있어요`);
   if (trend.length) trend.push('다만 크레는 무늬와 색이 여러 유전자로 정해져서 확률로 딱 잘라 말하긴 어려워요');
 
@@ -1858,7 +1861,8 @@ function mateAnswer(target) {
   }
   const bad = r.rows.filter(x => x.rel && x.rel.level === 'danger');
   if (bad.length) L.push('', `붙이면 안 되는 아이 — ${bad.map(x => x.ind.name).join(', ')} (${bad[0].rel.kind === 'parent' ? '부모·자식' : '동배'} 관계)`);
-  L.push('', '"크한이랑 크룡이 붙이면 뭐 나와?"라고 물어보시면 모프도 계산해드려요 🧬');
+  const ex = good[0] ? `"${target.name}랑 ${good[0].ind.name} 붙이면 뭐 나와?"` : '"○○랑 ○○ 붙이면 뭐 나와?"';
+  L.push('', `${ex}라고 물어보시면 자세한 모프 계산도 해드려요 🧬`);
   return L.join('\n');
 }
 
@@ -4616,48 +4620,10 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     let target = geckoRef.current;
     if (names.length) { target = names[0]; setTarget(names[0]); }
 
-    /* 3.1) 여러 아이에게 같은 기록 — "크한이랑 크범이 밥 줬어"
-       예전엔 둘째 이름을 메이팅 상대로 오해했습니다.
-       메이팅·혈통·프로필 정정 문장은 예전 길로 그대로 보냅니다. */
-    if (names.length >= 2 && facts.length && !RE_MATE.test(text) && !morph
-        && !/아빠|아비|엄마|어미/.test(text) && !detectProfileClaim(text)) {
-      const all = [];
-      names.forEach(g => facts.forEach(f => all.push({ ...f, targetId: g.id, targetName: g.name })));
-      updatePending(p => [...p, ...all]);
-      bot(`${names.map(g => g.name).join(' · ')} — ${names.length}마리에 같이 담았어요 🦎\n`
-        + facts.map(f => '· ' + factLabel(f)).join('\n')
-        + '\n\n계속 말씀하셔도 되고, 끝나면 저장을 눌러주세요.', [
-        { label: '💾 이제 저장할래', kind: 'save' },
-      ]);
-      return;
-    }
-
-    // 메이팅 파트너: 등록 개체 → "상대/파트너 ○○" → 문장 속 다른 이름(미등록 포함)
-    const mating = facts.find(f => f.type === 'mating');
-    let unregPartner = null;                            // 미등록 파트너 이름 (등록 유도용)
-    let mateWarnLine = '';                              // 너무 가까운 사이면 담기 전에 알려드립니다
-    if (mating) {
-      const partner = names.find(n => target && n.id !== target.id);
-      if (partner) { mating.data.partnerId = partner.id; mating.data.partnerName = partner.name; }
-      else {
-        const pm = text.match(/(?:상대|파트너)(?:는|은)?\s*([가-힣A-Za-z0-9]+)/);
-        if (pm) {
-          const pn = pm[1].replace(/(이랑|랑|이야|이고|이에요|예요|야|고|임)$/, '');
-          mating.data.partnerName = pn; unregPartner = pn;
-        } else {
-          const others = extractPartnerNames(text, target ? target.name : '');
-          if (others.length) { mating.data.partnerName = others[0]; unregPartner = others[0]; }
-        }
-      }
-      // 상대를 알아냈으면 혈연부터 짚어드립니다 (막지는 않고 알려만 드립니다)
-      if (mating.data.partnerId && target) {
-        const w = mateWarning(target, inds.find(i => i.id === mating.data.partnerId), inds);
-        if (w) mateWarnLine = w.text;
-      }
-    }
-
-    /* 3.35) 동배 묶기 · 짝 추천 · 모프 계산 — 혈연을 다루는 말들
-       질문 답변(3.45)보다 먼저 봅니다. "누구랑 붙일까?"의 "누구"를 새 이름으로 오해하지 않게. */
+    /* 3.05) 동배 묶기 · 짝 추천 · 모프 계산 — 혈연을 다루는 말들
+       ★ 순서가 중요합니다. 이 검사는
+         · "여러 아이 한 번에"(3.1)보다 앞 — "크온이랑 크심이 클러치야"가 산란 기록으로 새지 않게
+         · 질문 답변(3.45)보다 앞      — "누구랑 붙일까?"의 "누구"를 새 이름으로 오해하지 않게 */
     {
       const twoOrMore = names.filter((n, i2) => names.findIndex(x => x.id === n.id) === i2);
       // (가) "크영이 동배 취소" — 묶기보다 먼저 봅니다 ("동배"가 들어 있어 순서가 중요)
@@ -4700,9 +4666,49 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       // (마) "크한이랑 크룡이 무슨 사이야?"
       if (twoOrMore.length >= 2 && /(사이|관계|촌수|혈연|근친)/.test(text)) {
         const r = relationOf(twoOrMore[0], twoOrMore[1]);
-        bot(r ? `${twoOrMore[0].name}랑 ${twoOrMore[1].name}는 ${r.label}\n${mateWarning(twoOrMore[0], twoOrMore[1]).text}`
+        bot(r ? mateWarning(twoOrMore[0], twoOrMore[1]).text
               : `${twoOrMore[0].name}랑 ${twoOrMore[1].name}는 기록상 혈연이 겹치지 않아요. 붙이셔도 괜찮습니다 🙂`);
         return;
+      }
+    }
+
+    /* 3.1) 여러 아이에게 같은 기록 — "크한이랑 크범이 밥 줬어"
+       예전엔 둘째 이름을 메이팅 상대로 오해했습니다.
+       메이팅·혈통·프로필 정정 문장은 예전 길로 그대로 보냅니다. */
+    if (names.length >= 2 && facts.length && !RE_MATE.test(text) && !morph
+        && !/아빠|아비|엄마|어미/.test(text) && !detectProfileClaim(text)) {
+      const all = [];
+      names.forEach(g => facts.forEach(f => all.push({ ...f, targetId: g.id, targetName: g.name })));
+      updatePending(p => [...p, ...all]);
+      bot(`${names.map(g => g.name).join(' · ')} — ${names.length}마리에 같이 담았어요 🦎\n`
+        + facts.map(f => '· ' + factLabel(f)).join('\n')
+        + '\n\n계속 말씀하셔도 되고, 끝나면 저장을 눌러주세요.', [
+        { label: '💾 이제 저장할래', kind: 'save' },
+      ]);
+      return;
+    }
+
+    // 메이팅 파트너: 등록 개체 → "상대/파트너 ○○" → 문장 속 다른 이름(미등록 포함)
+    const mating = facts.find(f => f.type === 'mating');
+    let unregPartner = null;                            // 미등록 파트너 이름 (등록 유도용)
+    let mateWarnLine = '';                              // 너무 가까운 사이면 담기 전에 알려드립니다
+    if (mating) {
+      const partner = names.find(n => target && n.id !== target.id);
+      if (partner) { mating.data.partnerId = partner.id; mating.data.partnerName = partner.name; }
+      else {
+        const pm = text.match(/(?:상대|파트너)(?:는|은)?\s*([가-힣A-Za-z0-9]+)/);
+        if (pm) {
+          const pn = pm[1].replace(/(이랑|랑|이야|이고|이에요|예요|야|고|임)$/, '');
+          mating.data.partnerName = pn; unregPartner = pn;
+        } else {
+          const others = extractPartnerNames(text, target ? target.name : '');
+          if (others.length) { mating.data.partnerName = others[0]; unregPartner = others[0]; }
+        }
+      }
+      // 상대를 알아냈으면 혈연부터 짚어드립니다 (막지는 않고 알려만 드립니다)
+      if (mating.data.partnerId && target) {
+        const w = mateWarning(target, inds.find(i => i.id === mating.data.partnerId), inds);
+        if (w) mateWarnLine = w.text;
       }
     }
 
