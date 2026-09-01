@@ -374,7 +374,7 @@ const SERVER = {
 
    인터넷이 없거나 파일을 못 받으면 아무 것도 막지 않습니다(앱은 그대로 씁니다).
    ══════════════════════════════════════════ */
-const APP_VERSION = '4.8';
+const APP_VERSION = '4.9';
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -1387,19 +1387,17 @@ const say = (polite, friendly, short) => {
 /* 한 문장이 길면 의미 단위로 줄을 나눕니다 (화면은 pre-line 으로 그립니다) */
 const twoLine = (head, tail) => `${head}\n${tail}`;
 
-/* 날짜 수를 한국어 세는 말로 — 열흘까지만, 그 위는 숫자 그대로 */
-const KDAY_WORDS = ['', '하루', '이틀', '사흘', '나흘', '닷새', '엿새', '이레', '여드레', '아흐레', '열흘'];
-const dayWord = (n) => {
-  const k = Math.abs(Math.round(Number(n) || 0));
-  return (k >= 1 && k <= 10) ? KDAY_WORDS[k] : `${k}일`;
-};
+/* 날짜 수는 숫자로 씁니다.
+   ★ "사흘·아흐레·열흘" 같은 세는 말은 못 알아듣는 분이 많아 v4.9에서 숫자로 되돌렸습니다.
+     다시 세는 말로 바꾸지 마세요. */
+const dayWord = (n) => `${Math.abs(Math.round(Number(n) || 0))}일`;
 const WEEKDAY_KO = ['일', '월', '화', '수', '목', '금', '토'];
 
 /* 앞으로 올 날을 사람 말로 — "모레", "이번 주 토요일", "9월 18일 금요일" */
 function whenWord(iso) {
   if (!iso) return '';
   const d = daysUntil(iso);
-  const near = { '0': '오늘', '1': '내일', '2': '모레', '3': '글피', '-1': '어제', '-2': '그저께' };
+  const near = { '0': '오늘', '1': '내일', '2': '모레', '-1': '어제' };
   if (near[String(d)]) return near[String(d)];
   const wd = WEEKDAY_KO[new Date(iso).getDay()] + '요일';
   if (d > 0) {
@@ -1415,8 +1413,7 @@ function agoWord(iso) {
   const d = -daysUntil(iso);
   if (d <= 0) return '오늘';
   if (d === 1) return '어제';
-  if (d === 2) return '그저께';
-  return `${dayWord(d)} 전`;
+  return `${d}일 전`;
 }
 
 /* 받침이 있으면 '이에요/이', 없으면 '예요/가' — 말이 어색해지지 않게 */
@@ -1430,10 +1427,10 @@ function hasJong(word) {
 const iyeyo = (w) => `${w}${hasJong(w) ? '이에요' : '예요'}`;
 const iga   = (w) => `${w}${hasJong(w) ? '이' : '가'}`;
 
-/* "사흘이나" — 강조할 때 붙이는 조사. 하루는 강조하지 않습니다. */
+/* "3일이나" — 강조할 때 붙이는 조사. 하루짜리는 강조하지 않습니다. */
 const naWord = (n) => {
-  const w = dayWord(n);
-  return Math.abs(Math.round(Number(n) || 0)) >= 2 ? w + (hasJong(w) ? '이나' : '나') : w;
+  const k = Math.abs(Math.round(Number(n) || 0));
+  return k >= 2 ? `${k}일이나` : `${k}일`;
 };
 
 /* 시간대 인사 — 문장부호 없이 알맹이만 */
@@ -1561,8 +1558,8 @@ function voiceSample() {
   return [
     say(call ? `안녕하세요, ${call}.` : '안녕하세요.', call ? `${call}, 안녕하세요! 😊` : '안녕하세요! 😊', ''),
     say(`오늘은 ${KIDS} 밥 먹이는 날이에요.`, `오늘 ${KIDS} 밥 주는 날이에요! 🦗`, '오늘 밥 주는 날'),
-    say('크안이의 2차 산란 예정일이\n사흘 지났어요.', '크안이 2차 산란 예정일이\n사흘이나 지났어요!', '크안이 2차 산란 예정 · 3일 지남'),
-    say('크범이가 아흐레째 밥을 안 먹고 있어요.', '크범이, 아흐레째 밥을 안 먹네요 😢', '크범이 9일째 안 먹음'),
+    say('크안이의 2차 산란 예정일이\n3일 지났어요.', '크안이 2차 산란 예정일이\n3일이나 지났어요!', '크안이 2차 산란 예정 · 3일 지남'),
+    say('크범이가 9일째 밥을 안 먹고 있어요.', '크범이, 9일째 밥을 안 먹네요 😢', '크범이 9일째 안 먹음'),
   ].filter(Boolean);
 }
 
@@ -1691,96 +1688,111 @@ function mateWarning(a, b, all) {
      나머지는 "경향"이라고 솔직하게 말합니다. 지어내지 않습니다.
    ══════════════════════════════════════════ */
 
-/* 릴리화이트 자리 — 우성, 슈퍼(둘 다 릴리)는 살지 못합니다 */
+/* 릴리화이트 — 불완전우성. 슈퍼(양쪽 다 릴리)는 부화하지 못하거나 곧 죽습니다 */
 const LILY_WORDS  = ['릴리화이트', '릴리 화이트', '릴리', 'lilywhite', 'lily white', 'lily', 'lw'];
-/* 카푸치노·사블레 자리 — 같은 자리(대립유전자). 둘이 겹치면 프라푸치노 */
-const CAPP_WORDS  = ['슈퍼카푸치노', '슈퍼 카푸치노', '카푸치노', '카푸', 'cappuccino'];
-const SABLE_WORDS = ['슈퍼사블레', '슈퍼 사블레', '사블레', '세이블', 'sable'];
+/* 카푸치노 — 불완전우성. 슈퍼는 멜라니스틱(살아납니다) */
+const CAPP_WORDS  = ['슈퍼카푸치노', '슈퍼 카푸치노', '멜라니스틱', '카푸치노', '카푸', 'cappuccino', 'melanistic'];
+/* 세이블 — 불완전우성. 슈퍼 세이블도 살아납니다 */
+const SABLE_WORDS = ['슈퍼세이블', '슈퍼 세이블', '세이블', 'sable'];
+/* 프라푸치노 = 카푸치노 + 릴리화이트 콤보 (서로 다른 자리입니다) */
 const FRAP_WORDS  = ['프라푸치노', 'frappuccino'];
-/* 액시안식 — 열성. 겉으로 안 드러난 보인자(헷)는 앱이 알 수 없습니다 */
-const AXAN_WORDS  = ['액시안식', '액시', '아잔틱', '악산틱', 'axanthic'];
-/* 여러 유전자가 겹쳐 정해지는 것들 — 확률 계산 불가 */
+/* 아잔틱 — 열성. 겉으로 안 드러난 보인자(헷)는 앱이 알 수 없습니다 */
+const AXAN_WORDS  = ['아잔틱', '악산틱', '액산틱', 'axanthic'];
+/* 여러 유전자가 함께 작용하는 무늬·색 — 확률 계산이 되지 않습니다 */
 const POLY_TRAITS = ['할리퀸', '핀스트라이프', '핀스', '달마시안', '브린들', '타이거', '플레임',
   '익스트림', '엑스트림', '크림시클', '트라이컬러', '바이컬러', '팬텀', '솔리드백', '초초', '크라운'];
 
 const hasWord = (txt, words) => words.some(w => txt.indexOf(w) >= 0);
 
-/* 겉모습에서 유전자형을 읽습니다 — 겉으로 보이는 것만 알 수 있습니다 */
+/* 겉모습에서 유전자형을 읽습니다 — 보이는 것만 알 수 있습니다.
+   자리마다 짝의 개수(0·1·2)로 셉니다. 릴리는 슈퍼가 살지 못하므로 보이면 늘 1입니다. */
 function readGenes(gecko) {
-  const t = String((gecko && gecko.morph) || '').toLowerCase().replace(/\s+/g, ' ');
-  const lily = hasWord(t, LILY_WORDS);
+  const raw = (gecko && gecko.morph) || '';
+  const t = String(raw).toLowerCase().replace(/\s+/g, ' ');
   const frap = hasWord(t, FRAP_WORDS);
-  const superCapp = t.indexOf('슈퍼카푸치노') >= 0 || t.indexOf('슈퍼 카푸치노') >= 0;
-  const superSable = t.indexOf('슈퍼사블레') >= 0 || t.indexOf('슈퍼 사블레') >= 0;
-  const capp = !frap && hasWord(t, CAPP_WORDS);
-  const sable = !frap && hasWord(t, SABLE_WORDS);
-  // 카푸치노 자리의 두 짝 (+ = 아무것도 아님)
-  let cs = ['+', '+'];
-  if (frap) cs = ['Ca', 'Sa'];
-  else if (superCapp) cs = ['Ca', 'Ca'];
-  else if (superSable) cs = ['Sa', 'Sa'];
-  else if (capp) cs = ['Ca', '+'];
-  else if (sable) cs = ['Sa', '+'];
+  const superCapp = /슈퍼\s*카푸치노|멜라니스틱/.test(t);
+  const superSable = /슈퍼\s*세이블/.test(t);
   return {
-    lily,                                  // 보이는 릴리 = 한 짝만 릴리(슈퍼는 못 삽니다)
-    cs,
-    axan: hasWord(t, AXAN_WORDS),          // 보이는 액시 = 열성 두 짝
+    lw: (frap || hasWord(t, LILY_WORDS)) ? 1 : 0,
+    capp: superCapp ? 2 : (frap || hasWord(t, CAPP_WORDS)) ? 1 : 0,
+    sable: superSable ? 2 : hasWord(t, SABLE_WORDS) ? 1 : 0,
+    axan: hasWord(t, AXAN_WORDS),          // 보이는 아잔틱 = 열성 두 짝
     poly: POLY_TRAITS.filter(w => t.indexOf(w.toLowerCase()) >= 0),
-    raw: (gecko && gecko.morph) || '',
+    raw,
   };
 }
 
-const CS_NAME = { 'Ca+': '카푸치노', '+Ca': '카푸치노', 'Sa+': '사블레', '+Sa': '사블레',
-  'CaCa': '슈퍼 카푸치노', 'SaSa': '슈퍼 사블레', 'CaSa': '프라푸치노', 'SaCa': '프라푸치노' };
+/* 불완전우성 한 자리 — 부모가 가진 짝 수(0·1·2)로 자식 비율을 냅니다.
+   돌려주는 값은 [일반%, 헤테로(보이는 모프)%, 슈퍼%] */
+function incDomSplit(a, b) {
+  const g = (n) => (n === 2 ? [0, 1] : n === 1 ? [0.5, 0.5] : [1, 0]);  // [정상 정자·난자, 모프 정자·난자]
+  const [a0, a1] = g(a), [b0, b1] = g(b);
+  return [a0 * b0, a0 * b1 + a1 * b0, a1 * b1];
+}
+const pct = (x) => Math.round(x * 100);
 
-/* 두 아이를 붙이면 나올 수 있는 것 — 문장으로 돌려줍니다 */
+/* 두 아이를 붙이면 나올 수 있는 것 */
 function morphForecast(a, b) {
   const ga = readGenes(a), gb = readGenes(b);
   const sure = [];      // 확률로 말할 수 있는 것
-  const notes = [];     // 꼭 알려드려야 하는 주의
+  const notes = [];     // 꼭 알려드려야 하는 것
 
-  // ① 릴리화이트 — 우성, 슈퍼는 살지 못함
-  if (ga.lily && gb.lily) {
-    sure.push('릴리화이트 — 부화한 아이 셋 중 둘꼴 (약 67%)');
-    notes.push('릴리끼리 붙이면 알 넷 중 하나는 슈퍼가 되어 부화하지 못해요. 한쪽만 릴리로 붙이시는 걸 권해드려요.');
-  } else if (ga.lily || gb.lily) {
-    sure.push('릴리화이트 — 절반 (50%)');
-  }
-
-  // ② 카푸치노·사블레 자리 — 같은 자리라 둘을 같이 셉니다
-  if (ga.cs.join('') !== '++' || gb.cs.join('') !== '++') {
-    const tally = {};
-    ga.cs.forEach(x => gb.cs.forEach(y => {
-      const key = [x, y].sort().join('');    // '+Ca' · 'CaSa' · '++' … 두 짝을 늘 같은 순서로
-      tally[key] = (tally[key] || 0) + 1;
-    }));
-    Object.keys(tally).sort().forEach(k => {
-      if (k === '++') return;
-      const nm = CS_NAME[k] || (k === 'CaSa' ? '프라푸치노' : k);
-      sure.push(`${nm} — ${Math.round(tally[k] / 4 * 100)}%`);
-    });
-    if (tally['CaCa'] || tally['SaSa'] || tally['CaSa']) {
-      notes.push('카푸치노와 사블레는 같은 자리의 유전자예요. 둘을 붙이면 프라푸치노가 나옵니다.');
+  // ① 릴리화이트 — 슈퍼는 살지 못합니다
+  let pLily = 0;
+  if (ga.lw || gb.lw) {
+    const [, het, sup] = incDomSplit(ga.lw, gb.lw);
+    if (sup > 0) {
+      pLily = het / (1 - sup);                       // 살아남은 아이들 중 비율
+      sure.push(`릴리화이트 — 살아남은 아이 중 ${pct(pLily)}%`);
+      notes.push(`릴리끼리 붙이면 알 ${pct(sup)}%가 슈퍼 릴리가 되어 부화하지 못하거나 며칠 안에 죽습니다. 한쪽만 릴리로 붙이시길 권해드려요.`);
+    } else {
+      pLily = het;
+      sure.push(`릴리화이트 — ${pct(het)}%`);
     }
   }
 
-  // ③ 액시안식 — 열성. 헷(보인자)은 겉으로 안 보여서 앱이 알 수 없습니다
-  if (ga.axan && gb.axan) {
-    sure.push('액시안식 — 전부 (100%)');
-  } else if (ga.axan || gb.axan) {
-    notes.push('액시안식은 열성이에요. 한쪽만 액시면 베이비는 겉으로 액시가 아니고, 전부 보인자(헷 액시)로 나옵니다. 상대가 헷인지 아닌지는 기록이 없어 앱이 알 수 없어요.');
+  // ② 카푸치노 (불완전우성, 슈퍼 = 멜라니스틱)
+  let pCapp = 0;
+  if (ga.capp || gb.capp) {
+    const [, het, sup] = incDomSplit(ga.capp, gb.capp);
+    pCapp = het;
+    if (het) sure.push(`카푸치노 — ${pct(het)}%`);
+    if (sup) sure.push(`슈퍼 카푸치노(멜라니스틱) — ${pct(sup)}%`);
   }
 
-  // ④ 무늬·색 — 경향만
+  // ③ 세이블 (불완전우성)
+  if (ga.sable || gb.sable) {
+    const [, het, sup] = incDomSplit(ga.sable, gb.sable);
+    if (het) sure.push(`세이블 — ${pct(het)}%`);
+    if (sup) sure.push(`슈퍼 세이블 — ${pct(sup)}%`);
+    if (ga.capp || gb.capp) {
+      notes.push('카푸치노와 세이블이 같은 자리의 유전자인지는 아직 브리더들 사이에서도 결론이 안 났어요. 여기 확률은 서로 다른 자리라고 보고 계산한 값이라, 실제와 다를 수 있습니다.');
+    }
+  }
+
+  // ④ 프라푸치노 = 카푸치노 + 릴리화이트 (서로 다른 자리라 곱해서 계산)
+  if (pCapp > 0 && pLily > 0) {
+    sure.push(`프라푸치노(카푸치노+릴리) — ${pct(pCapp * pLily)}%`);
+  }
+
+  // ⑤ 아잔틱 — 열성. 헷(보인자)은 겉으로 안 보여서 앱이 알 수 없습니다
+  if (ga.axan && gb.axan) {
+    sure.push('아잔틱 — 전부 (100%)');
+  } else if (ga.axan || gb.axan) {
+    notes.push('아잔틱은 열성이에요. 한쪽만 아잔틱이면 베이비는 겉으로 아잔틱이 아니고 전부 보인자(헷 아잔틱)로 나옵니다. 상대가 헷인지 아닌지는 기록이 없어 앱이 알 수 없어요.');
+  }
+
+  // ⑥ 무늬·색 — 확률이 아니라 경향입니다
   const bothPoly = ga.poly.filter(w => gb.poly.indexOf(w) >= 0);
   const anyPoly = [...new Set([...ga.poly, ...gb.poly])];
   const trend = [];
   if (bothPoly.length) {
     const w = bothPoly.join('·');
-    trend.push(`둘 다 ${w}${hasJong(w) ? '이라서' : '라서'} 베이비도 그쪽으로 나올 가능성이 높아요`);
+    trend.push(`둘 다 ${w}${hasJong(w) ? '이지만' : '지만'}, 무늬는 여러 유전자가 함께 작용해서 부모를 닮는다는 보장이 없어요`);
+  } else if (anyPoly.length) {
+    trend.push(`${anyPoly.join('·')} 쪽 느낌이 섞여 나올 수 있어요`);
   }
-  else if (anyPoly.length) trend.push(`${anyPoly.join('·')} 쪽 느낌이 섞여 나올 수 있어요`);
-  if (trend.length) trend.push('다만 크레는 무늬와 색이 여러 유전자로 정해져서 확률로 딱 잘라 말하긴 어려워요');
+  if (trend.length) trend.push('좋은 무늬가 나올 가능성이 조금 올라가는 정도로 봐주세요. 확률로 계산되는 형질이 아닙니다');
 
   return { sure, notes, trend, ga, gb };
 }
@@ -1797,8 +1809,8 @@ function morphAnswer(a, b) {
   }
   L.push('', `· ${a.name} ${(a.morph || '').trim() || '모프 미기재'}`, `· ${b.name} ${(b.morph || '').trim() || '모프 미기재'}`);
   if (f.sure.length) L.push('', '확률로 말할 수 있는 것', ...f.sure.map(x => '· ' + x));
-  else L.push('', '확률로 계산할 수 있는 유전자(릴리화이트·카푸치노·사블레·액시안식)는 없어요.');
-  if (f.trend.length) L.push('', '경향으로만 말할 수 있는 것', ...f.trend.map(x => '· ' + x));
+  else L.push('', '확률로 계산할 수 있는 유전자(릴리화이트·카푸치노·세이블·아잔틱)는 없어요.');
+  if (f.trend.length) L.push('', '무늬는 확률로 못 말해요', ...f.trend.map(x => '· ' + x));
   if (f.notes.length) L.push('', '알아두실 점', ...f.notes.map(x => '· ' + x));
   L.push('', '확률은 알 하나하나에 매번 새로 적용돼요. 네 개 낳는다고 정확히 그 비율로 나오지는 않습니다.');
   return L.join('\n');
@@ -1830,7 +1842,7 @@ function mateSuggestions(target, all, evs) {
     const f = morphForecast(target, i);
     const flags = [];
     if (femW != null && femW < SAFE_FEMALE_G) flags.push(`${fem.name} ${femW}g — 암컷은 ${SAFE_FEMALE_G}g은 넘겨서 붙이시는 게 안전해요`);
-    if (readGenes(target).lily && readGenes(i).lily) flags.push('릴리끼리라 알 넷 중 하나는 부화하지 못해요');
+    if (readGenes(target).lw && readGenes(i).lw) flags.push('릴리끼리라 알 4개 중 1개는 부화하지 못해요');
     return {
       ind: i, rel, flags, f,
       score: (rel ? (rel.level === 'danger' ? -100 : -20) : 0) + (flags.length ? -10 : 0) + (f.sure.length ? 5 : 0),
@@ -2213,8 +2225,19 @@ function extractEggFix(text) {
     if (k) index = /^\d+$/.test(k[1]) ? parseInt(k[1], 10) : KNUM[k[1]];
   }
   if (index === null && /하나|한\s*개|한개|한\s*알/.test(t)) index = 0;
-  if (/전부|모두|다\s|둘\s*다|싹/.test(t)) index = null;
-  return { index, status: hit[1], reason: hit[2] };
+  const all = /전부|모두|다\s|둘\s*다|싹/.test(t);
+  if (all) index = null;
+  /* 알을 콕 집어 말했는지 — "2번 알", "알 하나", "알 전부"
+     ★ 그냥 "알 해칭했어"는 알별 수정이 아니라 보통의 부화 기록입니다.
+       (v4.8에서 이걸 구분 못 해 해칭이 엉뚱한 클러치에 붙었습니다) */
+  return { index, status: hit[1], reason: hit[2], explicitEgg: index !== null || all };
+}
+
+/* 지금 품고 있는(결과가 안 난) 클러치들 — 오래된 순.
+   ★ 알별 기록·부화 기록은 "가장 최근 산란"이 아니라 "지금 품고 있는 알"에 붙어야 합니다. */
+function waitingClutches(individualId, rows) {
+  return (rows || clutchRows())
+    .filter(r => r.e.individualId === individualId && r.waiting);
 }
 const CRICKET_RE = /귀뚜라미|귀뚜리|귀뚤이|귀뚤|뚤이|냉뚜리|냉뚤|생뚤|밀웜|슈퍼웜|충식|두비아|레드런/;
 const SUPU_RE = /슈퍼푸드|슈푸|슬러리|판게아|레파시|CGD|일반식/;
@@ -2877,8 +2900,8 @@ function App() {
             대화
           </button>
           <button className={`tab-btn ${tab==='reminders'?'active':''}`} onClick={() => navigate('reminders')} style={{position:'relative'}}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-            알림
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 2h6a1 1 0 0 1 1 1v1H8V3a1 1 0 0 1 1-1z"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M9 12h6"/><path d="M9 16h4"/></svg>
+            브리핑
             {badgeCount > 0 && <span className="notif-badge">{badgeCount}</span>}
           </button>
           <button className={`tab-btn ${tab==='ledger'?'active':''}`} onClick={() => navigate('ledger')}>
@@ -4375,6 +4398,43 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     ]);
   };
 
+  /* ── 몇 마리 나왔는지 여쭤봅니다 ──
+     마릿수를 알아야 베이비가 실제로 등록됩니다(예전엔 0마리로 담겨 해칭 목록이 비었습니다). */
+  const askHatchCount = (fact, eggs, rest, target) => {
+    if (rest && rest.length) pushPending(rest, target);
+    const max = Math.max(2, Math.min(4, eggs || 2));
+    const chips = [];
+    for (let n = 1; n <= max; n++) chips.push({ label: `🐣 ${n}마리`, kind: 'hatch-count', value: { fact, count: n } });
+    chips.push({ label: '아직 안 나왔어요', kind: 'memo-skip' });
+    bot(`축하드려요! 🐣 몇 마리가 나왔나요?\n마릿수를 알려주시면 아기들을 바로 등록해둘게요.`, chips);
+  };
+
+  /* ── 알별 결과 적용 ── 한 곳에서만 고칩니다(직접 말했을 때·어느 산란인지 고르셨을 때 공용) */
+  const applyEggFix = (layingId, ef) => {
+    const row = clutchRows().find(r => r.e.id === layingId);
+    if (!row) { bot('그 산란 기록을 못 찾았어요 🥚'); return; }
+    const units = row.units.slice();
+    const touched = [];
+    const mark = (i) => {
+      if (!units[i]) return;
+      units[i] = { ...units[i], status: ef.status, reason: ef.reason || '' };
+      touched.push(i + 1);
+    };
+    if (ef.index >= 1) mark(ef.index - 1);
+    else if (ef.index === 0) { const i = units.findIndex(u => u.status === 'pending'); if (i >= 0) mark(i); }
+    else units.forEach((u, i) => { if (u.status === 'pending') mark(i); });
+    if (!touched.length) {
+      bot(`고칠 알을 못 찾았어요 🥚\n${row.nth}차 산란에 알이 ${units.length}개 있어요. "2번 알"처럼 짚어주시겠어요?`);
+      return;
+    }
+    DB.setEggUnits(row.e.id, units);
+    refreshIndividuals();
+    const label = ef.status === 'infertile' ? '무정란'
+      : ef.status === 'hatched' ? '부화' : (ef.reason || '문제');
+    bot(`🥚 ${row.pairName} ${row.nth}차 산란 · 알 ${touched.join('·')}번을 ${label}으로 적었어요.\n`
+      + '산란기록에서 알별로 다시 고칠 수 있어요.');
+  };
+
   /* ── 담긴 기록의 주인 정정 ──
      대화 도중 다른 아이 얘기가 섞여도 그 기록만 옮길 수 있게 합니다. */
   const applyRetarget = (ind, scope) => {
@@ -4516,6 +4576,17 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       if (t) applyFix(t, value.field, value.from, value.to);
     } else if (kind === 'fix-no' && value) {
       bot(`네, ${PROFILE_LABEL[value.field]}은(는) ${profileText(value.field, value.from)} 그대로 둘게요 🙂`);
+    } else if (kind === 'egg-fix' && value) {
+      applyEggFix(value.layingId, value.fix);
+    } else if (kind === 'hatch-clutch' && value) {
+      const f = { ...value.fact, data: { ...value.fact.data, layingId: value.layingId } };
+      const t = DB.getIndividuals().find(i => i.id === f.targetId) || { name: f.targetName };
+      if (Number(f.data.count)) pushPending([...(value.rest || []), f], t);
+      else askHatchCount(f, value.eggs, value.rest, t);
+    } else if (kind === 'hatch-count' && value) {
+      // 몇 마리 나왔는지 고르시면 그때 담습니다 (마릿수를 알아야 베이비가 등록됩니다)
+      const f = { ...value.fact, data: { ...value.fact.data, count: String(value.count) } };
+      pushPending([f], { name: value.fact.targetName });
     } else if (kind === 'memo-skip') {
       bot('네, 기록 없이 넘어갈게요 🙂 다른 이야기 들려주세요.');
     }
@@ -4854,30 +4925,22 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
        알별 기록은 저장된 산란 기록 위에서 바로 고칩니다(담아두지 않습니다). */
     {
       const ef = extractEggFix(text);
-      if (ef && target) {
+      /* 알을 콕 집지 않은 "해칭했어"는 알별 수정이 아니라 보통의 부화 기록입니다.
+         (v4.8에서 이걸 구분 못 해 해칭이 엉뚱한 클러치에 붙고 베이비도 안 생겼습니다) */
+      if (ef && target && (ef.status !== 'hatched' || ef.explicitEgg)) {
         const rows = clutchRows().filter(r => r.e.individualId === target.id);
-        const row = rows[rows.length - 1];   // clutchRows 는 오래된 순
-        if (!row) { bot(`${target.name}는 아직 산란 기록이 없어요 🥚`); return; }
-        const units = row.units.slice();
-        const touched = [];
-        const mark = (i) => {
-          if (!units[i]) return;
-          units[i] = { ...units[i], status: ef.status, reason: ef.reason || '' };
-          touched.push(i + 1);
-        };
-        if (ef.index >= 1) mark(ef.index - 1);
-        else if (ef.index === 0) { const i = units.findIndex(u => u.status === 'pending'); if (i >= 0) mark(i); }
-        else units.forEach((u, i) => { if (u.status === 'pending') mark(i); });
-        if (!touched.length) {
-          bot(`고칠 알을 못 찾았어요 🥚\n${row.nth}차 산란에 알이 ${units.length}개 있어요. "2번 알"처럼 짚어주시겠어요?`);
+        if (!rows.length) { bot(`${target.name}는 아직 산란 기록이 없어요 🥚`); return; }
+        /* 지금 품고 있는 알 중에서 고릅니다. 여러 개면 말없이 찍지 않고 여쭤봅니다. */
+        const alive = rows.filter(r => r.waiting);
+        if (alive.length > 1) {
+          bot(`${target.name}는 지금 품고 있는 알이 ${alive.length}개예요. 어느 산란인가요? 🥚`,
+            alive.map(r => ({
+              label: `${r.nth}차 (${fmtDate(r.e.date)} 산란 · ${r.d >= 0 ? whenWord(r.etaISO) : dayWord(-r.d) + ' 지남'})`,
+              kind: 'egg-fix', value: { layingId: r.e.id, fix: ef },
+            })));
           return;
         }
-        DB.setEggUnits(row.e.id, units);
-        refreshIndividuals();
-        const label = ef.status === 'infertile' ? '무정란'
-          : ef.status === 'hatched' ? '부화' : (ef.reason || '문제');
-        bot(`🥚 ${row.pairName} ${row.nth}차 산란 · 알 ${touched.join('·')}번을 ${label}으로 적었어요.\n`
-          + '산란기록에서 알별로 다시 고칠 수 있어요.');
+        applyEggFix((alive[0] || rows[rows.length - 1]).e.id, ef);
         return;
       }
     }
@@ -4990,7 +5053,34 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       return;
     }
 
-    const mapped = facts.map(withTarget);
+    let mapped = facts.map(withTarget);
+
+    /* 부화 기록은 "지금 품고 있는 알"에 붙입니다.
+       ★ 어느 클러치인지 적어두지 않으면 나중에 날짜만 보고 짐작하게 되어 엉뚱한 산란에 붙습니다. */
+    const hatchFact = mapped.find(f => f.type === 'hatching');
+    if (hatchFact && !hatchFact.data.layingId) {
+      const alive = waitingClutches(target.id);
+      if (alive.length > 1) {
+        bot(`${target.name}는 지금 품고 있는 알이 ${alive.length}개예요. 어느 알이 부화했나요? 🐣`,
+          alive.map(r => ({
+            label: `${r.nth}차 (${fmtDate(r.e.date)} 산란 · ${r.d >= 0 ? whenWord(r.etaISO) : dayWord(-r.d) + ' 지남'})`,
+            kind: 'hatch-clutch',
+            value: { layingId: r.e.id, nth: r.nth, eggs: r.units.length, fact: hatchFact, rest: mapped.filter(f => f !== hatchFact) },
+          })));
+        return;
+      }
+      if (alive.length === 1) {
+        hatchFact.data = { ...hatchFact.data, layingId: alive[0].e.id };
+        if (!Number(hatchFact.data.count)) {
+          askHatchCount(hatchFact, alive[0].units.length, mapped.filter(f => f !== hatchFact), target);
+          return;
+        }
+      } else if (!Number(hatchFact.data.count)) {
+        askHatchCount(hatchFact, 2, mapped.filter(f => f !== hatchFact), target);
+        return;
+      }
+    }
+
     pushPending(mapped, target, [mateWarnLine, morphLine].filter(Boolean).join('\n'));
 
     // 미등록 파트너 → 새 개체로 등록해 혈통 연결 유도
@@ -6131,7 +6221,7 @@ function CalendarScreen({ navigate, individuals, showToast, onRemindersChanged }
 }
 
 /* ══════════════════════════════════════════
-   알림 화면
+   브리핑 화면 (예전 이름: 알림)
    ══════════════════════════════════════════ */
 const WEEK_WINDOW = 7;   // 예정일은 1주일 전부터 화면에 띄웁니다
 const FEED_DUE = 4;      // 마지막 급여로부터 이 일수가 지나면 "밥 줄 아이"
@@ -6324,7 +6414,7 @@ function FeedingScreen({ navigate, showToast, refreshIndividuals }) {
     <div className="screen">
       <div className="header">
         <div className="header-row">
-          <button className="back-btn" onClick={() => navigate('reminders')}>‹ 알림</button>
+          <button className="back-btn" onClick={() => navigate('reminders')}>‹ 브리핑</button>
           <span style={{fontSize:13, fontWeight:700, color:'var(--accent2)'}}>{doneCnt} / {fp.inds.length}</span>
         </div>
       </div>
@@ -6419,7 +6509,7 @@ function FeedingScreen({ navigate, showToast, refreshIndividuals }) {
           ✅ 먹었어요 · 🚫 안 먹었어요 · ⏭️ 오늘은 안 줬어요
         </div>
         <div style={{fontSize:11, color:'var(--text3)', textAlign:'center'}}>
-          {feedWarn()}일 넘게 안 먹은 아이는 알림에서 따로 알려드려요 (설정에서 조절)
+          {feedWarn()}일 넘게 안 먹은 아이는 브리핑에서 따로 알려드려요 (설정에서 조절)
         </div>
       </div>
     </div>
@@ -6453,7 +6543,7 @@ function RemindersScreen({ navigate, onChanged }) {
 
   return (
     <div className="screen">
-      <div className="header"><h1>🔔 알림</h1></div>
+      <div className="header"><h1>📝 브리핑</h1></div>
 
       {/* 오늘의 브리핑 — 카드를 늘어놓기 전에 하루를 먼저 정리해 드립니다 */}
       {brief.length > 0 && (
@@ -6515,7 +6605,7 @@ function RemindersScreen({ navigate, onChanged }) {
       {past.length > 0 && (
         <>
           <div className="section-title" style={{color:'var(--text3)', cursor:'pointer'}} onClick={() => setShowPast(v => !v)}>
-            지난 알림 {past.length}건 {showPast ? '▲' : '▼'}
+            지난 일정 {past.length}건 {showPast ? '▲' : '▼'}
           </div>
           {showPast && past.map(r => <ReminderCard key={r.id} r={r} onDelete={deleteReminder} past />)}
         </>
@@ -7069,7 +7159,7 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
         <div className="card" style={{margin:0}} data-testid="voice-card">
           <div style={{fontSize:13, fontWeight:700, marginBottom:4, color:'var(--text2)'}}>🗣️ 비서 말투</div>
           <div style={{fontSize:12, color:'var(--text3)', marginBottom:10, lineHeight:1.6}}>
-            알림·홈 화면·대화에서 어떻게 부르고 어떤 말투로 말할지 고릅니다.
+            브리핑·홈 화면·대화에서 어떻게 부르고 어떤 말투로 말할지 고릅니다.
           </div>
 
           <div style={{fontSize:11.5, color:'var(--text3)', marginBottom:5}}>뭐라고 불러드릴까요</div>
@@ -7195,7 +7285,7 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
         <div className="card" style={{margin:0}}>
           <div style={{fontSize:13, fontWeight:700, marginBottom:4, color:'var(--text2)'}}>🦗 밥 주는 간격</div>
           <div style={{fontSize:12, color:'var(--text3)', marginBottom:10, lineHeight:1.6}}>
-            며칠에 한 번 주시나요? 마지막으로 준 날 + 이 간격이 되면 <b>알림 맨 위</b>에 "오늘 밥 주는 날"이 떠요.
+            며칠에 한 번 주시나요? 마지막으로 준 날 + 이 간격이 되면 <b>브리핑 맨 위</b>에 "오늘 밥 주는 날"이 떠요.
           </div>
           <div style={{display:'flex', gap:6, flexWrap:'wrap'}}>
             {[1, 2, 3, 4, 5, 7].map(n => (
