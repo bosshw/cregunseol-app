@@ -374,7 +374,7 @@ const SERVER = {
 
    인터넷이 없거나 파일을 못 받으면 아무 것도 막지 않습니다(앱은 그대로 씁니다).
    ══════════════════════════════════════════ */
-const APP_VERSION = '4.9';
+const APP_VERSION = '5.0';
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -1424,8 +1424,28 @@ function hasJong(word) {
   if (c < 0xAC00 || c > 0xD7A3) return false;
   return (c - 0xAC00) % 28 !== 0;
 }
-const iyeyo = (w) => `${w}${hasJong(w) ? '이에요' : '예요'}`;
-const iga   = (w) => `${w}${hasJong(w) ? '이' : '가'}`;
+/* ── 조사 한 벌 ──
+   ★ "크은이(이)군요" 처럼 괄호로 얼버무리지 않습니다.
+     한국어는 받침만 보면 규칙이 정해져 있으니 앱 어디서든 이 함수들만 씁니다.
+     새 문장을 쓸 때 "(은)는" 같은 걸 손으로 적지 마세요. */
+const josa = (w, withJong, withoutJong) => `${w}${hasJong(w) ? withJong : withoutJong}`;
+const iyeyo  = (w) => josa(w, '이에요', '예요');       // 크안이이에요 / 크나예요
+const iga    = (w) => josa(w, '이', '가');             // 크안이가 / 크나가
+const eunneun = (w) => josa(w, '은', '는');            // 크안이은 → 크안이는
+const eulreul = (w) => josa(w, '을', '를');
+const gwawa  = (w) => josa(w, '과', '와');
+const euro   = (w) => josa(w, '으로', '로');           // 받침 ㄹ 은 '로' — 아래에서 따로 봅니다
+const igunyo = (w) => josa(w, '이군요', '군요');       // 한울이군요 / 크은이군요
+const irang  = (w) => josa(w, '이랑', '랑');
+/* '으로'는 받침 ㄹ 일 때만 예외로 '로'를 씁니다 (서울로, 연필로) */
+function euroWord(w) {
+  const t = String(w || '').trim();
+  if (!t) return t;
+  const c = t.charCodeAt(t.length - 1);
+  if (c < 0xAC00 || c > 0xD7A3) return t + '로';
+  const jong = (c - 0xAC00) % 28;
+  return t + (jong === 0 || jong === 8 ? '로' : '으로');   // 8 = ㄹ
+}
 
 /* "3일이나" — 강조할 때 붙이는 조사. 하루짜리는 강조하지 않습니다. */
 const naWord = (n) => {
@@ -1575,7 +1595,8 @@ function homeLine() {
   else if (s.hatch.length) what = `${s.hatch[0].geckoName} 알이 부화할 때예요`;
   else if (s.worried.length) what = say(`${iga(s.worried[0].ind.name)} ${dayWord(s.worried[0].days)}째 안 먹고 있어요`, `${s.worried[0].ind.name}, ${dayWord(s.worried[0].days)}째 안 먹고 있어요`, '');
   else if (s.fp.dLeft > 0) what = `다음 밥은 ${iyeyo(whenWord(s.fp.nextDay))}`;
-  return [greetLine(), what].filter(Boolean).join(' ');
+  // 한 줄에 붙이면 좁은 화면에서 어정쩡하게 잘립니다. 인사와 할 일을 줄로 나눕니다.
+  return [greetLine(), what].filter(Boolean).join('\n');
 }
 
 /* 대화 화면 첫 인사 — 오늘 할 일부터 짚어드리고 사용법을 안내합니다 */
@@ -1676,8 +1697,8 @@ function mateWarning(a, b, all) {
   return {
     ...r,
     text: r.level === 'danger'
-      ? `⛔ ${r.label}. 너무 가까운 사이라 메이팅은 피해 주세요.`
-      : `⚠️ ${r.label}. 가까운 사이니 붙이시려면 한 번 더 생각해 보시는 게 좋아요.`,
+      ? `⛔ ${r.label}.\n너무 가까운 사이라 메이팅은 피해 주세요.`
+      : `⚠️ ${r.label}.\n가까운 사이니 붙이시려면 한 번 더 생각해 보시는 게 좋아요.`,
   };
 }
 
@@ -1744,7 +1765,7 @@ function morphForecast(a, b) {
     if (sup > 0) {
       pLily = het / (1 - sup);                       // 살아남은 아이들 중 비율
       sure.push(`릴리화이트 — 살아남은 아이 중 ${pct(pLily)}%`);
-      notes.push(`릴리끼리 붙이면 알 ${pct(sup)}%가 슈퍼 릴리가 되어 부화하지 못하거나 며칠 안에 죽습니다. 한쪽만 릴리로 붙이시길 권해드려요.`);
+      notes.push(`릴리끼리 붙이면 알 ${pct(sup)}%가 슈퍼 릴리가 되어\n부화하지 못하거나 며칠 안에 죽습니다.\n  한쪽만 릴리로 붙이시길 권해드려요.`);
     } else {
       pLily = het;
       sure.push(`릴리화이트 — ${pct(het)}%`);
@@ -1766,7 +1787,7 @@ function morphForecast(a, b) {
     if (het) sure.push(`세이블 — ${pct(het)}%`);
     if (sup) sure.push(`슈퍼 세이블 — ${pct(sup)}%`);
     if (ga.capp || gb.capp) {
-      notes.push('카푸치노와 세이블이 같은 자리의 유전자인지는 아직 브리더들 사이에서도 결론이 안 났어요. 여기 확률은 서로 다른 자리라고 보고 계산한 값이라, 실제와 다를 수 있습니다.');
+      notes.push('카푸치노와 세이블이 같은 자리의 유전자인지는\n  아직 브리더들 사이에서도 결론이 안 났어요.\n  여기 확률은 서로 다른 자리라고 보고 계산한 값이라,\n  실제와 다를 수 있습니다.');
     }
   }
 
@@ -1779,7 +1800,7 @@ function morphForecast(a, b) {
   if (ga.axan && gb.axan) {
     sure.push('아잔틱 — 전부 (100%)');
   } else if (ga.axan || gb.axan) {
-    notes.push('아잔틱은 열성이에요. 한쪽만 아잔틱이면 베이비는 겉으로 아잔틱이 아니고 전부 보인자(헷 아잔틱)로 나옵니다. 상대가 헷인지 아닌지는 기록이 없어 앱이 알 수 없어요.');
+    notes.push('아잔틱은 열성이에요.\n  한쪽만 아잔틱이면 베이비는 겉으로 아잔틱이 아니고\n  전부 보인자(헷 아잔틱)로 나옵니다.\n  상대가 헷인지 아닌지는 기록이 없어 앱이 알 수 없어요.');
   }
 
   // ⑥ 무늬·색 — 확률이 아니라 경향입니다
@@ -1792,7 +1813,7 @@ function morphForecast(a, b) {
   } else if (anyPoly.length) {
     trend.push(`${anyPoly.join('·')} 쪽 느낌이 섞여 나올 수 있어요`);
   }
-  if (trend.length) trend.push('좋은 무늬가 나올 가능성이 조금 올라가는 정도로 봐주세요. 확률로 계산되는 형질이 아닙니다');
+  if (trend.length) trend.push('좋은 무늬가 나올 가능성이 조금 올라가는 정도로 봐주세요\n  확률로 계산되는 형질이 아닙니다');
 
   return { sure, notes, trend, ga, gb };
 }
@@ -1812,7 +1833,7 @@ function morphAnswer(a, b) {
   else L.push('', '확률로 계산할 수 있는 유전자(릴리화이트·카푸치노·세이블·아잔틱)는 없어요.');
   if (f.trend.length) L.push('', '무늬는 확률로 못 말해요', ...f.trend.map(x => '· ' + x));
   if (f.notes.length) L.push('', '알아두실 점', ...f.notes.map(x => '· ' + x));
-  L.push('', '확률은 알 하나하나에 매번 새로 적용돼요. 네 개 낳는다고 정확히 그 비율로 나오지는 않습니다.');
+  L.push('', '확률은 알 하나하나에 매번 새로 적용돼요.\n네 개 낳는다고 정확히 그 비율로 나오지는 않습니다.');
   return L.join('\n');
 }
 
@@ -1841,7 +1862,7 @@ function mateSuggestions(target, all, evs) {
     const femW = fem.id === i.id ? wt : lastWeightOf(target.id, events);
     const f = morphForecast(target, i);
     const flags = [];
-    if (femW != null && femW < SAFE_FEMALE_G) flags.push(`${fem.name} ${femW}g — 암컷은 ${SAFE_FEMALE_G}g은 넘겨서 붙이시는 게 안전해요`);
+    if (femW != null && femW < SAFE_FEMALE_G) flags.push(`${fem.name} ${femW}g — 암컷은 ${SAFE_FEMALE_G}g은 넘겨서\n     붙이시는 게 안전해요`);
     if (readGenes(target).lw && readGenes(i).lw) flags.push('릴리끼리라 알 4개 중 1개는 부화하지 못해요');
     return {
       ind: i, rel, flags, f,
@@ -1859,7 +1880,7 @@ function mateAnswer(target) {
   const L = [`${target.name}랑 붙일 만한 아이예요 💞`];
   const good = r.ok.slice(0, 3);
   if (!good.length) {
-    L.push('', '지금 있는 아이들과는 전부 너무 가까운 사이예요. 밖에서 짝을 찾으시는 게 좋겠어요.');
+    L.push('', '지금 있는 아이들과는 전부 너무 가까운 사이예요.\n밖에서 짝을 찾으시는 게 좋겠어요.');
   } else {
     good.forEach((g, n) => {
       const bits = [];
@@ -2426,7 +2447,7 @@ function memoReply(name, text) {
     return `저런, 걱정되시겠어요 😢 말씀하신 증상은 ${name} 기록에 잘 남겨둘게요.\n상태가 계속되면 파충류 진료가 가능한 병원에 보여주시는 걸 추천드려요.`;
   }
   if (AFFECTION_RE.test(text)) {
-    return `${name}를 정말 아끼시는 마음이 느껴져요 🦎 이 말씀은 ${name} 기록에 소중히 남겨둘게요.`;
+    return `${name}를 정말 아끼시는 마음이 느껴져요 🦎\n이 말씀은 ${name} 기록에 소중히 남겨둘게요.`;
   }
   return null;
 }
@@ -2436,7 +2457,7 @@ const PROFANITY_RE = /병신|븅신|빙신|씨발|시발|씨빨|시빨|씹|좆|�
 const isBadName = (n) => PROFANITY_RE.test((n || '').replace(/\s/g, ''));
 const BAD_NAME_MSG = '귀여운 아이들에게 비속어는 좋은 선택이 아닌 것 같아요 🙂\n예쁜 이름으로 다시 알려주시겠어요?';
 
-// "이름은/이름이 ○○(이)야" 명시 선언 패턴에서 이름 추출
+// "이름은/이름이 ○○이야" 명시 선언 패턴에서 이름 추출
 /* 대화 중 주인 정정·대상 전환 문장 인식
    "사진은 밤울2호야" → 방금 담은 사진의 주인을 바꿈
    "이건 크순이 거야"  → 방금 담은 기록의 주인을 바꿈
@@ -2576,7 +2597,7 @@ function answerQuery(target, text) {
     if (e) {
       const eta = localISO(new Date(new Date(e.date).getTime() + LAYING_INTERVAL * 86400000));
       return `${target.name}의 다음 산란은 ${fmtDate(eta)}쯤으로 보여요 🥚 (${inDays(eta)})\n`
-        + `마지막 산란 ${fmtDate(e.date)} 기준 약 ${LAYING_INTERVAL}일 간격으로 잡은 예상이에요.`;
+        + `마지막 산란 ${fmtDate(e.date)} 기준\n약 ${LAYING_INTERVAL}일 간격으로 잡은 예상이에요.`;
     }
     if (m) {
       const eta = localISO(new Date(new Date(m.date).getTime() + LAYING_AFTER_MATING * 86400000));
@@ -2591,7 +2612,7 @@ function answerQuery(target, text) {
     const rows = clutchRows().filter(r => r.e.individualId === target.id);
     if (!rows.length) return none('산란', '🥚');
     const pending = rows.filter(r => r.waiting).sort((a, b) => a.d - b.d);
-    if (!pending.length) return `${target.name}의 알은 부화 예정일이 모두 지났어요. 산란기록 탭에서 확인해보세요 🐣`;
+    if (!pending.length) return `${target.name}의 알은 부화 예정일이 모두 지났어요.\n산란기록 탭에서 확인해보세요 🐣`;
     const x = pending[0];
     return `${target.name}의 알은 ${fmtDate(x.etaISO)}쯤 부화 예정이에요 🐣 (${inDays(x.etaISO)})\n`
       + `${fmtDate(x.e.date)} 산란 · 인큐 ${incubateTemp()}°C 기준 ${hatchDaysNow()}일`
@@ -2645,7 +2666,7 @@ function answerQuery(target, text) {
     return target.morph ? `${target.name}의 모프는 ${target.morph}예요 ✨` : `${target.name}의 모프는 아직 등록 전이에요. "모프는 ○○야"라고 알려주시면 적어둘게요.`;
   }
   if (/성별|암컷인지|수컷인지/.test(text)) {
-    return `${target.name}의 성별은 ${genderLabel(target.gender)}(으)로 기록돼 있어요.`;
+    return `${target.name}의 성별은 ${euroWord(genderLabel(target.gender))} 기록돼 있어요.`;
   }
   if (/생일|출생|부화일|몇\s*살|나이|태어/.test(text)) {
     if (!target.hatchDate) {
@@ -2670,8 +2691,8 @@ function answerQuery(target, text) {
   }
   if (/사진|이미지/.test(text)) {
     const photos = evs.filter(e => e.type === 'photo').length;
-    return photos ? `${target.name}의 사진은 ${photos}장 있어요 📷 프로필에서 볼 수 있어요.`
-                  : `${target.name}의 사진은 아직 없어요 📷 대화창의 📷 버튼으로 올려주시면 기록에 붙여둘게요.`;
+    return photos ? `${target.name}의 사진은 ${photos}장 있어요 📷\n프로필에서 볼 수 있어요.`
+                  : `${target.name}의 사진은 아직 없어요 📷\n대화창의 📷 버튼으로 올려주시면 기록에 붙여둘게요.`;
   }
   if (/기록|근황|요약|히스토리|어때|정보|알려|보여|프로필|상태/.test(text)) {
     return recordSummary(target);
@@ -2963,7 +2984,7 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
                 style={{display:'block', flexShrink:0, imageRendering:'auto'}} />
               <div style={{minWidth:0}}>
                 <h1>크레건설 브리딩비서</h1>
-                <div className="header-sub" data-testid="home-line">{homeLine()}</div>
+                <div className="header-sub" data-testid="home-line" style={{whiteSpace:'pre-line', lineHeight:1.55}}>{homeLine()}</div>
               </div>
             </div>
             {/* 설정은 v3.8부터 여기(예전 CG 배지 자리)로 올라왔습니다. 그 자리의 탭은 가계부가 씁니다 */}
@@ -3702,7 +3723,7 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals }) {
                 <div style={{display:'flex', flexWrap:'wrap', gap:5}}>
                   {EGG_PROBLEMS.map(R => (
                     <button key={R} className="chip-btn" style={{fontSize:11.5, padding:'5px 10px'}}
-                      onClick={() => setUnits(units.map(u => u.status === 'pending' ? { ...u, status: 'problem', reason: R } : u), `${R}(으)로 적었어요`)}>{R}</button>
+                      onClick={() => setUnits(units.map(u => u.status === 'pending' ? { ...u, status: 'problem', reason: R } : u), `${euroWord(R)} 적었어요`)}>{R}</button>
                   ))}
                 </div>
                 <button className="btn btn-secondary btn-sm" style={{marginTop:8}} onClick={() => setProbFor(null)}>취소</button>
@@ -4449,7 +4470,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     if (idx < 0) { bot(`네, 이제 ${ind.name} 얘기로 할게요 🦎`); return; }
     const moved = cur[idx];
     updatePending(p => p.map((x, i) => i === idx ? { ...x, targetId: ind.id, targetName: ind.name } : x));
-    bot(`알겠어요, 방금 "${factLabel(moved)}"은(는) ${ind.name} 기록으로 옮겼어요 ✅\n계속 말씀하세요.`, [
+    bot(`알겠어요, 방금 "${factLabel(moved)}" ${ind.name} 기록으로 옮겼어요 ✅\n계속 말씀하세요.`, [
       { label: '💾 이제 저장할래', kind: 'save' },
     ]);
   };
@@ -4471,7 +4492,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       bot(`${t.name} 부화일을 ${fmtDate(to)}로 ${from ? '바꿨' : '적어뒀'}어요 🎂` +
         (moved > 1 ? `\n같이 나온 ${moved}마리와 부화 기록도 함께 옮겼어요.` : ''));
     } else {
-      bot(`${t.name} ${PROFILE_LABEL[field]}을(를) ${profileText(field, to)}로 바꿨어요 ✅`);
+      bot(`${t.name} ${eulreul(PROFILE_LABEL[field])} ${profileText(field, to)}로 바꿨어요 ✅`);
     }
   };
 
@@ -4546,7 +4567,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       DB.updateIndividual(g.id, { gender: value });
       refreshIndividuals();
       geckoRef.current = { ...g, gender: value };
-      bot(`${g.name}, ${genderLabel(value)}으로 기억할게요. 이제 편하게 이야기해주세요 🙂`);
+      bot(`${g.name}, ${genderLabel(value)}으로 기억할게요.\n이제 편하게 이야기해주세요 🙂`);
     } else if (kind === 'save') {
       goConfirm();
     } else if (kind === 'eggphoto') {
@@ -4570,12 +4591,12 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       // 담긴 메이팅 기록에 파트너 연결
       updatePending(p => p.map(f => (f.type === 'mating' && f.data && f.data.partnerName === value.name && !f.data.partnerId)
         ? { ...f, data: { ...f.data, partnerId: partner.id } } : f));
-      bot(`🦎 ${value.name}, 등록하고 파트너로 연결해뒀어요! 저장하면 혈통에도 반영돼요.`);
+      bot(`🦎 ${value.name}, 등록하고 파트너로 연결해뒀어요!\n저장하면 혈통에도 반영돼요.`);
     } else if (kind === 'fix' && value) {
       const t = DB.getIndividuals().find(i => i.id === value.targetId);
       if (t) applyFix(t, value.field, value.from, value.to);
     } else if (kind === 'fix-no' && value) {
-      bot(`네, ${PROFILE_LABEL[value.field]}은(는) ${profileText(value.field, value.from)} 그대로 둘게요 🙂`);
+      bot(`네, ${eunneun(PROFILE_LABEL[value.field])} ${profileText(value.field, value.from)} 그대로 둘게요 🙂`);
     } else if (kind === 'egg-fix' && value) {
       applyEggFix(value.layingId, value.fix);
     } else if (kind === 'hatch-clutch' && value) {
@@ -4661,7 +4682,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       if (isBadName(rt.name)) { bot(BAD_NAME_MSG); return; }
       pendingRetargetRef.current = rt;
       pendingNameRef.current = rt.name;
-      bot(`"${rt.name}"(은)는 처음 보는 이름이네요. 새로 등록하고 그 기록을 옮길까요?`, [
+      bot(`"${rt.name}"${eunneun(rt.name)} 처음 보는 이름이네요.\n새로 등록하고 그 기록을 옮길까요?`, [
         { label: '🦎 네, 등록해주세요', kind: 'register-yes' },
         { label: '아니요, 다시 입력할게요', kind: 'register-no' },
       ]);
@@ -4738,7 +4759,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       if (twoOrMore.length >= 2 && /(사이|관계|촌수|혈연|근친)/.test(text)) {
         const r = relationOf(twoOrMore[0], twoOrMore[1]);
         bot(r ? mateWarning(twoOrMore[0], twoOrMore[1]).text
-              : `${twoOrMore[0].name}랑 ${twoOrMore[1].name}는 기록상 혈연이 겹치지 않아요. 붙이셔도 괜찮습니다 🙂`);
+              : `${twoOrMore[0].name}랑 ${twoOrMore[1].name}는 기록상 혈연이 겹치지 않아요.\n붙이셔도 괜찮습니다 🙂`);
         return;
       }
     }
@@ -4834,7 +4855,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       }
       // 외부 개체 캡처: "마인이 외부 개체야"
       if (/외부/.test(text)) heldExternalRef.current = true;
-      bot(`"${newSubject}"(은)는 처음 보는 이름이네요. 새 개체로 등록할까요?`, [
+      bot(`"${newSubject}"${eunneun(newSubject)} 처음 보는 이름이네요.\n새 개체로 등록할까요?`, [
         { label: '🦎 네, 등록해주세요', kind: 'register-yes' },
         { label: '아니요, 다시 입력할게요', kind: 'register-no' },
       ]);
@@ -4862,7 +4883,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       const cur = DB.getIndividuals().find(i => i.id === target.id) || target;
       const plan = planProfileFix(cur, text, DB.getIndividuals(), morph);
       if (plan && plan.kind === 'future') {
-        bot(`${fmtDate(plan.value)}은 아직 오지 않은 날짜예요 🙂 다시 알려주시겠어요?`);
+        bot(`${fmtDate(plan.value)}은 아직 오지 않은 날짜예요 🙂\n다시 알려주시겠어요?`);
         return;
       }
       if (plan && plan.kind === 'nameBad') {
@@ -4871,7 +4892,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       }
       if (plan && plan.kind === 'apply') { applyFix(cur, plan.field, plan.from, plan.to); return; }
       if (plan && plan.kind === 'ask') {
-        bot(`잠깐만요 — 지금 ${cur.name}의 ${PROFILE_LABEL[plan.field]}은(는) ` +
+        bot(`잠깐만요 — 지금 ${cur.name}의 ${eunneun(PROFILE_LABEL[plan.field])} ` +
           `${profileText(plan.field, plan.from)}로 적혀 있어요.\n` +
           `${profileText(plan.field, plan.to)}로 고칠까요?` +
           (plan.sibs > 1 ? `\n(고치면 같이 나온 ${plan.sibs}마리와 부화 기록도 함께 옮겨져요)` : ''), [
@@ -4933,7 +4954,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
         /* 지금 품고 있는 알 중에서 고릅니다. 여러 개면 말없이 찍지 않고 여쭤봅니다. */
         const alive = rows.filter(r => r.waiting);
         if (alive.length > 1) {
-          bot(`${target.name}는 지금 품고 있는 알이 ${alive.length}개예요. 어느 산란인가요? 🥚`,
+          bot(`${target.name}는 지금 품고 있는 알이 ${alive.length}개예요.\n어느 산란인가요? 🥚`,
             alive.map(r => ({
               label: `${r.nth}차 (${fmtDate(r.e.date)} 산란 · ${r.d >= 0 ? whenWord(r.etaISO) : dayWord(-r.d) + ' 지남'})`,
               kind: 'egg-fix', value: { layingId: r.e.id, fix: ef },
@@ -5007,7 +5028,8 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
         if (morphLine) {
           bot(`${morphLine}\n다른 이야기도 들려주세요. 몸무게·메이팅·산란·탈피·사진 뭐든 좋아요 🙂`);
         } else {
-          bot(`${target.name}(이)군요! 오늘은 어떤 이야기인가요?\n\n예) "12그램" · "크순이랑 메이팅" · "알 2개 산란" · "모프는 초초야" · 📷 사진\n그냥 오늘 있었던 일을 편하게 적어주셔도 메모로 남겨둬요.`);
+          // 사용법 예시는 대화 첫 인사에서 한 번만 보여드립니다 (매번 나오면 길어서 읽히지 않습니다)
+          bot(`${igunyo(target.name)}! 무슨 이야기인가요? 🦎`);
         }
         return;
       }
@@ -5061,7 +5083,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     if (hatchFact && !hatchFact.data.layingId) {
       const alive = waitingClutches(target.id);
       if (alive.length > 1) {
-        bot(`${target.name}는 지금 품고 있는 알이 ${alive.length}개예요. 어느 알이 부화했나요? 🐣`,
+        bot(`${target.name}는 지금 품고 있는 알이 ${alive.length}개예요.\n어느 알이 부화했나요? 🐣`,
           alive.map(r => ({
             label: `${r.nth}차 (${fmtDate(r.e.date)} 산란 · ${r.d >= 0 ? whenWord(r.etaISO) : dayWord(-r.d) + ' 지남'})`,
             kind: 'hatch-clutch',
@@ -5291,7 +5313,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     if (!ind) return;
     updatePending(p => p.map(x => x === f ? { ...x, targetId: ind.id, targetName: ind.name } : x));
     setRetarget(null);
-    showToast(`🦎 ${ind.name}(으)로 옮겼어요`);
+    showToast(`🦎 ${euroWord(ind.name)} 옮겼어요`);
   };
 
   // 확인 화면: 개체별 그룹
@@ -5920,7 +5942,9 @@ function CalendarScreen({ navigate, individuals, showToast, onRemindersChanged }
   const byId = {};
   individuals.forEach(i => { byId[i.id] = i; });
 
-  const CALENDAR_FED_EMOJI = '🍽️🥩';
+  /* 먹인 날은 먹인 종류 그대로 한 글자만 — 예전엔 🍽️🥩 두 개가 붙어 눈에 거슬렸습니다 */
+  const fedEmoji = (e) => ((e && e.data && e.data.foodType) === '슈푸' ? '🥣' : '🦗');
+  const CALENDAR_FED_EMOJI = '🦗';
   const CALENDAR_FEED_PLAN_EMOJI = '🍽️';
 
   // 이 달의 항목 수집: 예정(리마인더·다음 먹이일) + 실제 일정
@@ -5936,11 +5960,18 @@ function CalendarScreen({ navigate, individuals, showToast, onRemindersChanged }
   });
   const calendarEvents = DB.getEvents();
   const fp = feedPlan(individuals, calendarEvents);
-  if (fp.inds.length) {
-    add(fp.nextDay, {
-      emoji: CALENDAR_FEED_PLAN_EMOJI, label: '먹이 예정', detail: `전체 ${fp.inds.length}마리 · ${fp.interval}일 간격`,
-      name: '', planned: true, feed: true,
-    });
+  /* 먹이 예정은 다음 한 번만이 아니라 **한 달치**를 미리 찍어 둡니다.
+     달력을 넘겨봐도 언제 줘야 하는지 한눈에 보이게. (저장하지 않고 그때그때 계산합니다) */
+  if (fp.inds.length && fp.interval > 0) {
+    const last = localISO(new Date(new Date(fp.nextDay).getTime() + 31 * 86400000));
+    let d = fp.nextDay, guard = 0;
+    while (d <= last && guard++ < 40) {
+      add(d, {
+        emoji: CALENDAR_FEED_PLAN_EMOJI, label: '먹이 예정', detail: `전체 ${fp.inds.length}마리 · ${fp.interval}일 간격`,
+        name: '', planned: true, feed: true,
+      });
+      d = localISO(new Date(new Date(d).getTime() + fp.interval * 86400000));
+    }
   }
   // 캘린더에는 "일정"만 — 개체별 메모·사진·무게 같은 기록은 각 개체 프로필에서 봅니다
   // 산란·해칭은 알림과 같은 양식("엄마 × 아빠 · N차")으로 맞춥니다
@@ -5967,7 +5998,7 @@ function CalendarScreen({ navigate, individuals, showToast, onRemindersChanged }
     } else {
       label = formatEventDetail(e) || label;
     }
-    const emoji = e.type === 'feeding' ? CALENDAR_FED_EMOJI : (t.emoji || '📌');
+    const emoji = e.type === 'feeding' ? fedEmoji(e) : (t.emoji || '📌');
     add(e.date, { emoji, label, detail, name, event: e });
   });
 
@@ -6096,9 +6127,11 @@ function CalendarScreen({ navigate, individuals, showToast, onRemindersChanged }
           </div>
         </div>
 
-        <div style={{fontSize:12, color:'var(--text3)', margin:'8px 4px 4px', lineHeight:1.6}}>
-          💞 메이팅 · 🥚 산란 · 🐣 해칭 · {CALENDAR_FED_EMOJI} 먹인 날 · {CALENDAR_FEED_PLAN_EMOJI} 먹이 예정<br/>
-          메모·사진·몸무게는 각 개체 프로필에서 볼 수 있어요 · 날짜를 누르면 추가/수정
+        <div style={{fontSize:12, color:'var(--text3)', margin:'8px 4px 4px', lineHeight:1.7}}>
+          💞 메이팅 · 🥚 산란 · 🐣 해칭<br/>
+          🦗 충식 먹인 날 · 🥣 슈푸 먹인 날 · {CALENDAR_FEED_PLAN_EMOJI} 먹이 예정(흐리게)<br/>
+          날짜를 누르면 그날 일정을 보고 고칠 수 있어요<br/>
+          메모·사진·몸무게는 각 개체 프로필에서 볼 수 있어요
         </div>
 
         {/* ── 선택된 날짜 패널 ── */}
@@ -6509,7 +6542,8 @@ function FeedingScreen({ navigate, showToast, refreshIndividuals }) {
           ✅ 먹었어요 · 🚫 안 먹었어요 · ⏭️ 오늘은 안 줬어요
         </div>
         <div style={{fontSize:11, color:'var(--text3)', textAlign:'center'}}>
-          {feedWarn()}일 넘게 안 먹은 아이는 브리핑에서 따로 알려드려요 (설정에서 조절)
+          {feedWarn()}일 넘게 안 먹은 아이는 브리핑에서 따로 알려드려요<br/>
+          (설정에서 조절할 수 있어요)
         </div>
       </div>
     </div>
@@ -7207,7 +7241,8 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
         <div className="card" style={{margin:0}}>
           <div style={{fontSize:13, fontWeight:700, marginBottom:4, color:'var(--text2)'}}>🎨 색상 테마</div>
           <div style={{fontSize:12, color:'var(--text3)', marginBottom:10, lineHeight:1.6}}>
-            앱 전체 색을 바꿉니다. 고른 색은 이 기기에 저장되고, 서버 동기화를 켜두셨다면 다른 기기에도 따라가요.
+            앱 전체 색을 바꿉니다.<br/>
+            고른 색은 이 기기에 저장되고, 서버 동기화를 켜두셨다면 다른 기기에도 따라가요.
           </div>
           <div style={{display:'flex', flexDirection:'column', gap:8}}>
             {THEMES.map(t => {
@@ -7285,7 +7320,8 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
         <div className="card" style={{margin:0}}>
           <div style={{fontSize:13, fontWeight:700, marginBottom:4, color:'var(--text2)'}}>🦗 밥 주는 간격</div>
           <div style={{fontSize:12, color:'var(--text3)', marginBottom:10, lineHeight:1.6}}>
-            며칠에 한 번 주시나요? 마지막으로 준 날 + 이 간격이 되면 <b>브리핑 맨 위</b>에 "오늘 밥 주는 날"이 떠요.
+            며칠에 한 번 주시나요?<br/>
+            마지막으로 준 날 + 이 간격이 되면 <b>브리핑 맨 위</b>에 "오늘 밥 주는 날"이 떠요.
           </div>
           <div style={{display:'flex', gap:6, flexWrap:'wrap'}}>
             {[1, 2, 3, 4, 5, 7].map(n => (
