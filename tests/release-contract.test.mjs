@@ -26,7 +26,7 @@ test("keeps storage, synchronization, and core workflows intact", async () => {
     assert.ok(source.includes(contract), `missing contract: ${contract}`);
   }
 
-  assert.match(source, /const APP_VERSION = '4\.8'/);
+  assert.match(source, /const APP_VERSION = '4\.9'/);
   assert.match(source, /Powered by cre_construct · CC/);
   assert.doesNotMatch(source, /Powered by 크레건설/);
   assert.match(source, /addEvents\(events\)/);
@@ -43,10 +43,10 @@ test("keeps service worker and release metadata aligned", async () => {
     readFile(file("version.json"), "utf8").then(JSON.parse),
   ]);
 
-  assert.equal(version.app, "4.8");
+  assert.equal(version.app, "4.9");
   assert.equal(version.schema, 1);
   assert.equal(version.minSchema, 1);
-  assert.match(worker, /const CACHE = 'creg-v48'/);
+  assert.match(worker, /const CACHE = 'creg-v49'/);
 
   for (const asset of [
     "./index.html",
@@ -171,5 +171,38 @@ test("keeps the v4.8 kinship, morph and voice contracts", async () => {
   // 설정 미리보기는 고정 견본으로 — 데이터가 없는 날에도 차이가 보여야 합니다
   assert.ok(source.includes("{voiceSample().map("), "settings preview must use voiceSample()");
   // 버전 문자열 4곳
-  assert.ok(source.includes("const APP_VERSION = '4.8'"), "APP_VERSION must be 4.8");
+  assert.ok(source.includes("const APP_VERSION = '4.9'"), "APP_VERSION must be 4.9");
+});
+
+test("keeps the v4.9 hatching, morph and wording fixes", async () => {
+  const source = await readFile(file("src/app.jsx"), "utf8");
+
+  for (const contract of [
+    // 해칭·알별 기록은 "지금 품고 있는 알"에 붙어야 합니다
+    "function waitingClutches(individualId, rows)",
+    "explicitEgg: index !== null || all",
+    "ef.status !== 'hatched' || ef.explicitEgg",
+    "kind: 'hatch-clutch'",
+    "kind: 'hatch-count'",
+    "const askHatchCount =",
+    "const applyEggFix =",
+    // 모프 — 사실대로
+    "function incDomSplit(a, b)",
+    "const SABLE_WORDS = ['슈퍼세이블', '슈퍼 세이블', '세이블', 'sable']",
+    "const AXAN_WORDS  = ['아잔틱', '악산틱', '액산틱', 'axanthic']",
+  ]) {
+    assert.ok(source.includes(contract), `missing v4.9 contract: ${contract}`);
+  }
+
+  // 잘못 쓴 모프 이름은 다시 들어오면 안 됩니다
+  assert.doesNotMatch(source, /사블레/, "Sable must be 세이블");
+  assert.doesNotMatch(source, /액시안식/, "Axanthic must be 아잔틱");
+  // 프라푸치노는 카푸치노 + 릴리화이트입니다 (세이블 아님)
+  assert.ok(source.includes("프라푸치노(카푸치노+릴리)"), "Frappuccino = Cappuccino + Lily White");
+  // 날짜는 숫자로 — 세는 말은 못 알아듣는 분이 많습니다
+  assert.doesNotMatch(source, /'하루', '이틀', '사흘'/, "date words must be numeric");
+  assert.ok(source.includes("const dayWord = (n) => `${Math.abs(Math.round(Number(n) || 0))}일`"), "dayWord must be numeric");
+  // 탭 이름
+  assert.ok(source.includes("브리핑"), "reminders tab is now 브리핑");
+  assert.ok(source.includes("const APP_VERSION = '4.9'"), "APP_VERSION must be 4.9");
 });
