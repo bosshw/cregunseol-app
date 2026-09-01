@@ -26,7 +26,7 @@ test("keeps storage, synchronization, and core workflows intact", async () => {
     assert.ok(source.includes(contract), `missing contract: ${contract}`);
   }
 
-  assert.match(source, /const APP_VERSION = '4\.9'/);
+  assert.match(source, /const APP_VERSION = '5\.0'/);
   assert.match(source, /Powered by cre_construct · CC/);
   assert.doesNotMatch(source, /Powered by 크레건설/);
   assert.match(source, /addEvents\(events\)/);
@@ -43,10 +43,10 @@ test("keeps service worker and release metadata aligned", async () => {
     readFile(file("version.json"), "utf8").then(JSON.parse),
   ]);
 
-  assert.equal(version.app, "4.9");
+  assert.equal(version.app, "5.0");
   assert.equal(version.schema, 1);
   assert.equal(version.minSchema, 1);
-  assert.match(worker, /const CACHE = 'creg-v49'/);
+  assert.match(worker, /const CACHE = 'creg-v50'/);
 
   for (const asset of [
     "./index.html",
@@ -67,11 +67,11 @@ test("keeps the v4.4 calendar and compact-question fixes", async () => {
     "💬 대화로 등록부터 기록까지",
     "const compactQ =",
     "label: '먹이 예정'",
-    "const CALENDAR_FED_EMOJI = '🍽️🥩'",
-    "const CALENDAR_FEED_PLAN_EMOJI = '🍽️'",
+    "const CALENDAR_FED_EMOJI",         // v5.0: 아이콘 하나로 바뀜 (🦗 충식 / 🥣 슈푸)
+    "const CALENDAR_FEED_PLAN_EMOJI",
     "label: r.nth ? `${r.nth}차 산란 예정` : '산란 예정', detail: ''",
-    "e.type === 'feeding' ? CALENDAR_FED_EMOJI",
-    "{CALENDAR_FED_EMOJI} 먹인 날",
+    "e.type === 'feeding' ? fedEmoji(e)",
+    "🦗 충식 먹인 날",
     "차 산란 예정",
     "차 부화 예정",
     "function CalendarScreen",
@@ -171,7 +171,34 @@ test("keeps the v4.8 kinship, morph and voice contracts", async () => {
   // 설정 미리보기는 고정 견본으로 — 데이터가 없는 날에도 차이가 보여야 합니다
   assert.ok(source.includes("{voiceSample().map("), "settings preview must use voiceSample()");
   // 버전 문자열 4곳
-  assert.ok(source.includes("const APP_VERSION = '4.9'"), "APP_VERSION must be 4.9");
+  assert.ok(source.includes("const APP_VERSION = '5.0'"), "APP_VERSION must be 5.0");
+});
+
+test("keeps the v5.0 particle, line-break and calendar fixes", async () => {
+  const raw = await readFile(file("src/app.jsx"), "utf8");
+  // 주석은 빼고 실제로 화면에 나가는 코드만 검사합니다
+  const source = raw.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+
+  for (const contract of [
+    "const josa = (w, withJong, withoutJong)",
+    "const eunneun = (w)",
+    "const eulreul = (w)",
+    "const gwawa  = (w)",
+    "const igunyo = (w)",
+    "function euroWord(w)",
+    "const fedEmoji = (e)",
+  ]) {
+    assert.ok(source.includes(contract), `missing v5.0 contract: ${contract}`);
+  }
+
+  // 괄호로 얼버무린 조사가 다시 들어오면 FAIL — 한국어는 받침만 보면 규칙이 정해져 있습니다
+  assert.doesNotMatch(source, /\((?:이|은|는|을|를|과|와|으)\)/, "use josa helpers, not (이)/(은)/(으)");
+  assert.doesNotMatch(source, /(?:은|을|와|이)\((?:는|를|과|가)\)/, "use josa helpers, not 은(는)/을(를)");
+  // 먹인 날 아이콘은 하나만 (예전엔 🍽️🥩 두 개가 붙어 있었습니다)
+  assert.doesNotMatch(source, /'🍽️🥩'/, "fed emoji must be a single icon");
+  // 홈 한 줄은 인사와 할 일을 나눠 그립니다
+  assert.ok(source.includes("[greetLine(), what].filter(Boolean).join('\\n')"), "home line must break");
+  assert.ok(source.includes("APP_VERSION = '5.0'"), "APP_VERSION must be 5.0");
 });
 
 test("keeps the v4.9 hatching, morph and wording fixes", async () => {
@@ -204,5 +231,5 @@ test("keeps the v4.9 hatching, morph and wording fixes", async () => {
   assert.ok(source.includes("const dayWord = (n) => `${Math.abs(Math.round(Number(n) || 0))}일`"), "dayWord must be numeric");
   // 탭 이름
   assert.ok(source.includes("브리핑"), "reminders tab is now 브리핑");
-  assert.ok(source.includes("const APP_VERSION = '4.9'"), "APP_VERSION must be 4.9");
+  assert.ok(source.includes("const APP_VERSION = '5.0'"), "APP_VERSION must be 5.0");
 });
