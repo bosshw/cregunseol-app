@@ -374,7 +374,7 @@ const SERVER = {
 
    인터넷이 없거나 파일을 못 받으면 아무 것도 막지 않습니다(앱은 그대로 씁니다).
    ══════════════════════════════════════════ */
-const APP_VERSION = '5.1';
+const APP_VERSION = '5.2';
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -1503,71 +1503,21 @@ function todaySituation() {
   };
 }
 
-/* 브리핑 문장들 — 인사 한 줄 + 할 일 최대 세 줄 */
+/* 브리핑 맨 위 문장들 — 인사 + 오늘의 제안
+   ★ 할 일은 바로 아래 카드가 말합니다. 여기서 또 나열하면 같은 말이 두 번 됩니다.
+     (대표님 지적: 크동이 산란 하나가 네 자리에서 나왔습니다) */
 function briefLines() {
-  const s = todaySituation();
-  const jobs = [];
-
-  if (s.feedLate > 0 && s.feedDue) {
-    jobs.push(say(
-      `밥 주는 날이 ${dayWord(s.feedLate)} 지났어요.`,
-      `앗, 밥 주는 날이 ${naWord(s.feedLate)} 지났어요!`,
-      `밥 주는 날 ${s.feedLate}일 지남`));
-  } else if (s.feedDue) {
-    jobs.push(say(
-      `오늘은 ${KIDS} 밥 먹이는 날이에요.`,
-      `오늘 ${KIDS} 밥 주는 날이에요! 🦗`,
-      '오늘 밥 주는 날'));
-  }
-  s.lay.slice(0, 2).forEach(r => {
-    const nm = r.momName || r.geckoName;
-    const late = -daysUntil(r.date);          // 카드와 같은 기준으로 셉니다
-    jobs.push(late > 0
-      ? say(`${nm}의 ${r.nth}차 산란 예정일이 ${dayWord(late)} 지났어요.`,
-            `${nm} ${r.nth}차 산란 예정일이 ${naWord(late)} 지났어요!`,
-            `${nm} ${r.nth}차 산란 ${late}일 지남`)
-      : say(`${nm}의 ${r.nth}차 산란 예정일이에요.`,
-            `${nm} ${r.nth}차 산란, 오늘이에요! 🥚`,
-            `${nm} ${r.nth}차 산란 예정`));
-  });
-  s.hatch.slice(0, 2).forEach(r => {
-    const late = -daysUntil(r.date);
-    jobs.push(late > 0
-      ? say(`${r.geckoName}의 ${r.nth}차 알이 예정일보다 ${dayWord(late)} 지났어요.`,
-            `${r.geckoName} ${r.nth}차 알, 예정일보다 ${naWord(late)} 지났어요!`,
-            `${r.geckoName} ${r.nth}차 부화 ${late}일 지남`)
-      : say(`${r.geckoName}의 ${r.nth}차 알이 부화할 때가 됐어요.`,
-            `${r.geckoName} ${r.nth}차 알, 곧 나올 것 같아요! 🐣`,
-            `${r.geckoName} ${r.nth}차 부화 예정`));
-  });
-  s.etc.slice(0, 1).forEach(r => {
-    jobs.push(say(`${r.message || '알림'} — 오늘이에요.`, `${r.message || '알림'} — 오늘이에요!`, r.message || '알림'));
-  });
-
   const lines = [];
   const hi = greetLine();
   if (hi) lines.push(hi);
 
-  if (!jobs.length && !s.worried.length) {
-    lines.push(say('오늘은 특별히 챙기실 일이 없어요 🌿', '오늘은 한가해요! 좀 쉬셔도 돼요 🌿', '오늘 할 일 없음'));
-    const rest = [];
-    if (s.fp.dLeft > 0) rest.push(`다음 밥은 ${whenWord(s.fp.nextDay)}`);
-    if (s.next) rest.push(`${s.next.geckoName}의 ${s.next.nth ? s.next.nth + '차 ' : ''}${s.next.type === 'hatching_expected' ? '알은' : '산란은'} ${whenWord(s.next.date)} 예정`);
-    if (rest.length && toneNow() !== 'short') lines.push(iyeyo(rest.join(', ')) + '.');
-    return lines;
-  }
+  const n = todayNudge();
+  if (n) { lines.push(n.text); return lines; }
 
-  lines.push(...jobs.slice(0, 3));
-  if (jobs.length > 3) lines.push(say(`그 밖에 ${jobs.length - 3}가지가 더 있어요.`, `그 밖에도 ${jobs.length - 3}가지 더 있어요!`, `외 ${jobs.length - 3}건`));
-
-  if (s.worried.length) {
-    const w = s.worried[0];
-    const more = s.worried.length > 1 ? ` 외 ${s.worried.length - 1}마리` : '';
-    lines.push(say(
-      `${iga(w.ind.name + more)} ${dayWord(w.days)}째 밥을 안 먹고 있어요.`,
-      `${w.ind.name + more}, ${dayWord(w.days)}째 밥을 안 먹네요 😢`,
-      `${w.ind.name}${more} ${w.days}일째 안 먹음`));
-  }
+  // 권할 것도 없고 할 일도 없는 날에만 한마디
+  const s = todaySituation();
+  const busy = s.feedDue || s.lay.length || s.hatch.length || s.etc.length || s.worried.length;
+  if (!busy) lines.push(say('오늘은 특별히 챙기실 일이 없어요 🌿', '오늘은 한가해요! 좀 쉬셔도 돼요 🌿', '오늘 할 일 없음'));
   return lines;
 }
 
@@ -1583,31 +1533,204 @@ function voiceSample() {
   ].filter(Boolean);
 }
 
-/* 홈 제목 아래 한 줄 */
-function homeLine() {
-  const t = toneNow();
-  if (t === 'short') return '💬 대화로 등록부터 기록까지';
-  const s = todaySituation();
-  let what = '';
-  if (s.feedLate > 0 && s.feedDue) what = say(`밥 주는 날이 ${dayWord(s.feedLate)} 지났어요`, `밥 주는 날이 ${naWord(s.feedLate)} 지났어요`, '');
-  else if (s.feedDue) what = say(`오늘은 ${KIDS} 밥 먹이는 날이에요`, `오늘 ${KIDS} 밥 주는 날이에요`, '');
-  else if (s.lay.length) what = `${s.lay[0].momName || s.lay[0].geckoName} 산란 예정일이에요`;
-  else if (s.hatch.length) what = `${s.hatch[0].geckoName} 알이 부화할 때예요`;
-  else if (s.worried.length) what = say(`${iga(s.worried[0].ind.name)} ${dayWord(s.worried[0].days)}째 안 먹고 있어요`, `${s.worried[0].ind.name}, ${dayWord(s.worried[0].days)}째 안 먹고 있어요`, '');
-  else if (s.fp.dLeft > 0) what = `다음 밥은 ${iyeyo(whenWord(s.fp.nextDay))}`;
-  // 한 줄에 붙이면 좁은 화면에서 어정쩡하게 잘립니다. 인사와 할 일을 줄로 나눕니다.
-  return [greetLine(), what].filter(Boolean).join('\n');
+/* ══════════════════════════════════════════
+   오늘의 제안 — 비워진 기록을 하나씩 짚어드립니다
+   ★ 같은 일을 여러 자리에서 되풀이하지 않기 위해,
+     브리핑 맨 위는 "할 일 요약"이 아니라 "오늘 해두면 좋을 일" 자리입니다.
+     (할 일은 바로 아래 카드가 이미 말합니다)
+   ══════════════════════════════════════════ */
+
+const NUDGE_KEEP = 5;      // 최근 이만큼은 같은 종류를 다시 권하지 않습니다
+const NUDGE_BUSY = 3;      // 오늘 할 일이 이보다 많으면 제안은 내일로 미룹니다
+
+/* 며칠 지났나 (없으면 null) */
+const daysAgo = (iso) => (iso ? -daysUntil(iso) : null);
+
+function nudgeLog() {
+  const s = DB.getSettings() || {};
+  return Array.isArray(s.nudgeLog) ? s.nudgeLog : [];
+}
+/* 오늘 무엇을 권했는지 하루에 한 번만 적어둡니다 (같은 날엔 같은 제안이 보이도록) */
+function recordNudge(n) {
+  if (!n) return;
+  const log = nudgeLog();
+  const today = todayStr();
+  if (log.length && log[0].date === today) return;
+  const next = [{ date: today, key: n.key, indId: n.indId || null }, ...log].slice(0, NUDGE_KEEP);
+  DB.saveSettings({ ...(DB.getSettings() || {}), nudgeLog: next });
 }
 
-/* 대화 화면 첫 인사 — 오늘 할 일부터 짚어드리고 사용법을 안내합니다 */
+/* 지금 권할 만한 것들 — 기록에 실제로 빈칸이 있을 때만 후보가 됩니다 */
+function nudgeCandidates(individuals, events) {
+  const inds = (individuals || DB.getIndividuals())
+    .filter(i => (i.status || 'own') !== 'sold' && !i.isExternal);
+  const evs = events || DB.getEvents();
+  const out = [];
+  const mine = {};
+  evs.forEach(e => { if (e.individualId) (mine[e.individualId] = mine[e.individualId] || []).push(e); });
+  const lastDate = (id, type) => (mine[id] || []).reduce((a, e) => (e.type === type && (!a || e.date > a)) ? e.date : a, null);
+  const countOf = (id, type) => (mine[id] || []).filter(e => e.type === type).length;
+  const ageOf = (i) => daysAgo(i.hatchDate);
+  const hasMale = inds.some(i => i.gender === 'male');
+  const hasFemale = inds.some(i => i.gender === 'female');
+
+  inds.forEach(i => {
+    const nm = i.name;
+
+    // ① 배란(포란) 확인 — 때를 놓치면 의미가 없어서 가장 먼저 봅니다
+    if (i.gender === 'female') {
+      const m = lastDate(i.id, 'mating');
+      const l = lastDate(i.id, 'laying');
+      const d = daysAgo(m);
+      if (m && d >= 20 && d <= 40 && (!l || l < m)) out.push({
+        key: 'ovul', prio: 1, indId: i.id, weight: d, emoji: '🥚', go: 'profile',
+        text: say(`${nm} 메이팅한 지 ${d}일 됐어요.\n배가 불러왔는지 한번 봐주세요.`,
+                  `${nm} 메이팅한 지 ${d}일 됐어요!\n배가 불러왔는지 봐주실래요?`,
+                  `${nm} 배란 확인 · 메이팅 ${d}일`),
+      });
+    }
+
+    // ② 성별 확인 — 8개월쯤 되면 볼 수 있습니다
+    const age = ageOf(i);
+    if ((i.gender || 'unknown') === 'unknown' && age !== null && age >= 240) out.push({
+      key: 'gender', prio: 2, indId: i.id, weight: age, emoji: '⚥', go: 'profile',
+      text: say(`${iga(nm)} 태어난 지 ${Math.floor(age / 30)}개월이 됐어요.\n이제 성별을 볼 수 있을 때예요.`,
+                `${iga(nm)} 벌써 ${Math.floor(age / 30)}개월이에요!\n이제 성별이 보일 거예요.`,
+                `${nm} 성별 미구분 · ${Math.floor(age / 30)}개월`),
+    });
+
+    // ③ 모프 — 아직 모르겠다고 표시한 아이는 빼고
+    if (!String(i.morph || '').trim() && !i.morphUnknown && age !== null && age >= 90) out.push({
+      key: 'morph', prio: 3, indId: i.id, weight: age, emoji: '🧬', go: 'profile',
+      text: say(`${nm} 모프가 아직 비어 있어요.\n이제 좀 보이시나요?`,
+                `${nm} 모프가 아직 비어 있네요!\n이제 좀 보이세요?`,
+                `${nm} 모프 미기재`),
+    });
+
+    // ④ 사진 한 장도 없는 아이
+    if (!i.avatar && countOf(i.id, 'photo') === 0) out.push({
+      key: 'photo', prio: 4, indId: i.id, weight: daysAgo(i.createdAt) || 0, emoji: '📷', go: 'chat',
+      text: say(`${eunneun(nm)} 아직 사진이 한 장도 없어요.\n오늘 한 장 남겨두실래요?`,
+                `${nm} 사진이 하나도 없네요!\n오늘 한 장 찍어주실래요? 📷`,
+                `${nm} 사진 없음`),
+    });
+
+    // ⑤ 몸무게 — 두 달 넘게 안 쟀거나 한 번도 없을 때
+    const w = lastDate(i.id, 'growth');
+    const wd = daysAgo(w);
+    if (!w || wd >= 60) out.push({
+      key: 'weight', prio: 5, indId: i.id, weight: wd === null ? 999 : wd, emoji: '📏', go: 'chat',
+      text: w
+        ? say(`${nm} 몸무게를 잰 지 ${wd}일 됐어요.\n오늘 한번 올려볼까요?`,
+              `${nm} 몸무게 잰 지 ${wd}일이나 됐어요!\n오늘 한번 재볼까요?`,
+              `${nm} 몸무게 ${wd}일째 안 잼`)
+        : say(`${eunneun(nm)} 아직 몸무게 기록이 없어요.\n한번 재서 적어둘까요?`,
+              `${nm} 몸무게가 아직 없네요!\n한번 재볼까요?`,
+              `${nm} 몸무게 기록 없음`),
+    });
+
+    // ⑥ 분양가능인데 분양가가 비어 있음
+    if (i.status === 'available' && !String(i.salePrice || '').trim() && !i.saleFree) out.push({
+      key: 'price', prio: 6, indId: i.id, weight: 0, emoji: '🏷️', go: 'profile',
+      text: say(`${iga(nm)} 분양가능인데 분양가가 비어 있어요.\n얼마로 올려둘까요?`,
+                `${nm} 분양가가 아직 비어 있어요!\n얼마로 할까요?`,
+                `${nm} 분양가 미기재`),
+    });
+
+    // ⑦ 우리 집 아이인데 부모가 안 적혀 있음
+    if (isMine(i) && !i.sireId && !i.damId) out.push({
+      key: 'lineage', prio: 7, indId: i.id, weight: age || 0, emoji: '👪', go: 'profile',
+      text: say(`${nm} 부모가 아직 안 적혀 있어요.\n누구 아이인가요?`,
+                `${nm} 부모가 아직 비어 있네요!\n누구 아이예요?`,
+                `${nm} 혈통 미기재`),
+    });
+
+    // ⑧ 성체인데 메이팅 기록이 아예 없음 (붙일 상대가 있을 때만)
+    const other = i.gender === 'male' ? hasFemale : i.gender === 'female' ? hasMale : false;
+    if (other && age !== null && age >= 300 && countOf(i.id, 'mating') === 0) out.push({
+      key: 'mate', prio: 8, indId: i.id, weight: age, emoji: '💞', go: 'chat',
+      text: say(`${eunneun(nm)} 아직 메이팅 기록이 없어요.\n짝을 골라볼까요?`,
+                `${nm} 아직 메이팅을 안 했네요!\n짝을 골라볼까요?`,
+                `${nm} 메이팅 기록 없음`),
+    });
+
+    // ⑨ 탈피를 석 달 넘게 안 적음 (한 번은 적어본 아이만)
+    const sh = lastDate(i.id, 'shed');
+    const sd = daysAgo(sh);
+    if (sh && sd >= 90) out.push({
+      key: 'shed', prio: 9, indId: i.id, weight: sd, emoji: '🌿', go: 'chat',
+      text: say(`${nm} 탈피를 적어둔 지 ${sd}일 됐어요.\n요즘은 어떤가요?`,
+                `${nm} 탈피 적은 지 ${sd}일이나 됐어요!\n요즘은 어때요?`,
+                `${nm} 탈피 ${sd}일째 미기록`),
+    });
+  });
+
+  // ⑩ 이번 달 가계부가 비어 있음 (개체와 상관없는 제안)
+  {
+    const today = todayStr();
+    const day = parseInt(today.slice(8, 10), 10);
+    const mk = today.slice(0, 7);
+    const spent = ledgerRows(evs, individuals || DB.getIndividuals())
+      .filter(r => r.flow === 'out' && !r.opening && String(r.date || '').slice(0, 7) === mk).length;
+    if (day >= 5 && spent === 0) out.push({
+      key: 'ledger', prio: 10, indId: null, weight: day, emoji: '💰', go: 'ledger',
+      text: say('이번 달 가계부가 아직 비어 있어요.\n먹이값이라도 적어둘까요?',
+                '이번 달 가계부가 아직 비었어요!\n먹이값이라도 적어둘까요?',
+                '이번 달 지출 기록 없음'),
+    });
+  }
+
+  // 때가 있는 것부터, 같은 급이면 오래 방치된 것부터
+  return out.sort((a, b) => a.prio - b.prio || b.weight - a.weight);
+}
+
+/* 오늘 권할 것 하나 — 없으면 null */
+function todayNudge(individuals, events) {
+  const s = todaySituation();
+  const busy = s.lay.length + s.hatch.length + s.etc.length + s.worried.length + (s.feedDue ? 1 : 0);
+  if (busy > NUDGE_BUSY) return null;           // 급한 일이 밀려 있으면 비켜줍니다
+
+  const cands = nudgeCandidates(individuals, events);
+  if (!cands.length) return null;
+
+  const log = nudgeLog();
+  const today = todayStr();
+  const mine = log.find(x => x.date === today);
+  if (mine) {                                    // 오늘 이미 정한 게 있으면 그대로 (껐다 켜도 안 바뀌게)
+    const same = cands.find(c => c.key === mine.key && (c.indId || null) === (mine.indId || null));
+    if (same) return same;
+  }
+  const recentKeys = log.map(x => x.key);
+  const lastInd = log[0] ? log[0].indId : null;
+  const fresh = cands.filter(c => recentKeys.indexOf(c.key) < 0 && (!lastInd || c.indId !== lastInd));
+  return fresh[0] || cands.filter(c => recentKeys.indexOf(c.key) < 0)[0] || cands[0];
+}
+
+/* 제안을 눌렀을 때 갈 곳 — 한 곳에서만 정합니다 */
+function nudgeAction(n, navigate) {
+  if (!n || !navigate) return null;
+  const ind = n.indId ? DB.getIndividuals().find(i => i.id === n.indId) : null;
+  if (n.go === 'ledger') return { label: '가계부', go: () => navigate('ledger') };
+  if (n.go === 'chat') return { label: '기록하기', go: () => navigate('chat', ind ? { presetGecko: ind } : {}) };
+  if (ind) return { label: '프로필', go: () => navigate('profile', { gecko: ind }) };
+  return null;
+}
+
+/* 홈 제목 아래 한 줄 — 인사만.
+   ★ 오늘 할 일은 브리핑 탭에서 봅니다. 여기서도 말하면 같은 말이 한 번 더 됩니다. */
+function homeLine() {
+  if (toneNow() === 'short') return '💬 대화로 등록부터 기록까지';
+  return greetLine();
+}
+
+/* 대화 화면 첫 인사 — 인사와 사용법만.
+   ★ 오늘 할 일은 여기서 말하지 않습니다(브리핑 카드가 이미 말합니다). */
 function chatHello() {
   const help = '이름만 알려주셔도 되고, "크한이 12그램"처럼 한 번에 말씀하셔도 제가 알아서 정리해둘게요.\n적어둔 걸 물어보셔도 돼요 🔍\n예) "크인이 생일 언제야?" · "크범이 다음 산란 언제쯤?" · "이번 달 얼마 썼어?"';
   if (toneNow() === 'short') {
     return `안녕하세요! 오늘은 어떤 아이 이야기인가요? 🦎\n\n${help}`;
   }
-  const lines = briefLines();
-  const head = lines.length ? lines.join('\n') : greetLine();
-  return `${head}\n\n어떤 아이 이야기부터 해볼까요? 🦎\n${help}`;
+  return `${greetLine()}\n\n어떤 아이 이야기부터 해볼까요? 🦎\n${help}`;
 }
 
 /* 예정 카드 가운데 줄 */
@@ -6564,11 +6687,16 @@ function RemindersScreen({ navigate, onChanged }) {
   const [all, setAll] = useState(() => allAlerts());
   const todo = useMemo(() => buildTodo(all, navigate), [all, navigate]);
   const brief = useMemo(() => briefLines(), [all]);
+  const nudge = useMemo(() => todayNudge(), [all]);
+  const nudgeGo = nudgeAction(nudge, navigate);
   const thisWeek = all.filter(r => { const d = daysUntil(r.date); return d > 0 && d <= WEEK_WINDOW; });
   const later = all.filter(r => daysUntil(r.date) > WEEK_WINDOW);
   const past = all.filter(r => daysUntil(r.date) < 0);
   const [showLater, setShowLater] = useState(false);
   const [showPast, setShowPast] = useState(false);
+
+  // 오늘 권한 것을 하루에 한 번만 적어둡니다 (껐다 켜도 같은 제안이 보이도록)
+  useEffect(() => { recordNudge(nudge); }, []);
 
   // 화면을 열면 임박 알림은 읽음 처리 → 배지 제거
   useEffect(() => {
@@ -6603,6 +6731,11 @@ function RemindersScreen({ navigate, onChanged }) {
               whiteSpace: 'pre-line',
             }}>{line}</div>
           ))}
+          {nudgeGo && (
+            <button className="btn btn-secondary btn-sm" data-testid="nudge-go"
+              style={{width:'auto', marginTop:10, whiteSpace:'nowrap'}}
+              onClick={nudgeGo.go}>{nudge.emoji} {nudgeGo.label}</button>
+          )}
         </div>
       )}
 
