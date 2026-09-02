@@ -26,7 +26,7 @@ test("keeps storage, synchronization, and core workflows intact", async () => {
     assert.ok(source.includes(contract), `missing contract: ${contract}`);
   }
 
-  assert.match(source, /const APP_VERSION = '5\.1'/);
+  assert.match(source, /const APP_VERSION = '5\.2'/);
   assert.match(source, /Powered by cre_construct · CC/);
   assert.doesNotMatch(source, /Powered by 크레건설/);
   assert.match(source, /addEvents\(events\)/);
@@ -43,10 +43,10 @@ test("keeps service worker and release metadata aligned", async () => {
     readFile(file("version.json"), "utf8").then(JSON.parse),
   ]);
 
-  assert.equal(version.app, "5.1");
+  assert.equal(version.app, "5.2");
   assert.equal(version.schema, 1);
   assert.equal(version.minSchema, 1);
-  assert.match(worker, /const CACHE = 'creg-v51'/);
+  assert.match(worker, /const CACHE = 'creg-v52'/);
 
   for (const asset of [
     "./index.html",
@@ -171,7 +171,7 @@ test("keeps the v4.8 kinship, morph and voice contracts", async () => {
   // 설정 미리보기는 고정 견본으로 — 데이터가 없는 날에도 차이가 보여야 합니다
   assert.ok(source.includes("{voiceSample().map("), "settings preview must use voiceSample()");
   // 버전 문자열 4곳
-  assert.ok(source.includes("const APP_VERSION = '5.1'"), "APP_VERSION must be 5.1");
+  assert.ok(source.includes("const APP_VERSION = '5.2'"), "APP_VERSION must be 5.2");
 });
 
 test("keeps the v5.0 particle, line-break and calendar fixes", async () => {
@@ -196,9 +196,9 @@ test("keeps the v5.0 particle, line-break and calendar fixes", async () => {
   assert.doesNotMatch(source, /(?:은|을|와|이)\((?:는|를|과|가)\)/, "use josa helpers, not 은(는)/을(를)");
   // 먹인 날 아이콘은 하나만 (예전엔 🍽️🥩 두 개가 붙어 있었습니다)
   assert.doesNotMatch(source, /'🍽️🥩'/, "fed emoji must be a single icon");
-  // 홈 한 줄은 인사와 할 일을 나눠 그립니다
-  assert.ok(source.includes("[greetLine(), what].filter(Boolean).join('\\n')"), "home line must break");
-  assert.ok(source.includes("APP_VERSION = '5.1'"), "APP_VERSION must be 5.1");
+  // 홈 한 줄은 인사만 합니다 (v5.2 — 할 일은 브리핑 카드가 말합니다)
+  assert.doesNotMatch(source, /\[greetLine\(\), what\]/, "home line no longer lists jobs");
+  assert.ok(source.includes("APP_VERSION = '5.2'"), "APP_VERSION must be 5.2");
 
   // 캘린더 먹이 줄에 이모지가 두 번 나오면 안 됩니다 (줄 앞에 이미 🦗/🥣 가 붙습니다)
   assert.ok(source.includes("if (e.type === 'feeding') label = label.replace"), "feed label must drop its own emoji");
@@ -235,5 +235,48 @@ test("keeps the v4.9 hatching, morph and wording fixes", async () => {
   assert.ok(source.includes("const dayWord = (n) => `${Math.abs(Math.round(Number(n) || 0))}일`"), "dayWord must be numeric");
   // 탭 이름
   assert.ok(source.includes("브리핑"), "reminders tab is now 브리핑");
-  assert.ok(source.includes("const APP_VERSION = '5.1'"), "APP_VERSION must be 5.1");
+  assert.ok(source.includes("const APP_VERSION = '5.2'"), "APP_VERSION must be 5.2");
+});
+
+test("keeps the v5.2 nudge contracts", async () => {
+  const raw = await readFile(file("src/app.jsx"), "utf8");
+  const source = raw.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+
+  for (const contract of [
+    "const NUDGE_KEEP =",
+    "const NUDGE_BUSY =",
+    "function nudgeLog()",
+    "function recordNudge(n)",
+    "function nudgeCandidates(individuals, events)",
+    "function todayNudge(individuals, events)",
+    "function nudgeAction(n, navigate)",
+  ]) {
+    assert.ok(source.includes(contract), `missing v5.2 contract: ${contract}`);
+  }
+
+  // 제안 열 가지가 모두 살아 있어야 합니다
+  for (const key of ["'ovul'", "'gender'", "'morph'", "'photo'", "'weight'",
+                     "'price'", "'lineage'", "'mate'", "'shed'", "'ledger'"]) {
+    assert.ok(source.includes(`key: ${key}`), `missing nudge candidate ${key}`);
+  }
+
+  // 한 이슈가 여러 자리에서 되풀이되면 안 됩니다 —
+  // 브리핑 맨 위와 대화 첫 인사는 할 일을 나열하지 않습니다
+  const brief = source.slice(source.indexOf("function briefLines()"),
+                             source.indexOf("function voiceSample()"));
+  assert.ok(brief.includes("todayNudge()"), "briefLines must lead with today's nudge");
+  assert.doesNotMatch(brief, /jobs/, "briefLines must not list jobs any more");
+  const hello = source.slice(source.indexOf("function chatHello()"),
+                             source.indexOf("function alertLine(r)"));
+  assert.doesNotMatch(hello, /briefLines\(\)/, "chat greeting must not repeat the briefing");
+
+  // 오늘 정한 제안은 하루 동안 그대로여야 합니다
+  assert.ok(source.includes("log.length && log[0].date === today"), "nudge is recorded once a day");
+  // 급한 일이 밀린 날엔 제안이 비켜줍니다
+  assert.ok(source.includes("if (busy > NUDGE_BUSY) return null"), "nudge yields on busy days");
+  // 화면에서 제안은 눌러서 바로 갈 수 있어야 합니다
+  assert.ok(source.includes('data-testid="nudge-go"'), "nudge needs an action button");
+  assert.ok(source.includes("recordNudge(nudge)"), "reminders screen must record the nudge");
+
+  assert.ok(source.includes("APP_VERSION = '5.2'"), "APP_VERSION must be 5.2");
 });
