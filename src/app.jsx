@@ -374,7 +374,7 @@ const SERVER = {
 
    인터넷이 없거나 파일을 못 받으면 아무 것도 막지 않습니다(앱은 그대로 씁니다).
    ══════════════════════════════════════════ */
-const APP_VERSION = '5.0';
+const APP_VERSION = '5.1';
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -5997,12 +5997,22 @@ function CalendarScreen({ navigate, individuals, showToast, onRemindersChanged }
       if (p) name = `${name} × ${p}`;
     } else {
       label = formatEventDetail(e) || label;
+      /* 줄 맨 앞에 이미 🦗 / 🥣 가 붙습니다.
+         라벨에 또 넣으면 "🦗 크한이 · 🦗 충식 급여" 처럼 이모지가 겹쳐 어지러워집니다. */
+      if (e.type === 'feeding') label = label.replace(/[🦗🥣]\s*/g, '');
     }
     const emoji = e.type === 'feeding' ? fedEmoji(e) : (t.emoji || '📌');
     add(e.date, { emoji, label, detail, name, event: e });
   });
 
-  const itemText = it => [it.name, it.label, it.detail].filter(Boolean).join(' · ');
+  /* 먹이 줄은 "크한이 충식 급여" 처럼 한 덩어리로 읽히게 가운뎃점을 뺍니다.
+     (나머지 일정은 "크안이 × 크울이 · 2차 산란 · 알 2개" 처럼 · 로 끊는 게 읽기 좋습니다) */
+  const itemText = (it) => {
+    const isFeed = it.feed || (it.event && it.event.type === 'feeding');
+    // 먹이 줄은 "크한이 충식 급여" 로 붙이고, 부연(전체 4마리 …)만 · 로 끊습니다
+    const head = [it.name, it.label].filter(Boolean).join(isFeed ? ' ' : ' · ');
+    return [head, it.detail].filter(Boolean).join(' · ');
+  };
   const openCalendarItem = (it) => {
     closePanels();
     const r = it.reminder;
