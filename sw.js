@@ -1,4 +1,4 @@
-const CACHE = 'creg-v50';
+const CACHE = 'creg-v51';
 
 // 화면을 그리는 데 꼭 필요한 파일 — 이것도 폰에 저장해둬야 인터넷 없이 열립니다
 const ASSETS = [
@@ -46,4 +46,4 @@ self.addEventListener('fetch', e => {
     }))
   );
 });
-// v5.0 deploy 2026-09-01 (조사 자동 · 문장 줄나눔 · 먹이 예정 한 달치 · 먹인 날 아이콘 하나)
+// v5.1 deploy 2026-09-01 (캘린더 먹이 줄 이모지 겹침 정리)
