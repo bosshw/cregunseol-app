@@ -26,7 +26,7 @@ test("keeps storage, synchronization, and core workflows intact", async () => {
     assert.ok(source.includes(contract), `missing contract: ${contract}`);
   }
 
-  assert.match(source, /const APP_VERSION = '5\.0'/);
+  assert.match(source, /const APP_VERSION = '5\.1'/);
   assert.match(source, /Powered by cre_construct · CC/);
   assert.doesNotMatch(source, /Powered by 크레건설/);
   assert.match(source, /addEvents\(events\)/);
@@ -43,10 +43,10 @@ test("keeps service worker and release metadata aligned", async () => {
     readFile(file("version.json"), "utf8").then(JSON.parse),
   ]);
 
-  assert.equal(version.app, "5.0");
+  assert.equal(version.app, "5.1");
   assert.equal(version.schema, 1);
   assert.equal(version.minSchema, 1);
-  assert.match(worker, /const CACHE = 'creg-v50'/);
+  assert.match(worker, /const CACHE = 'creg-v51'/);
 
   for (const asset of [
     "./index.html",
@@ -171,7 +171,7 @@ test("keeps the v4.8 kinship, morph and voice contracts", async () => {
   // 설정 미리보기는 고정 견본으로 — 데이터가 없는 날에도 차이가 보여야 합니다
   assert.ok(source.includes("{voiceSample().map("), "settings preview must use voiceSample()");
   // 버전 문자열 4곳
-  assert.ok(source.includes("const APP_VERSION = '5.0'"), "APP_VERSION must be 5.0");
+  assert.ok(source.includes("const APP_VERSION = '5.1'"), "APP_VERSION must be 5.1");
 });
 
 test("keeps the v5.0 particle, line-break and calendar fixes", async () => {
@@ -198,7 +198,11 @@ test("keeps the v5.0 particle, line-break and calendar fixes", async () => {
   assert.doesNotMatch(source, /'🍽️🥩'/, "fed emoji must be a single icon");
   // 홈 한 줄은 인사와 할 일을 나눠 그립니다
   assert.ok(source.includes("[greetLine(), what].filter(Boolean).join('\\n')"), "home line must break");
-  assert.ok(source.includes("APP_VERSION = '5.0'"), "APP_VERSION must be 5.0");
+  assert.ok(source.includes("APP_VERSION = '5.1'"), "APP_VERSION must be 5.1");
+
+  // 캘린더 먹이 줄에 이모지가 두 번 나오면 안 됩니다 (줄 앞에 이미 🦗/🥣 가 붙습니다)
+  assert.ok(source.includes("if (e.type === 'feeding') label = label.replace"), "feed label must drop its own emoji");
+  assert.ok(source.includes("[it.name, it.label].filter(Boolean).join(isFeed ? ' ' : ' · ')"), "feed row joins without a dot");
 });
 
 test("keeps the v4.9 hatching, morph and wording fixes", async () => {
@@ -231,5 +235,5 @@ test("keeps the v4.9 hatching, morph and wording fixes", async () => {
   assert.ok(source.includes("const dayWord = (n) => `${Math.abs(Math.round(Number(n) || 0))}일`"), "dayWord must be numeric");
   // 탭 이름
   assert.ok(source.includes("브리핑"), "reminders tab is now 브리핑");
-  assert.ok(source.includes("const APP_VERSION = '5.0'"), "APP_VERSION must be 5.0");
+  assert.ok(source.includes("const APP_VERSION = '5.1'"), "APP_VERSION must be 5.1");
 });
