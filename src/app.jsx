@@ -374,7 +374,7 @@ const SERVER = {
 
    인터넷이 없거나 파일을 못 받으면 아무 것도 막지 않습니다(앱은 그대로 씁니다).
    ══════════════════════════════════════════ */
-const APP_VERSION = '5.2';
+const APP_VERSION = '5.3';
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -1502,6 +1502,113 @@ function todaySituation() {
     next: alerts.filter(r => daysUntil(r.date) > 0)[0] || null,
   };
 }
+
+/* ══════════════════════════════════════════
+   공개 기록 — 이 아이를 어떻게 키웠는지 한 장으로
+   ★ 무엇이 나가는지는 publicSnapshot() 한 곳에서만 정합니다.
+     돈 이야기(입양가·분양가·가계부)는 절대 담기지 않습니다.
+     화면을 늘리더라도 이 함수를 거치지 않고 내보내지 마세요.
+   ══════════════════════════════════════════ */
+
+/* 공유 코드는 여기서만 만듭니다 */
+const newShareCode = () => Math.random().toString(36).slice(2, 8).toUpperCase();
+
+const PUBLIC_TABLE = 'cg_public';
+const PUBLIC_PAGE  = 'g.html';          // 주소는 한 번 정하면 바꾸지 않습니다
+const PUBLIC_PHOTOS = 6;                // 사진은 최근 이만큼만 (한 줄이 너무 무거워지지 않게)
+
+/* 내보내는 기록 — 이 목록에 없는 종류는 나가지 않습니다 */
+const PUBLIC_KINDS = ['growth', 'shed', 'feeding', 'health', 'photo'];
+/* 절대 나가지 않는 기록 — 실수로 위에 추가되면 테스트가 잡습니다 */
+const PUBLIC_NEVER = ['ledger', 'distribution', 'memo', 'mating', 'laying'];
+
+function publicUrl(code) {
+  const path = String(location.pathname || '/').replace(/[^/]*$/, '');
+  return `${location.origin}${path}${PUBLIC_PAGE}?c=${encodeURIComponent(code || '')}`;
+}
+
+/* 새 주인에게 건네는 한 장 — 여기 담기는 것이 전부입니다 */
+function publicSnapshot(gecko, allInds, allEvs) {
+  const list = allInds || DB.getIndividuals();
+  const evs  = allEvs  || DB.getEvents();
+  const byId = {}; list.forEach(i => { byId[i.id] = i; });
+  const nameOf = (id) => (byId[id] ? byId[id].name : '');
+
+  const mine = evs.filter(e => e.individualId === gecko.id && PUBLIC_KINDS.indexOf(e.type) >= 0);
+  const asc = (a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+
+  const weights = mine.filter(e => e.type === 'growth' && e.data && e.data.weight)
+    .sort(asc).map(e => ({ date: e.date, g: Number(e.data.weight) }));
+
+  const logs = mine.filter(e => e.type !== 'growth' && e.type !== 'photo')
+    .sort((a, b) => -asc(a, b))
+    .slice(0, 40)
+    .map(e => ({
+      date: e.date, type: e.type,
+      note: e.type === 'feeding'
+        ? [(e.data && e.data.foodType) || '', (e.data && e.data.ate) === false ? '안 먹음' : ''].filter(Boolean).join(' · ')
+        : String((e.data && (e.data.issue || e.data.notes)) || '').slice(0, 60),
+    }));
+
+  const photos = mine.filter(e => e.type === 'photo' && e.data && e.data.photo)
+    .sort((a, b) => -asc(a, b)).slice(0, PUBLIC_PHOTOS)
+    .map(e => ({ date: e.date, src: e.data.photo }));
+
+  const sibs = littermatesOf(gecko, list).map(x => x.name).filter(Boolean);
+
+  return {
+    v: 1,
+    name: gecko.name || '',
+    gender: gecko.gender || 'unknown',
+    morph: String(gecko.morph || '').trim(),
+    hatchDate: gecko.hatchDate || '',
+    avatar: gecko.avatar || '',
+    sire: nameOf(gecko.sireId),
+    dam: nameOf(gecko.damId),
+    litter: sibs,
+    fromUs: !!gecko.isFromCreGunseol,
+    weights,
+    logs,
+    photos,
+    breeder: String(((DB.getSettings() || {}).breederName) || '').trim(),
+    sharedAt: todayStr(),
+  };
+}
+
+/* 서버에 올리고 내리는 자리 — 실패하면 사람 말로 돌려줍니다 */
+const PUB = {
+  ready() { return SYNC.active(); },
+
+  async put(gecko) {
+    if (!this.ready()) throw new Error('먼저 설정에서 서버 연결(로그인)을 해주세요');
+    await SYNC.ensureSession();
+    const code = gecko.shareCode;
+    if (!code) throw new Error('공유 코드가 없어요');
+    const res = await SYNC.api(`/rest/v1/${PUBLIC_TABLE}?on_conflict=code`, {
+      method: 'POST',
+      headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+      body: JSON.stringify([{ code, data: publicSnapshot(gecko), updated_at: now() }]),
+    });
+    if (!res.ok) throw new Error(await this.err(res));
+    return publicUrl(code);
+  },
+
+  async remove(code) {
+    if (!code) return true;
+    if (!this.ready()) throw new Error('먼저 설정에서 서버 연결(로그인)을 해주세요');
+    await SYNC.ensureSession();
+    const res = await SYNC.api(`/rest/v1/${PUBLIC_TABLE}?code=eq.${encodeURIComponent(code)}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(await this.err(res));
+    return true;
+  },
+
+  async err(res) {
+    const raw = await SYNC.parseErr(res);
+    if (/relation .* does not exist|Could not find the table/i.test(raw))
+      return '서버에 공개용 표가 아직 없어요. supabase_public.sql 을 한 번 실행해 주세요';
+    return SYNC.krErr(raw);
+  },
+};
 
 /* 브리핑 맨 위 문장들 — 인사 + 오늘의 제안
    ★ 할 일은 바로 아래 카드가 말합니다. 여기서 또 나열하면 같은 말이 두 번 됩니다.
@@ -3594,7 +3701,7 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals }) {
         DB.addIndividual({
           name: nm, gender: 'unknown', morph: mo, morphUnknown: !mo, hatchDate: date,
           isFromCreGunseol: true, status: 'own', sireId: dadId, damId: ev.individualId,
-          shareCode: Math.random().toString(36).slice(2, 8).toUpperCase(),
+          shareCode: newShareCode(),
         });
         made++;
       });
@@ -4630,7 +4737,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     const saved = DB.addIndividual({
       name, gender: detectedGender || 'unknown', morph: '', hatchDate: '', isFromCreGunseol: false,
       isExternal, sireId: null, damId: null,
-      shareCode: Math.random().toString(36).slice(2, 8).toUpperCase(),
+      shareCode: newShareCode(),
     });
     refreshIndividuals();
     setTarget(saved);
@@ -4708,7 +4815,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       const partner = existing || DB.addIndividual({
         name: value.name, gender: 'unknown', morph: '', hatchDate: '', isFromCreGunseol: false,
         isExternal: false, sireId: null, damId: null,
-        shareCode: Math.random().toString(36).slice(2, 8).toUpperCase(),
+        shareCode: newShareCode(),
       });
       refreshIndividuals();
       // 담긴 메이팅 기록에 파트너 연결
@@ -5397,7 +5504,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
               name: nm, gender: 'unknown', morph: mo, morphUnknown: !mo, hatchDate: f.date || todayStr(),
               isFromCreGunseol: true, status: 'own',
               sireId: dadId, damId: f.targetId,
-              shareCode: Math.random().toString(36).slice(2, 8).toUpperCase(),
+              shareCode: newShareCode(),
             });
           });
           babyMsg = ` · 🐣 베이비 ${Math.min(count, names.length)}마리 등록`;
@@ -5596,6 +5703,7 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
   const [gecko, setGecko] = useState(() => DB.getIndividuals().find(i => i.id === initialGecko.id) || initialGecko);
   const [events, setEvents] = useState(() => DB.getEventsFor(initialGecko.id).filter(e => e.type !== 'ledger'));
   const [showShare, setShowShare] = useState(false);
+  const [pubBusy, setPubBusy] = useState(false);       // 공개 기록 올리는 중
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [editVals, setEditVals] = useState({});
@@ -5636,6 +5744,51 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
     setGecko(DB.getIndividuals().find(i => i.id === gecko.id) || gecko);
     setEvents(DB.getEventsFor(gecko.id).filter(e => e.type !== 'ledger'));
     refreshIndividuals();
+  };
+
+  /* ── 기록 공개 ──
+     공개 중이면 하루 한 번 최신 기록으로 다시 올립니다.
+     링크를 연 사람이 몇 달 전 기록을 보고 있으면 안 되니까요. */
+  useEffect(() => {
+    if (!gecko.publicOn || !PUB.ready()) return;
+    if (gecko.publicAt === todayStr()) return;
+    PUB.put(gecko)
+      .then(() => { DB.updateIndividual(gecko.id, { publicAt: todayStr() }); refreshLocal(); })
+      .catch(() => {});                                  // 조용히 실패 — 다음에 열 때 다시 해봅니다
+  }, [gecko.id]);
+
+  const togglePublic = async () => {
+    if (pubBusy) return;
+    setPubBusy(true);
+    try {
+      if (gecko.publicOn) {
+        await PUB.remove(gecko.shareCode);
+        DB.updateIndividual(gecko.id, { publicOn: false, publicAt: '' });
+        showToast('공개를 껐어요. 링크는 이제 안 열립니다');
+      } else {
+        const code = gecko.shareCode || newShareCode();
+        await PUB.put({ ...gecko, shareCode: code });
+        DB.updateIndividual(gecko.id, { shareCode: code, publicOn: true, publicAt: todayStr() });
+        showToast('링크가 만들어졌어요 🔗');
+      }
+      refreshLocal();
+    } catch (e) { showToast((e && e.message) || '올리지 못했어요'); }
+    setPubBusy(false);
+  };
+
+  const rotatePublic = async () => {
+    if (pubBusy) return;
+    setPubBusy(true);
+    try {
+      const old = gecko.shareCode;
+      const code = newShareCode();
+      await PUB.put({ ...gecko, shareCode: code });
+      if (old && old !== code) await PUB.remove(old);
+      DB.updateIndividual(gecko.id, { shareCode: code, publicOn: true, publicAt: todayStr() });
+      showToast('새 주소로 바꿨어요. 옛 링크는 이제 안 열려요');
+      refreshLocal();
+    } catch (e) { showToast((e && e.message) || '바꾸지 못했어요'); }
+    setPubBusy(false);
   };
 
   // 이름 바꾸기 — 같은 이름이 이미 있으면 막습니다
@@ -5768,20 +5921,50 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
         </div>
       </div>
 
-      {/* 공유 박스 */}
-      {SHOW_SHARE && showShare && (
-        <div style={{padding:'0 16px 10px'}}>
-          <div className="share-box">
-            <div style={{fontSize:12, color:'var(--text3)', marginBottom:6}}>공유 코드</div>
-            <div className="share-code">{gecko.shareCode}</div>
-            <div style={{fontSize:11, color:'var(--text3)', marginTop:6}}>Powered by cre_construct · CC</div>
-            <button className="btn btn-ghost btn-sm" style={{marginTop:10}} onClick={() => {
-              navigator.clipboard?.writeText(gecko.shareCode);
-              showToast('코드 복사됨!');
-            }}>📋 코드 복사</button>
+      {/* ── 기록 공개 ──
+          앱 안에서 거래하지 않습니다. 대신 이 아이를 어떻게 키웠는지를 링크 하나로 보여드립니다.
+          담기는 내용은 publicSnapshot() 한 곳에서만 정합니다(분양가·가계부는 나가지 않습니다). */}
+      <div style={{padding:'0 16px 10px'}}>
+        <div className="card" style={{margin:0}} data-testid="public-card">
+          <div style={{display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:10}}>
+            <div style={{minWidth:0, flex:1}}>
+              <div style={{fontSize:13.5, fontWeight:800}}>🔗 기록 공개</div>
+              <div style={{fontSize:11.5, color:'var(--text3)', marginTop:4, lineHeight:1.6, whiteSpace:'pre-line'}}>
+                {gecko.publicOn
+                  ? '링크를 아는 분은 누구나 볼 수 있어요.\n분양가와 가계부는 나가지 않습니다.'
+                  : '이 아이를 어떻게 키웠는지 링크 하나로 보여드려요.\n분양 글에 붙이시면 됩니다.'}
+              </div>
+            </div>
+            <button className="btn btn-secondary btn-sm" data-testid="public-toggle"
+              style={{width:'auto', whiteSpace:'nowrap'}} disabled={pubBusy} onClick={togglePublic}>
+              {pubBusy ? '잠깐만요…' : gecko.publicOn ? '공개 끄기' : '공개하기'}
+            </button>
           </div>
+
+          {gecko.publicOn && (
+            <div style={{marginTop:10}}>
+              <div className="share-code" data-testid="public-url"
+                style={{fontSize:11.5, wordBreak:'break-all', lineHeight:1.55, textAlign:'left', padding:'9px 11px', letterSpacing:0, fontWeight:600}}>
+                {publicUrl(gecko.shareCode)}
+              </div>
+              <div style={{display:'flex', gap:6, marginTop:8}}>
+                <button className="btn btn-secondary btn-sm" style={{flex:1}} onClick={() => {
+                  navigator.clipboard?.writeText(publicUrl(gecko.shareCode));
+                  showToast('링크를 복사했어요 📋');
+                }}>📋 링크 복사</button>
+                <button className="btn btn-ghost btn-sm" style={{flex:1}} disabled={pubBusy} onClick={rotatePublic}>
+                  🔄 새 주소로
+                </button>
+              </div>
+              {gecko.publicAt && (
+                <div style={{fontSize:11, color:'var(--text3)', marginTop:7}}>
+                  마지막으로 올린 날 {agoWord(gecko.publicAt)} · 프로필을 열면 하루 한 번 최신으로 올라갑니다
+                </div>
+              )}
+            </div>
+          )}
         </div>
-      )}
+      </div>
 
       {/* 기록 추가 → 동일한 대화형 화면으로 */}
       <div style={{padding:'0 16px 10px'}}>
@@ -7530,6 +7713,18 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
               ))}
             </div>
           )}
+
+          {/* 공개 기록 한 장에 찍히는 이름 — 비워두면 안 나옵니다 */}
+          <div style={{marginTop:12}}>
+            <div style={{fontSize:11, color:'var(--text3)', marginBottom:4}}>🏷️ 브리더 이름 (공개 기록에 표시)</div>
+            <input className="input" style={{padding:'9px 11px', fontSize:12.5}} placeholder="예: 크레건설"
+              data-testid="breeder-name"
+              value={settings.breederName || ''}
+              onChange={e => {
+                const next = { ...settings, breederName: e.target.value };
+                DB.saveSettings(next); setSettings(next);
+              }} />
+          </div>
 
           <button className="btn btn-secondary btn-sm" style={{marginTop:10}}
             onClick={() => setLinkEdit(v => !v)}>
