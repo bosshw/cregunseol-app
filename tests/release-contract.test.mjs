@@ -26,7 +26,7 @@ test("keeps storage, synchronization, and core workflows intact", async () => {
     assert.ok(source.includes(contract), `missing contract: ${contract}`);
   }
 
-  assert.match(source, /const APP_VERSION = '5\.2'/);
+  assert.match(source, /const APP_VERSION = '5\.3'/);
   assert.match(source, /Powered by cre_construct · CC/);
   assert.doesNotMatch(source, /Powered by 크레건설/);
   assert.match(source, /addEvents\(events\)/);
@@ -43,10 +43,10 @@ test("keeps service worker and release metadata aligned", async () => {
     readFile(file("version.json"), "utf8").then(JSON.parse),
   ]);
 
-  assert.equal(version.app, "5.2");
+  assert.equal(version.app, "5.3");
   assert.equal(version.schema, 1);
   assert.equal(version.minSchema, 1);
-  assert.match(worker, /const CACHE = 'creg-v52'/);
+  assert.match(worker, /const CACHE = 'creg-v53'/);
 
   for (const asset of [
     "./index.html",
@@ -171,7 +171,7 @@ test("keeps the v4.8 kinship, morph and voice contracts", async () => {
   // 설정 미리보기는 고정 견본으로 — 데이터가 없는 날에도 차이가 보여야 합니다
   assert.ok(source.includes("{voiceSample().map("), "settings preview must use voiceSample()");
   // 버전 문자열 4곳
-  assert.ok(source.includes("const APP_VERSION = '5.2'"), "APP_VERSION must be 5.2");
+  assert.ok(source.includes("const APP_VERSION = '5.3'"), "APP_VERSION must be 5.3");
 });
 
 test("keeps the v5.0 particle, line-break and calendar fixes", async () => {
@@ -198,7 +198,7 @@ test("keeps the v5.0 particle, line-break and calendar fixes", async () => {
   assert.doesNotMatch(source, /'🍽️🥩'/, "fed emoji must be a single icon");
   // 홈 한 줄은 인사만 합니다 (v5.2 — 할 일은 브리핑 카드가 말합니다)
   assert.doesNotMatch(source, /\[greetLine\(\), what\]/, "home line no longer lists jobs");
-  assert.ok(source.includes("APP_VERSION = '5.2'"), "APP_VERSION must be 5.2");
+  assert.ok(source.includes("APP_VERSION = '5.3'"), "APP_VERSION must be 5.3");
 
   // 캘린더 먹이 줄에 이모지가 두 번 나오면 안 됩니다 (줄 앞에 이미 🦗/🥣 가 붙습니다)
   assert.ok(source.includes("if (e.type === 'feeding') label = label.replace"), "feed label must drop its own emoji");
@@ -235,7 +235,7 @@ test("keeps the v4.9 hatching, morph and wording fixes", async () => {
   assert.ok(source.includes("const dayWord = (n) => `${Math.abs(Math.round(Number(n) || 0))}일`"), "dayWord must be numeric");
   // 탭 이름
   assert.ok(source.includes("브리핑"), "reminders tab is now 브리핑");
-  assert.ok(source.includes("const APP_VERSION = '5.2'"), "APP_VERSION must be 5.2");
+  assert.ok(source.includes("const APP_VERSION = '5.3'"), "APP_VERSION must be 5.3");
 });
 
 test("keeps the v5.2 nudge contracts", async () => {
@@ -278,5 +278,58 @@ test("keeps the v5.2 nudge contracts", async () => {
   assert.ok(source.includes('data-testid="nudge-go"'), "nudge needs an action button");
   assert.ok(source.includes("recordNudge(nudge)"), "reminders screen must record the nudge");
 
-  assert.ok(source.includes("APP_VERSION = '5.2'"), "APP_VERSION must be 5.2");
+  assert.ok(source.includes("APP_VERSION = '5.3'"), "APP_VERSION must be 5.3");
+});
+
+test("keeps the v5.3 public-record contracts", async () => {
+  const raw = await readFile(file("src/app.jsx"), "utf8");
+  const source = raw.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+
+  for (const contract of [
+    "const newShareCode =",
+    "const PUBLIC_TABLE = 'cg_public'",
+    "const PUBLIC_PAGE  = 'g.html'",
+    "const PUBLIC_KINDS =",
+    "const PUBLIC_NEVER =",
+    "function publicUrl(code)",
+    "function publicSnapshot(gecko, allInds, allEvs)",
+    "const PUB = {",
+    "async put(gecko)",
+    "async remove(code)",
+  ]) {
+    assert.ok(source.includes(contract), `missing v5.3 contract: ${contract}`);
+  }
+
+  // ── 돈 이야기는 절대 나가지 않습니다 ──
+  const snap = source.slice(source.indexOf("function publicSnapshot("),
+                            source.indexOf("const PUB = {"));
+  for (const banned of ["salePrice", "saleFree", "ledger", "price", "amount", "buyer", "contact"]) {
+    assert.doesNotMatch(snap, new RegExp(banned),
+      `public snapshot must not carry ${banned}`);
+  }
+  // 나가는 기록 종류는 딱 다섯 가지
+  assert.ok(source.includes("const PUBLIC_KINDS = ['growth', 'shed', 'feeding', 'health', 'photo']"),
+    "public record kinds are fixed");
+  // 분양·메모·가계부·메이팅·산란은 금지 목록에 남아 있어야 합니다
+  for (const k of ["ledger", "distribution", "memo", "mating", "laying"]) {
+    assert.ok(source.includes(`'${k}'`), `${k} must stay listed in PUBLIC_NEVER`);
+  }
+
+  // 공개 페이지가 저장소에 실제로 있어야 합니다
+  const page = await readFile(file("g.html"), "utf8");
+  assert.ok(page.includes("cg_public"), "g.html must read cg_public");
+  assert.ok(page.includes("sb_publishable_"), "g.html uses the publishable key");
+  assert.doesNotMatch(page, /service_role|sb_secret_/, "g.html must never carry a secret key");
+  assert.ok(page.includes("브리딩비서"), "g.html must sign the app");
+
+  // 서버 표를 만드는 SQL 도 함께 올라가야 합니다
+  const sql = await readFile(file("supabase_public.sql"), "utf8");
+  assert.ok(sql.includes("create table if not exists public.cg_public"), "SQL creates the table");
+  assert.ok(sql.includes("enable row level security"), "SQL turns RLS on");
+  assert.ok(sql.includes("owner_id = auth.uid()"), "writes are owner-only");
+
+  // 화면 계약
+  assert.ok(source.includes('data-testid="public-card"'), "profile needs the public card");
+  assert.ok(source.includes('data-testid="public-toggle"'), "public card needs its toggle");
+  assert.ok(source.includes("APP_VERSION = '5.3'"), "APP_VERSION must be 5.3");
 });
