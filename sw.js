@@ -1,4 +1,4 @@
-const CACHE = 'creg-v52';
+const CACHE = 'creg-v53';
 
 // 화면을 그리는 데 꼭 필요한 파일 — 이것도 폰에 저장해둬야 인터넷 없이 열립니다
 const ASSETS = [
@@ -46,4 +46,4 @@ self.addEventListener('fetch', e => {
     }))
   );
 });
-// v5.2 deploy 2026-09-02 (브리핑 맨 위 오늘의 제안, 홈 헤더는 인사만)
+// v5.3 deploy 2026-09-03 (기록 공개 링크 — 앱 밖에서 열리는 사육 기록 한 장)

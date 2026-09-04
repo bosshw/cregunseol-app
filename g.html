@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>사육 기록 · 크레스티드 게코</title>
+<meta name="description" content="이 아이를 어떻게 키웠는지 — 브리딩비서로 남긴 사육 기록">
+<meta name="theme-color" content="#F3EDE2">
+<link rel="icon" href="./icon-192.png">
+<style>
+  :root{
+    --bg:#FAF6EF; --bg2:#F3EDE2; --card:#FFFDF8; --line:#E4DACA;
+    --text:#3B2F2A; --text2:#6B5A4E; --text3:#A08D7C;
+    --accent:#8E3B45; --accent2:#7C2D3A; --accent-soft:#F4E3E1; --accent-edge:#E5C6C4;
+    --gold:#A9812E;
+    --shadow:0 2px 10px rgba(59,47,42,.07);
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#1D1A19; --bg2:#262220; --card:#272220; --line:#3C3532;
+      --text:#EFE7DF; --text2:#C3B7AC; --text3:#8D8079;
+      --accent:#C4707A; --accent2:#E8AAB1; --accent-soft:#3A2A2C; --accent-edge:#4E393C;
+      --gold:#D9BC72;
+      --shadow:0 2px 10px rgba(0,0,0,.35);
+    }
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0; padding:0}
+  body{
+    background:var(--bg); color:var(--text);
+    font-family:system-ui,-apple-system,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;
+    line-height:1.7; -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:520px; margin:0 auto; padding:0 16px 56px}
+  .card{background:var(--card); border:1px solid var(--line); border-radius:14px; padding:16px; margin-bottom:12px; box-shadow:var(--shadow)}
+  .sec{font-size:12px; font-weight:700; color:var(--accent2); letter-spacing:.02em; margin:0 0 10px}
+
+  /* 머리 */
+  .top{display:flex; align-items:center; gap:14px; padding:26px 0 18px}
+  .ava{width:78px; height:78px; border-radius:50%; object-fit:cover; background:var(--bg2); border:1px solid var(--line); flex:none}
+  .ava.blank{display:flex; align-items:center; justify-content:center; font-size:30px; color:var(--text3)}
+  .nm{font-size:24px; font-weight:800; margin:0; line-height:1.25; word-break:keep-all}
+  .sub{font-size:13px; color:var(--text2); margin:4px 0 0}
+  .chips{display:flex; flex-wrap:wrap; gap:5px; margin-top:8px}
+  .chip{font-size:11.5px; padding:3px 9px; border-radius:20px; background:var(--accent-soft); border:1px solid var(--accent-edge); color:var(--accent2)}
+  .chip.plain{background:var(--bg2); border-color:var(--line); color:var(--text2)}
+
+  /* 값 줄 */
+  .row{display:flex; justify-content:space-between; gap:12px; font-size:13.5px; padding:7px 0; border-bottom:1px solid var(--line)}
+  .row:last-child{border-bottom:none}
+  .row .k{color:var(--text3); white-space:nowrap}
+  .row .v{color:var(--text); text-align:right; font-weight:500}
+
+  /* 그래프 */
+  svg.chart{display:block; width:100%; height:auto; color:var(--text3)}
+  .cap{font-size:11.5px; color:var(--text3); margin-top:8px; text-align:center}
+
+  /* 기록 */
+  .log{display:flex; gap:10px; font-size:13px; padding:7px 0; border-bottom:1px solid var(--line)}
+  .log:last-child{border-bottom:none}
+  .log .d{color:var(--text3); white-space:nowrap; font-size:12px; min-width:74px}
+  .log .t{color:var(--text)}
+  .more{font-size:12px; color:var(--text3); margin-top:8px; text-align:center}
+
+  /* 사진 */
+  .shots{display:grid; grid-template-columns:repeat(3,1fr); gap:6px}
+  .shots img{width:100%; aspect-ratio:1/1; object-fit:cover; border-radius:9px; border:1px solid var(--line); background:var(--bg2)}
+
+  /* 서명 */
+  .sign{text-align:center; padding:22px 8px 0; color:var(--text3); font-size:12.5px; line-height:1.8}
+  .sign b{color:var(--accent2)}
+  .sign a{display:inline-block; margin-top:10px; text-decoration:none; font-size:13px; font-weight:700;
+    color:var(--accent2); background:var(--accent-soft); border:1px solid var(--accent-edge);
+    padding:9px 18px; border-radius:22px}
+  .sign a:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+
+  .state{text-align:center; padding:80px 20px; color:var(--text3); font-size:14px; line-height:1.9}
+  .state b{display:block; color:var(--text); font-size:16px; margin-bottom:8px}
+</style>
+</head>
+<body>
+<div class="wrap" id="app">
+  <div class="state">불러오는 중이에요…</div>
+</div>
+
+<script>
+(function () {
+  var SERVER = {
+    url: 'https://yginjnqwwvsvhysboiqv.supabase.co',
+    key: 'sb_publishable_FXQ8f-T6LdImrKUWFvW8jw_6_1IJ7AI'
+  };
+  var app = document.getElementById('app');
+  var esc = function (t) {
+    return String(t == null ? '' : t)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  };
+  var state = function (title, note) {
+    app.innerHTML = '<div class="state"><b>' + esc(title) + '</b>' + esc(note || '') + '</div>' + signHtml('');
+  };
+
+  var GENDER = { female: '♀ 암컷', male: '♂ 수컷', unknown: '? 미구분' };
+  var TYPE = { growth: '몸무게', shed: '탈피', feeding: '먹이', health: '이상' };
+
+  var fmt = function (iso) {
+    if (!iso) return '';
+    var p = String(iso).split('-');
+    if (p.length < 3) return iso;
+    return p[0].slice(2) + '.' + p[1] + '.' + p[2];
+  };
+  var monthsSince = function (iso) {
+    if (!iso) return '';
+    var d = new Date(iso), n = new Date();
+    if (isNaN(d)) return '';
+    var m = (n.getFullYear() - d.getFullYear()) * 12 + (n.getMonth() - d.getMonth());
+    if (m < 0) return '';
+    return m < 12 ? m + '개월' : Math.floor(m / 12) + '년 ' + (m % 12) + '개월';
+  };
+
+  /* 체중 그래프 — 값이 두 개 이상일 때만 그립니다 */
+  function chartHtml(ws) {
+    if (!ws || ws.length < 2) return '';
+    var W = 480, H = 170, PL = 40, PR = 12, PT = 14, PB = 26;
+    var gs = ws.map(function (w) { return w.g; });
+    var lo = Math.min.apply(null, gs), hi = Math.max.apply(null, gs);
+    if (hi === lo) { hi = lo + 1; }
+    var pad = (hi - lo) * 0.15; lo -= pad; hi += pad;
+    var x = function (i) { return PL + (W - PL - PR) * (ws.length === 1 ? 0 : i / (ws.length - 1)); };
+    var y = function (g) { return PT + (H - PT - PB) * (1 - (g - lo) / (hi - lo)); };
+    var pts = ws.map(function (w, i) { return x(i).toFixed(1) + ',' + y(w.g).toFixed(1); }).join(' ');
+    var last = ws[ws.length - 1], first = ws[0];
+    var dots = ws.map(function (w, i) {
+      return '<circle cx="' + x(i).toFixed(1) + '" cy="' + y(w.g).toFixed(1) + '" r="' +
+        (i === ws.length - 1 ? 4 : 2.4) + '" fill="var(--accent)"/>';
+    }).join('');
+    var top = Math.round(hi), bot = Math.round(lo);
+    return '<svg class="chart" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="몸무게 변화 ' +
+      esc(first.g) + '그램에서 ' + esc(last.g) + '그램">' +
+      '<line x1="' + PL + '" y1="' + PT + '" x2="' + W + '" y2="' + PT + '" stroke="currentColor" stroke-width="1" opacity=".25"/>' +
+      '<line x1="' + PL + '" y1="' + (H - PB) + '" x2="' + W + '" y2="' + (H - PB) + '" stroke="currentColor" stroke-width="1" opacity=".25"/>' +
+      '<text x="' + (PL - 7) + '" y="' + (PT + 4) + '" text-anchor="end" font-size="11" fill="currentColor">' + top + 'g</text>' +
+      '<text x="' + (PL - 7) + '" y="' + (H - PB + 4) + '" text-anchor="end" font-size="11" fill="currentColor">' + bot + 'g</text>' +
+      '<polyline points="' + pts + '" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>' +
+      dots +
+      '<text x="' + PL + '" y="' + (H - 6) + '" font-size="11" fill="currentColor">' + esc(fmt(first.date)) + '</text>' +
+      '<text x="' + (W - PR) + '" y="' + (H - 6) + '" text-anchor="end" font-size="11" fill="currentColor">' + esc(fmt(last.date)) + '</text>' +
+      '</svg>' +
+      '<div class="cap">' + esc(first.g) + 'g → <b>' + esc(last.g) + 'g</b> · 총 ' + ws.length + '번 쟀어요</div>';
+  }
+
+  function signHtml(breeder) {
+    var who = breeder ? '<b>' + esc(breeder) + '</b>님이 남긴 기록이에요.<br>' : '';
+    return '<div class="sign">' + who +
+      '이 기록은 <b>브리딩비서</b>로 적은 거예요.<br>' +
+      '먹이·몸무게·탈피·혈통을 말하듯 적어두면 이렇게 한 장이 됩니다.' +
+      '<br><a href="./">브리딩비서 열어보기</a></div>';
+  }
+
+  function render(d) {
+    var h = '';
+
+    /* 머리 */
+    h += '<div class="top">';
+    h += d.avatar
+      ? '<img class="ava" src="' + esc(d.avatar) + '" alt="' + esc(d.name) + '">'
+      : '<div class="ava blank">🦎</div>';
+    h += '<div style="min-width:0">';
+    h += '<h1 class="nm">' + esc(d.name || '이름 없음') + '</h1>';
+    h += '<p class="sub">' + esc(GENDER[d.gender] || GENDER.unknown) +
+         (d.morph ? ' · ' + esc(d.morph) : '') + '</p>';
+    h += '<div class="chips">';
+    if (d.hatchDate) h += '<span class="chip">🎂 ' + esc(fmt(d.hatchDate)) +
+      (monthsSince(d.hatchDate) ? ' · ' + esc(monthsSince(d.hatchDate)) : '') + '</span>';
+    if (d.fromUs) h += '<span class="chip plain">우리 집에서 태어난 아이</span>';
+    h += '</div></div></div>';
+
+    /* 혈통 */
+    if (d.sire || d.dam || (d.litter && d.litter.length)) {
+      h += '<div class="card"><div class="sec">🌳 혈통</div>';
+      if (d.sire) h += '<div class="row"><span class="k">아빠</span><span class="v">' + esc(d.sire) + '</span></div>';
+      if (d.dam)  h += '<div class="row"><span class="k">엄마</span><span class="v">' + esc(d.dam) + '</span></div>';
+      if (d.litter && d.litter.length)
+        h += '<div class="row"><span class="k">같은 클러치</span><span class="v">' + esc(d.litter.join(' · ')) + '</span></div>';
+      h += '</div>';
+    }
+
+    /* 몸무게 */
+    var c = chartHtml(d.weights);
+    if (c) h += '<div class="card"><div class="sec">📏 몸무게</div>' + c + '</div>';
+    else if (d.weights && d.weights.length === 1)
+      h += '<div class="card"><div class="sec">📏 몸무게</div><div class="row"><span class="k">' +
+           esc(fmt(d.weights[0].date)) + '</span><span class="v">' + esc(d.weights[0].g) + 'g</span></div></div>';
+
+    /* 기록 */
+    if (d.logs && d.logs.length) {
+      h += '<div class="card"><div class="sec">📖 지내온 기록</div>';
+      d.logs.slice(0, 20).forEach(function (l) {
+        h += '<div class="log"><span class="d">' + esc(fmt(l.date)) + '</span><span class="t">' +
+             esc(TYPE[l.type] || l.type) + (l.note ? ' · ' + esc(l.note) : '') + '</span></div>';
+      });
+      if (d.logs.length > 20) h += '<div class="more">그 밖에 ' + (d.logs.length - 20) + '건이 더 있어요</div>';
+      h += '</div>';
+    }
+
+    /* 사진 */
+    if (d.photos && d.photos.length) {
+      h += '<div class="card"><div class="sec">📷 사진</div><div class="shots">';
+      d.photos.forEach(function (p) {
+        h += '<img src="' + esc(p.src) + '" alt="' + esc(d.name) + ' ' + esc(fmt(p.date)) + '" loading="lazy">';
+      });
+      h += '</div></div>';
+    }
+
+    h += signHtml(d.breeder);
+    app.innerHTML = h;
+    if (d.name) document.title = d.name + ' · 사육 기록';
+  }
+
+  var code = (new URLSearchParams(location.search).get('c') || '').trim();
+  if (!code) { state('주소가 올바르지 않아요', '링크를 다시 확인해 주세요.'); return; }
+
+  fetch(SERVER.url + '/rest/v1/cg_public?select=data&limit=1&code=eq.' + encodeURIComponent(code), {
+    headers: { apikey: SERVER.key, Accept: 'application/json' }
+  })
+    .then(function (r) { if (!r.ok) throw new Error('http'); return r.json(); })
+    .then(function (rows) {
+      if (!rows || !rows.length || !rows[0].data) {
+        state('이 링크는 더 이상 열리지 않아요', '주인이 공개를 껐거나, 주소가 바뀌었을 수 있어요.');
+        return;
+      }
+      render(rows[0].data);
+    })
+    .catch(function () {
+      state('기록을 불러오지 못했어요', '인터넷 연결을 확인하고 다시 열어보세요.');
+    });
+})();
+</script>
+</body>
+</html>
