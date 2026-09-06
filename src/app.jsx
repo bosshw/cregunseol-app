@@ -445,7 +445,7 @@ const SERVER = {
 
    인터넷이 없거나 파일을 못 받으면 아무 것도 막지 않습니다(앱은 그대로 씁니다).
    ══════════════════════════════════════════ */
-const APP_VERSION = '1.3';
+const APP_VERSION = '1.4';
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -807,7 +807,7 @@ const SYNC = {
       await this.ensureSession();
       /* ★ 올리기 전에 폰에 남은 사진부터 서버로 보냅니다.
          순서가 반대면 base64 사진이 기록에 실린 채 서버로 올라갑니다. */
-      try { await PHOTO.flush(null, PHOTO_PER_SYNC); } catch (e) {}
+      try { await PHOTO.flush(null, PHOTO_PER_SYNC, PHOTO.era()); } catch (e) {}
       const sent = await this.push();
       const got = await this.pull();
       this.saveSt({ lastSyncAt: now(), lastError: null });
@@ -3446,19 +3446,33 @@ const PHOTO = {
     } catch (e) { return false; }
   },
 
-  /* 아직 폰 안에 글자로 남아 있는 사진들 */
-  pending() {
-    const evs = DB.getEvents().filter(e => e && e.data && isPhotoLocal(e.data.photo));
-    const inds = DB.getIndividuals().filter(i => i && isPhotoLocal(i.avatar));
+  /* 이 앱이 사진을 서버에 두기 시작한 시각. 처음 켤 때 한 번 찍어 둡니다.
+     ★ 이 시각보다 나중에 찍은 사진만 저절로 올라갑니다.
+       그 전부터 폰에 있던 사진은 대표님이 [옮기기]를 누르셔야 올라갑니다 —
+       옮기고 나면 사진을 볼 때 인터넷이 필요해지니까, 말 없이 바꾸면 안 됩니다. */
+  era() {
+    const set = DB.getSettings() || {};
+    if (set.photoEra) return set.photoEra;
+    const t = now();
+    DB.saveSettings({ ...set, photoEra: t });
+    return t;
+  },
+
+  /* 아직 폰 안에 글자로 남아 있는 사진들.
+     since 를 주면 그 시각 이후에 생긴 것만 (= 저절로 올려도 되는 것만) 셉니다. */
+  pending(since) {
+    const after = (x) => !since || String(x && x.createdAt || '') >= String(since);
+    const evs = DB.getEvents().filter(e => e && e.data && isPhotoLocal(e.data.photo) && after(e));
+    const inds = since ? [] : DB.getIndividuals().filter(i => i && isPhotoLocal(i.avatar));
     return { events: evs, inds, count: evs.length + inds.length };
   },
 
   /* 폰에 남은 사진을 서버로 옮깁니다.
      한 장이라도 실패하면 그 자리에서 멈춥니다 — 신호가 끊긴 것이니
      계속 두드려 봐야 소용이 없고, 다음 기회에 이어서 하면 됩니다. */
-  async flush(onStep, max) {
-    if (!this.ready()) return { done: 0, left: this.pending().count };
-    const p = this.pending();
+  async flush(onStep, max, since) {
+    if (!this.ready()) return { done: 0, left: this.pending(since).count };
+    const p = this.pending(since);
     const jobs = [];
     p.events.forEach(e => jobs.push({ kind: 'event', id: e.id, src: e.data.photo }));
     p.inds.forEach(i => jobs.push({ kind: 'ind', id: i.id, src: i.avatar }));
@@ -3478,7 +3492,7 @@ const PHOTO = {
       done++;
       if (onStep) { try { onStep(done, todo.length); } catch (e) {} }
     }
-    return { done, left: this.pending().count };
+    return { done, left: this.pending(since).count };
   },
 };
 
@@ -3542,6 +3556,7 @@ function App() {
   useEffect(() => {
     if (purgeStoredHatchReminders()) setRemVer(v => v + 1);
     if (dedupeAvatars()) refreshIndividuals();   // 얼굴로 복사해 둔 사진 한 벌로 줄이기 (한 번만)
+    PHOTO.era();                                // 사진을 서버에 두기 시작한 시각 (한 번만)
   }, []);
 
   /* 저장 칸이 모자라면 화면 맨 위에 붙여 알려드립니다.
