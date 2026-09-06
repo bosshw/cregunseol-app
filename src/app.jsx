@@ -1,6 +1,53 @@
 const { useState, useEffect, useCallback, useMemo, useRef } = React;
 
 /* ══════════════════════════════════════════
+   저장소(STORE) — 브라우저 칸에 글을 적는 유일한 곳
+   ──────────────────────────────────────────
+   ★ 여기 말고 어디서도 localStorage.setItem 을 부르지 않습니다.
+     칸이 꽉 차면 브라우저가 예외를 던지는데, v1.1까지는 그 예외를 아무도 받지 않았습니다.
+     그래서 "저장했어요" 소리만 나고 방금 적은 기록이 조용히 사라졌습니다.
+     이제는 여기서 받아 대표님께 말씀드립니다.
+
+   칸 크기는 실측값입니다 — 크롬에서 약 517만 글자가 들어가고,
+   글자 하나는 한글이든 영문이든 똑같이 한 칸을 씁니다(바이트가 아니라 글자 수).
+   여유를 두고 500만으로 잡았습니다.
+   ══════════════════════════════════════════ */
+const STORE_LIMIT = 5000000;   // 글자
+const STORE_WARN  = 0.8;       // 이만큼 차면 미리 알려드립니다
+const PHOTO_RE    = /data:image\/[a-z+]+;base64,[A-Za-z0-9+/=]+/g;
+
+const STORE = {
+  full: false,
+  _tell: null,
+  listen(fn) { this._tell = fn; },              // 화면이 한 번 등록해 둡니다
+  say(msg) { if (this._tell && msg) { try { this._tell(msg); } catch (e) {} } },
+  set(key, val) {
+    try { localStorage.setItem(key, val); this.full = false; return true; }
+    catch (e) { this.full = true; this.say(STORE_MSG.full()); return false; }
+  },
+  drop(key) { try { localStorage.removeItem(key); } catch (e) {} },
+  /* 지금 얼마나 쓰고 있는지 — 설정 화면 막대가 이 값 하나만 봅니다 */
+  usage() {
+    let used = 0, photo = 0, shots = 0;
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        const v = localStorage.getItem(k) || '';
+        used += k.length + v.length;
+        const m = v.match(PHOTO_RE);
+        if (m) { shots += m.length; photo += m.reduce((a, x) => a + x.length, 0); }
+      }
+    } catch (e) {}
+    return { used, photo, shots, limit: STORE_LIMIT, ratio: used / STORE_LIMIT };
+  },
+};
+
+/* 사진이 붙어 있는 기록에서 사진만 떼어냅니다 (칸이 없을 때 마지막 수단) */
+const withoutPhoto = (ev) =>
+  (ev && ev.data && typeof ev.data.photo === 'string' && ev.data.photo.slice(0, 11) === 'data:image/')
+    ? { ...ev, data: { ...ev.data, photo: '' } } : ev;
+
+/* ══════════════════════════════════════════
    데이터 레이어 (localStorage / Supabase 교체 지점)
    ══════════════════════════════════════════ */
 const DB = {
@@ -28,23 +75,27 @@ const DB = {
       return { ...r, updatedAt: t };
     });
     const gone = [...prevMap.keys()].filter(Boolean);
-    localStorage.setItem(key, JSON.stringify(out));
+    /* 칸이 없으면 여기서 false 가 돌아옵니다. 부르는 쪽이 그걸 보고 판단합니다 —
+       예전처럼 실패를 못 본 척하면 기록이 조용히 사라집니다. */
+    const ok = STORE.set(key, JSON.stringify(out));
+    if (!ok) return false;
     if (typeof SYNC !== 'undefined') {
       if (gone.length) SYNC.addTombstones(key, gone);
       if (changed.length) SYNC.markDirty(key, changed);
       if (gone.length || changed.length) SYNC.touch();
     }
+    return true;
   },
   // 서버에서 내려받은 내용을 그대로 반영할 때 사용 (updatedAt 재기록·툼스톤 생성 안 함 → 되돌이 동기화 방지)
   _raw(key, data) {
-    localStorage.setItem(key, JSON.stringify(data));
+    return STORE.set(key, JSON.stringify(data));
   },
   getIndividuals() { return this.getAll('cg_individuals'); },
-  saveIndividuals(list) { this.save('cg_individuals', list); },
+  saveIndividuals(list) { return this.save('cg_individuals', list); },
   getEvents() { return this.getAll('cg_events'); },
-  saveEvents(list) { this.save('cg_events', list); },
+  saveEvents(list) { return this.save('cg_events', list); },
   getReminders() { return this.getAll('cg_reminders'); },
-  saveReminders(list) { this.save('cg_reminders', list); },
+  saveReminders(list) { return this.save('cg_reminders', list); },
   addIndividual(ind) {
     const list = this.getIndividuals();
     list.push({ ...ind, id: uuid(), createdAt: now() });
@@ -53,15 +104,26 @@ const DB = {
   },
   addEvents(events) {
     const createdAt = now();
-    const added = (events || []).map(ev => ({ ...ev, id: uuid(), createdAt }));
+    let added = (events || []).map(ev => ({ ...ev, id: uuid(), createdAt }));
     if (!added.length) return [];
-    this.saveEvents([...this.getEvents(), ...added]);
+    /* 칸이 꽉 차서 못 적었으면 — 사진만 떼고 한 번 더 넣어 봅니다.
+       사진을 잃는 건 아깝지만, 기록까지 통째로 잃는 것보다는 낫습니다. */
+    if (!this.saveEvents([...this.getEvents(), ...added])) {
+      const slim = added.map(withoutPhoto);
+      const lostPhoto = slim.some((e, i) => e !== added[i]);
+      if (!lostPhoto) return [];
+      if (!this.saveEvents([...this.getEvents(), ...slim])) return [];
+      added = slim;
+      STORE.say(STORE_MSG.photoDropped());
+    }
     /* 첫 사진은 자동으로 얼굴(대표사진)로 잡아 둡니다.
+       ★ v1.2부터 사진을 복사하지 않고 "몇 번 기록의 사진"이라고 가리키기만 합니다.
+         예전에는 같은 사진이 기록과 프로필에 두 벌 쌓여 칸을 두 배로 먹었습니다.
        이미 얼굴이 있는 아이는 사진을 더 올려도 바뀌지 않습니다 — 바꾸려면 사진을 눌러 지정. */
     added.forEach(ev => {
       if (ev.type !== 'photo' || !ev.data || !ev.data.photo || !ev.individualId) return;
       const me = this.getIndividuals().find(i => i.id === ev.individualId);
-      if (me && !me.avatar) this.updateIndividual(ev.individualId, { avatar: ev.data.photo });
+      if (me && !me.avatarRef && !me.avatar) this.updateIndividual(ev.individualId, { avatarRef: ev.id });
     });
     return added;
   },
@@ -182,7 +244,7 @@ const DB = {
     const merged = [...new Set([...this.getReadReminderIds(), ...ids])];
     // 부화 예정은 저장하지 않고 계산해서 만들므로(id가 'H:'로 시작) 그것도 읽음 목록에 남깁니다
     const valid = new Set(allAlerts().map(r => r.id));
-    localStorage.setItem('cg_read_reminders', JSON.stringify(merged.filter(id => valid.has(id))));
+    STORE.set('cg_read_reminders', JSON.stringify(merged.filter(id => valid.has(id))));
   },
   saveSettings(s) {
     let prev = {};
@@ -190,10 +252,10 @@ const DB = {
     let same = false;
     try { same = JSON.stringify({ ...prev, _updatedAt: 0 }) === JSON.stringify({ ...s, _updatedAt: 0 }); } catch { same = false; }
     const next = same ? { ...s, _updatedAt: prev._updatedAt || now() } : { ...s, _updatedAt: now() };
-    localStorage.setItem('cg_settings', JSON.stringify(next));
+    STORE.set('cg_settings', JSON.stringify(next));
     if (typeof SYNC !== 'undefined' && !same) { SYNC.markDirty('cg_settings', ['main']); SYNC.touch(); }
   },
-  _rawSettings(s) { localStorage.setItem('cg_settings', JSON.stringify(s)); },
+  _rawSettings(s) { STORE.set('cg_settings', JSON.stringify(s)); },
   deleteIndividual(id) {
     this.saveIndividuals(this.getIndividuals().filter(i => i.id !== id));
     this.saveEvents(this.getEvents().filter(e => e.individualId !== id));
@@ -225,7 +287,7 @@ const DB = {
     if (!keep || !drop) return null;
 
     const PROFILE = ['gender', 'morph', 'spots', 'hatchDate', 'status', 'salePrice',
-                     'avatar', 'isExternal', 'isFromCreGunseol', 'favorite', 'keep', 'babyNotes', 'shareCode'];
+                     'avatar', 'avatarRef', 'isExternal', 'isFromCreGunseol', 'favorite', 'keep', 'babyNotes', 'shareCode'];
     const src = profileFrom === 'drop' ? drop : keep;
     const alt = profileFrom === 'drop' ? keep : drop;
     const blank = v => v === undefined || v === null || v === '' || v === 'unknown' || v === false;
@@ -374,7 +436,7 @@ const SERVER = {
 
    인터넷이 없거나 파일을 못 받으면 아무 것도 막지 않습니다(앱은 그대로 씁니다).
    ══════════════════════════════════════════ */
-const APP_VERSION = '1.1';
+const APP_VERSION = '1.2';
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -443,9 +505,9 @@ const SYNC = {
   cfg()  { return SERVER; },
   ses()  { try { return JSON.parse(localStorage.getItem('cg_sync_session') || 'null'); } catch { return null; } },
   st()   { try { return JSON.parse(localStorage.getItem('cg_sync_state') || '{}'); } catch { return {}; } },
-  saveCfg(c) { localStorage.setItem('cg_sync_cfg', JSON.stringify(c)); this.emit(); },
-  saveSes(s) { s ? localStorage.setItem('cg_sync_session', JSON.stringify(s)) : localStorage.removeItem('cg_sync_session'); this.emit(); },
-  saveSt(patch) { localStorage.setItem('cg_sync_state', JSON.stringify({ ...this.st(), ...patch })); this.emit(); },
+  saveCfg(c) { STORE.set('cg_sync_cfg', JSON.stringify(c)); this.emit(); },
+  saveSes(s) { s ? STORE.set('cg_sync_session', JSON.stringify(s)) : STORE.drop('cg_sync_session'); this.emit(); },
+  saveSt(patch) { STORE.set('cg_sync_state', JSON.stringify({ ...this.st(), ...patch })); this.emit(); },
 
   configured() { const c = this.cfg(); return !!(c.url && c.key); },
   loggedIn()   { const s = this.ses(); return !!(s && s.access_token); },
@@ -464,15 +526,15 @@ const SYNC = {
     if (!kind) return;
     const set = new Set(this.dirty());
     ids.forEach(id => set.add(kind + '|' + id));
-    localStorage.setItem('cg_dirty', JSON.stringify([...set]));
+    STORE.set('cg_dirty', JSON.stringify([...set]));
   },
   clearDirty(keys) {
     const done = new Set(keys);
-    localStorage.setItem('cg_dirty', JSON.stringify(this.dirty().filter(k => !done.has(k))));
+    STORE.set('cg_dirty', JSON.stringify(this.dirty().filter(k => !done.has(k))));
   },
   markAllDirty() {
     const keys = this.localRecords().map(r => r.kind + '|' + r.id);
-    localStorage.setItem('cg_dirty', JSON.stringify(keys));
+    STORE.set('cg_dirty', JSON.stringify(keys));
   },
 
   /* ── 삭제 표식 ── */
@@ -484,11 +546,11 @@ const SYNC = {
     const list = this.tombstones();
     const seen = new Set(list.map(x => x.kind + '|' + x.id));
     ids.forEach(id => { if (!seen.has(kind + '|' + id)) list.push({ kind, id, at: t }); });
-    localStorage.setItem('cg_tombstones', JSON.stringify(list));
+    STORE.set('cg_tombstones', JSON.stringify(list));
   },
   clearTombstones(done) {
     const gone = new Set(done.map(x => x.kind + '|' + x.id));
-    localStorage.setItem('cg_tombstones', JSON.stringify(this.tombstones().filter(x => !gone.has(x.kind + '|' + x.id))));
+    STORE.set('cg_tombstones', JSON.stringify(this.tombstones().filter(x => !gone.has(x.kind + '|' + x.id))));
   },
 
   /* ── 저장이 일어나면 잠시 뒤 자동 동기화 ── */
@@ -748,8 +810,8 @@ const SYNC = {
     const rows = await res.json();
     SYNC_KINDS.forEach(({ store }) => DB._raw(store, []));
     this.applyRemote(rows);
-    localStorage.setItem('cg_tombstones', '[]');
-    localStorage.setItem('cg_dirty', '[]');
+    STORE.set('cg_tombstones', '[]');
+    STORE.set('cg_dirty', '[]');
     this.saveSt({ cursor: null, pushedAt: now(), lastSyncAt: now(), lastError: null });
     await this.pull();
     this.emit(true);
@@ -1556,6 +1618,19 @@ const say = (polite, friendly, short) => {
 /* 한 문장이 길면 의미 단위로 줄을 나눕니다 (화면은 pre-line 으로 그립니다) */
 const twoLine = (head, tail) => `${head}\n${tail}`;
 
+/* 저장 칸이 모자랄 때 드리는 말씀 — STORE 가 이 두 마디만 씁니다 */
+const STORE_MSG = {
+  full: () => say('저장 공간이 가득 찼어요.\n설정에서 사진을 좀 정리해 주세요 🗂️',
+                  '저장 공간이 꽉 찼어요!\n설정에서 사진 좀 정리해 주세요 🗂️',
+                  '저장 공간 가득'),
+  photoDropped: () => say('공간이 모자라 사진은 못 넣었어요.\n기록은 저장했습니다.',
+                          '공간이 모자라서 사진은 못 넣었어요!\n기록은 저장했어요',
+                          '공간 부족 · 사진 빼고 저장'),
+  near: (pct) => say(`저장 공간을 ${pct}% 썼어요.\n사진을 좀 정리해 두시면 좋겠어요.`,
+                     `저장 공간 ${pct}% 썼어요!\n사진 좀 정리해 두시면 좋아요`,
+                     `저장 공간 ${pct}%`),
+};
+
 /* 날짜 수는 숫자로 씁니다.
    ★ "사흘·아흐레·열흘" 같은 세는 말은 못 알아듣는 분이 많아 v4.9에서 숫자로 되돌렸습니다.
      다시 세는 말로 바꾸지 마세요. */
@@ -1731,7 +1806,7 @@ function publicSnapshot(gecko, allInds, allEvs) {
     gender: gecko.gender || 'unknown',
     morph: String(gecko.morph || '').trim(),
     hatchDate: gecko.hatchDate || '',
-    avatar: gecko.avatar || '',
+    avatar: avatarSrc(gecko, evs) || '',
     sire: nameOf(gecko.sireId),
     dam: nameOf(gecko.damId),
     litter: sibs,
@@ -1946,7 +2021,7 @@ function nudgeCandidates(individuals, events) {
     });
 
     // ④ 사진 한 장도 없는 아이
-    if (!i.avatar && countOf(i.id, 'photo') === 0) out.push({
+    if (!avatarSrc(i, evs) && countOf(i.id, 'photo') === 0) out.push({
       key: 'photo', prio: 4, indId: i.id, weight: daysAgo(i.createdAt) || 0, emoji: '📷', go: 'chat',
       text: say(`${eunneun(nm)} 아직 사진이 한 장도 없어요.\n오늘 한 장 남겨두실래요?`,
                 `${nm} 사진이 하나도 없네요!\n오늘 한 장 찍어주실래요? 📷`,
@@ -2399,6 +2474,25 @@ function allAlerts() {
 }
 
 // 예전 버전이 저장해 둔 '부화·산란 예정' 알림은 이제 계산으로 대체되므로 한 번만 정리합니다
+/* 예전에 얼굴(대표사진)로 통째 복사해 둔 사진을 "가리키기"로 바꿉니다.
+   ★ 기록에 똑같은 사진이 있는 아이만 바꿉니다. 짝이 없는 사진은 그대로 둡니다 —
+     가리킬 곳이 없는데 지우면 그 아이 얼굴이 사라지니까요.
+   한 번 돌고 나면 avatar 가 비어 있어 다음부터는 아무 일도 하지 않습니다. */
+function dedupeAvatars() {
+  const inds = DB.getIndividuals();
+  const evs = DB.getEvents();
+  let changed = 0;
+  const next = inds.map(i => {
+    if (!i.avatar || i.avatarRef) return i;
+    const hit = evs.find(e => e.individualId === i.id && e.data && e.data.photo === i.avatar);
+    if (!hit) return i;
+    changed++;
+    return { ...i, avatarRef: hit.id, avatar: '' };
+  });
+  if (changed) DB.saveIndividuals(next);
+  return changed;
+}
+
 function purgeStoredHatchReminders() {
   const rs = DB.getReminders();
   const next = rs.filter(r => r.type !== 'hatching_expected' && r.type !== 'laying_expected');
@@ -2502,11 +2596,21 @@ const mainKeyOf = ev => (MAIN_FIELD[ev.type] || [null])[0];
 const mainLabelOf = ev => (MAIN_FIELD[ev.type] || [null, ''])[1];
 const mainValOf = ev => { const k = mainKeyOf(ev); return k ? (ev.data && ev.data[k]) || '' : ''; };
 
-// 대표사진: 지정된 avatar → 없으면 "첫 사진"
-// (예전엔 최근 사진이라 새 사진을 올릴 때마다 얼굴이 바뀌었습니다)
-function avatarSrc(gecko) {
+/* 대표사진(얼굴)을 찾아오는 유일한 곳.
+   순서: 가리켜 둔 기록(avatarRef) → 옛 방식으로 통째 넣어 둔 사진(avatar) → 첫 사진
+   ★ v1.2부터 얼굴은 사진을 복사하지 않고 "몇 번 기록"이라고 가리키기만 합니다.
+     avatar 필드는 예전에 저장된 것을 계속 보여드리기 위해 남겨 둔 자리입니다 — 새로 쓰지 마세요.
+   (예전엔 최근 사진이라 새 사진을 올릴 때마다 얼굴이 바뀌었습니다) */
+function avatarSrc(gecko, allEvents) {
+  if (!gecko) return null;
+  let cache = allEvents;
+  const mine = () => (cache || (cache = DB.getEvents())).filter(e => e.individualId === gecko.id);
+  if (gecko.avatarRef) {
+    const hit = mine().find(e => e.id === gecko.avatarRef);
+    if (hit && hit.data && hit.data.photo) return hit.data.photo;
+  }
   if (gecko.avatar) return gecko.avatar;
-  const p = DB.getEventsFor(gecko.id)
+  const p = mine()
     .filter(e => e.type === 'photo' && e.data && e.data.photo)
     .sort((a, b) => (a.date + (a.createdAt || '')) < (b.date + (b.createdAt || '')) ? -1 : 1)[0];
   return p ? p.data.photo : null;
@@ -3269,6 +3373,7 @@ function App() {
   const [toast, showToast] = useToast();
   const [individuals, setIndividuals] = useState(() => DB.getIndividuals());
   const [remVer, setRemVer] = useState(0);
+  const [storeMsg, setStoreMsg] = useState('');   // 저장 칸이 모자랄 때 띄우는 안내
 
   const refreshIndividuals = () => setIndividuals(DB.getIndividuals());
   const refreshReminders = () => setRemVer(v => v + 1);
@@ -3276,6 +3381,14 @@ function App() {
   // 예전 버전이 저장해 둔 '부화 예정' 알림 정리 (이제 산란기록에서 매번 계산합니다)
   useEffect(() => {
     if (purgeStoredHatchReminders()) setRemVer(v => v + 1);
+    if (dedupeAvatars()) refreshIndividuals();   // 얼굴로 복사해 둔 사진 한 벌로 줄이기 (한 번만)
+  }, []);
+
+  /* 저장 칸이 모자라면 화면 맨 위에 붙여 알려드립니다.
+     ★ 여기가 없던 v1.1까지는 저장 실패가 아무 소리 없이 지나갔습니다. */
+  useEffect(() => {
+    STORE.listen((msg) => setStoreMsg(msg));
+    return () => STORE.listen(null);
   }, []);
 
   // 서버 동기화: 앱을 켤 때 / 다시 앱으로 돌아올 때 / 인터넷이 다시 연결될 때
@@ -3351,6 +3464,14 @@ function App() {
         <div className="updbar">
           <span>새 버전이 있어요{VER.note() ? ' — ' + VER.note() : ''}</span>
           <button onClick={() => VER.refresh()}>새로고침</button>
+        </div>
+      ) : null}
+
+      {/* 저장 칸 안내 — 기록이 조용히 사라지지 않도록 (v1.2) */}
+      {storeMsg ? (
+        <div className="updbar hard" style={{whiteSpace:'pre-line'}} data-testid="store-bar">
+          <span>{storeMsg}</span>
+          <button onClick={() => { setStoreMsg(''); navigate('settings'); }}>정리하기</button>
         </div>
       ) : null}
 
@@ -4725,7 +4846,7 @@ function GeckoCard({ gecko, onClick, onToggleFav }) {
   const feedDays = lastFeed ? Math.floor((new Date(todayStr()) - new Date(lastFeed.date)) / 86400000) : null;
   const stKey = gecko.status || 'own';
   const st = STATUS[stKey] || STATUS.own;
-  const av = avatarSrc(gecko);
+  const av = avatarSrc(gecko, events);
   return (
     <div className="gecko-card" onClick={onClick}>
       <div className="gecko-avatar"
@@ -6001,8 +6122,10 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
     e.target.value = '';
     if (!file) return;
     compressImage(file, (src) => {
-      DB.addEvent({ individualId: gecko.id, type: 'photo', date: todayStr(), data: { photo: src } });
-      DB.updateIndividual(gecko.id, { avatar: src });
+      // 사진은 기록에 한 벌만 두고, 얼굴은 그 기록을 가리킵니다 (같은 사진 두 벌 금지)
+      const ev = DB.addEvent({ individualId: gecko.id, type: 'photo', date: todayStr(), data: { photo: src } });
+      if (!ev) return refreshLocal();
+      DB.updateIndividual(gecko.id, { avatarRef: ev.id, avatar: '' });
       refreshLocal();
       showToast('📷 대표사진을 바꿨어요');
     });
@@ -6106,7 +6229,7 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
       <div style={{padding:'16px 16px 0'}}>
         <div className="card">
           <div style={{display:'flex', alignItems:'center', gap:14}}>
-            {(() => { const av = avatarSrc(gecko); return (
+            {(() => { const av = avatarSrc(gecko, events); return (
               <button onClick={() => avatarFileRef.current && avatarFileRef.current.click()}
                 title="사진 바꾸기"
                 style={{width:64, height:64, borderRadius:'50%', flexShrink:0, border:'2px solid var(--border)', padding:0, cursor:'pointer',
@@ -6600,7 +6723,7 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
                       <div className="timeline-detail">{formatEventDetail(ev)}</div>
                       {ev.data?.photo && (
                         <img src={ev.data.photo} alt="기록 사진" style={{maxWidth:150, borderRadius:8, marginTop:6, display:'block', border:'1px solid var(--border)', cursor:'pointer'}}
-                          onClick={() => setPhotoView({ src: ev.data.photo, date: ev.date })} />
+                          onClick={() => setPhotoView({ src: ev.data.photo, date: ev.date, id: ev.id })} />
                       )}
                       {ev.data?.notes && ev.type !== 'feeding' && ev.type !== 'memo' && (
                         <div style={{fontSize:12, color:'var(--text3)', marginTop:2}}>{ev.data.notes}</div>
@@ -6668,7 +6791,7 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
           <img src={photoView.src} alt="사진 크게 보기" style={{maxWidth:'92%', maxHeight:'68%', borderRadius:12}} onClick={e => e.stopPropagation()} />
           <div style={{display:'flex', gap:8, flexWrap:'wrap', justifyContent:'center'}} onClick={e => e.stopPropagation()}>
             <a className="btn btn-primary btn-sm" style={{width:'auto', textDecoration:'none'}} href={photoView.src} download={`${gecko.name}_${photoView.date}.jpg`}>⬇ 다운로드</a>
-            <button className="btn btn-secondary btn-sm" style={{width:'auto'}} onClick={() => { DB.updateIndividual(gecko.id, { avatar: photoView.src }); refreshLocal(); showToast('⭐ 대표사진 설정 완료'); setPhotoView(null); }}>⭐ 대표사진으로</button>
+            <button className="btn btn-secondary btn-sm" style={{width:'auto'}} onClick={() => { DB.updateIndividual(gecko.id, { avatarRef: photoView.id, avatar: '' }); refreshLocal(); showToast('⭐ 대표사진 설정 완료'); setPhotoView(null); }}>⭐ 대표사진으로</button>
             <button className="btn btn-secondary btn-sm" style={{width:'auto'}} onClick={() => setPhotoView(null)}>닫기</button>
           </div>
         </div>
@@ -7922,6 +8045,42 @@ function SyncCard({ showToast, refreshIndividuals }) {
   );
 }
 
+/* 저장 공간 막대.
+   ★ 숫자는 STORE.usage() 한 곳에서만 옵니다 — 화면에서 다시 세지 마세요.
+   사진이 칸의 대부분을 먹기 때문에 "사진이 몇 장, 얼마"까지 같이 보여드립니다. */
+function StorageCard() {
+  const u = STORE.usage();
+  const pct = Math.min(100, Math.round(u.ratio * 100));
+  const mb = (n) => (n / 1000000).toFixed(2) + 'MB';
+  const color = pct >= 90 ? 'var(--danger, #B3362B)' : pct >= STORE_WARN * 100 ? '#C87F2F' : '#2E7D46';
+  return (
+    <div className="card" style={{margin:0}} data-testid="storage-card">
+      <div style={{fontSize:13, fontWeight:700, marginBottom:4, color:'var(--text2)'}}>🗂️ 저장 공간</div>
+      <div style={{fontSize:12, color:'var(--text3)', marginBottom:10, lineHeight:1.6}}>
+        기록은 이 기기 안에 저장돼요. 칸이 꽉 차면 새 기록이 저장되지 않아요.
+      </div>
+      <div style={{height:10, borderRadius:6, background:'var(--bg3)', overflow:'hidden'}}>
+        <div style={{width: Math.max(2, pct) + '%', height:'100%', background: color, borderRadius:6}} />
+      </div>
+      <div style={{display:'flex', justifyContent:'space-between', marginTop:7, fontSize:12, color:'var(--text2)'}}>
+        <span><b style={{color}}>{mb(u.used)}</b> / 약 5MB</span>
+        <span style={{fontVariantNumeric:'tabular-nums'}}>{pct}%</span>
+      </div>
+      <div style={{fontSize:11.5, color:'var(--text3)', marginTop:6, lineHeight:1.6}}>
+        {u.shots > 0
+          ? `그중 사진 ${u.shots}장이 ${mb(u.photo)}예요 (${Math.round(u.photo / Math.max(1, u.used) * 100)}%).`
+          : '아직 사진은 없어요.'}
+      </div>
+      {pct >= STORE_WARN * 100 && (
+        <div style={{marginTop:9, padding:'9px 11px', borderRadius:9, background:'var(--bg3)',
+                     fontSize:12, color:'var(--text2)', lineHeight:1.6, whiteSpace:'pre-line'}}>
+          {STORE_MSG.near(pct)}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
   const [settings, setSettings] = useState(() => DB.getSettings());
   const setNaming = (v) => {
@@ -8096,6 +8255,7 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
         </div>
         <DupMergeCard showToast={showToast} refreshIndividuals={refreshIndividuals} />
         <SyncCard showToast={showToast} refreshIndividuals={refreshIndividuals} />
+        <StorageCard />
         <div className="card" style={{margin:0}}>
           <div style={{fontSize:13, fontWeight:700, marginBottom:12, color:'var(--text2)'}}>데이터</div>
           <div style={{display:'flex', flexDirection:'column', gap:8}}>
