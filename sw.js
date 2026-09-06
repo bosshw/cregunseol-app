@@ -1,4 +1,4 @@
-const CACHE = 'creg-v13';
+const CACHE = 'creg-v14';
 
 // 화면을 그리는 데 꼭 필요한 파일 — 이것도 폰에 저장해둬야 인터넷 없이 열립니다
 const ASSETS = [
