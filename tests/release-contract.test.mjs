@@ -26,7 +26,7 @@ test("keeps storage, synchronization, and core workflows intact", async () => {
     assert.ok(source.includes(contract), `missing contract: ${contract}`);
   }
 
-  assert.match(source, /const APP_VERSION = '1\.2'/);
+  assert.match(source, /const APP_VERSION = '1\.3'/);
   assert.match(source, /Powered by cre_construct · CC/);
   assert.doesNotMatch(source, /Powered by 크레건설/);
   assert.match(source, /addEvents\(events\)/);
@@ -43,10 +43,10 @@ test("keeps service worker and release metadata aligned", async () => {
     readFile(file("version.json"), "utf8").then(JSON.parse),
   ]);
 
-  assert.equal(version.app, "1.2");
+  assert.equal(version.app, "1.3");
   assert.equal(version.schema, 1);
   assert.equal(version.minSchema, 1);
-  assert.match(worker, /const CACHE = 'creg-v12'/);
+  assert.match(worker, /const CACHE = 'creg-v13'/);
 
   for (const asset of [
     "./index.html",
@@ -170,7 +170,7 @@ test("keeps the v4.8 kinship, morph and voice contracts", async () => {
   // 설정 미리보기는 고정 견본으로 — 데이터가 없는 날에도 차이가 보여야 합니다
   assert.ok(source.includes("{voiceSample().map("), "settings preview must use voiceSample()");
   // 버전 문자열 4곳
-  assert.ok(source.includes("const APP_VERSION = '1.2'"), "APP_VERSION must be 1.2");
+  assert.ok(source.includes("const APP_VERSION = '1.3'"), "APP_VERSION must be 1.3");
 });
 
 test("keeps the v5.0 particle, line-break and calendar fixes", async () => {
@@ -197,7 +197,7 @@ test("keeps the v5.0 particle, line-break and calendar fixes", async () => {
   assert.doesNotMatch(source, /'🍽️🥩'/, "fed emoji must be a single icon");
   // 홈 한 줄은 인사만 합니다 (v5.2 — 할 일은 브리핑 카드가 말합니다)
   assert.doesNotMatch(source, /\[greetLine\(\), what\]/, "home line no longer lists jobs");
-  assert.ok(source.includes("APP_VERSION = '1.2'"), "APP_VERSION must be 1.2");
+  assert.ok(source.includes("APP_VERSION = '1.3'"), "APP_VERSION must be 1.3");
 
   // 캘린더 먹이 줄에 이모지가 두 번 나오면 안 됩니다 (줄 앞에 이미 🦗/🥣 가 붙습니다)
   assert.ok(source.includes("if (e.type === 'feeding') label = label.replace"), "feed label must drop its own emoji");
@@ -234,7 +234,7 @@ test("keeps the v4.9 hatching, morph and wording fixes", async () => {
   assert.ok(source.includes("const dayWord = (n) => `${Math.abs(Math.round(Number(n) || 0))}일`"), "dayWord must be numeric");
   // 탭 이름
   assert.ok(source.includes("브리핑"), "reminders tab is now 브리핑");
-  assert.ok(source.includes("const APP_VERSION = '1.2'"), "APP_VERSION must be 1.2");
+  assert.ok(source.includes("const APP_VERSION = '1.3'"), "APP_VERSION must be 1.3");
 });
 
 test("keeps the v5.2 nudge contracts", async () => {
@@ -277,7 +277,7 @@ test("keeps the v5.2 nudge contracts", async () => {
   assert.ok(source.includes('data-testid="nudge-go"'), "nudge needs an action button");
   assert.ok(source.includes("recordNudge(nudge)"), "reminders screen must record the nudge");
 
-  assert.ok(source.includes("APP_VERSION = '1.2'"), "APP_VERSION must be 1.2");
+  assert.ok(source.includes("APP_VERSION = '1.3'"), "APP_VERSION must be 1.3");
 });
 
 test("keeps the v5.3 public-record contracts", async () => {
@@ -330,7 +330,7 @@ test("keeps the v5.3 public-record contracts", async () => {
   // 화면 계약
   assert.ok(source.includes('data-testid="public-card"'), "profile needs the public card");
   assert.ok(source.includes('data-testid="public-toggle"'), "public card needs its toggle");
-  assert.ok(source.includes("APP_VERSION = '1.2'"), "APP_VERSION must be 1.2");
+  assert.ok(source.includes("APP_VERSION = '1.3'"), "APP_VERSION must be 1.3");
 });
 
 test("keeps the v5.4 away / condition / memory contracts", async () => {
@@ -386,7 +386,7 @@ test("keeps the v5.4 away / condition / memory contracts", async () => {
     assert.ok(source.includes(`data-testid="${id}"`), `missing screen contract: ${id}`);
   }
   assert.ok(source.includes("data-testid={`cond-${c.key}`}"), "condition buttons need per-level testids");
-  assert.ok(source.includes("APP_VERSION = '1.2'"), "APP_VERSION must be 1.2");
+  assert.ok(source.includes("APP_VERSION = '1.3'"), "APP_VERSION must be 1.3");
 });
 
 test("keeps the v1.0 laying-season contracts", async () => {
@@ -435,7 +435,7 @@ test("keeps the v1.0 laying-season contracts", async () => {
   assert.ok(source.includes("data-testid={`season-${r.key}`}"), "each answer needs its own testid");
 
   // 정식 출시 — 버전은 1.0
-  assert.ok(source.includes("APP_VERSION = '1.2'"), "APP_VERSION must be 1.2");
+  assert.ok(source.includes("APP_VERSION = '1.3'"), "APP_VERSION must be 1.3");
 });
 
 /* ══════════════════════════════════════════
@@ -491,4 +491,66 @@ test("keeps the v1.2 storage contracts", async () => {
     assert.ok(source.includes(`data-testid="${id}"`), `missing screen contract: ${id}`);
   }
   assert.ok(source.includes("const STORE_LIMIT = 5000000;"), "the measured limit must stay explicit");
+});
+
+/* ══════════════════════════════════════════
+   v1.3 — 사진은 서버로. 나가고 들어오는 곳은 PHOTO 하나뿐
+   ══════════════════════════════════════════ */
+test("keeps the v1.3 photo contracts", async () => {
+  const source = await readFile(file("src/app.jsx"), "utf8");
+  const photo = source.slice(source.indexOf("const PHOTO = {"), source.indexOf("function compressImage(file, cb)"));
+
+  // ① 버킷 이름과 올리기·지우기는 PHOTO 안에서만
+  assert.equal((source.match(/PHOTO_BUCKET/g) || []).length,
+    (photo.match(/PHOTO_BUCKET/g) || []).length + 1,
+    "PHOTO_BUCKET may only appear in its own declaration and inside PHOTO");
+  assert.match(photo, /\/storage\/v1\/object\/' \+ PHOTO_BUCKET/, "uploads live in PHOTO");
+  const outside = source.replace(photo, "");
+  assert.doesNotMatch(outside, /storage\/v1\/object/, "no screen may talk to storage directly");
+
+  // ② 사진을 받는 입구는 takePhoto 하나. compressImage 는 takePhoto 만 부릅니다
+  const calls = source.match(/compressImage\(/g) || [];
+  assert.equal(calls.length, 2, "compressImage: one declaration + one call from takePhoto");
+  const take = source.slice(source.indexOf("function takePhoto(file, cb)"));
+  assert.match(take.slice(0, 400), /compressImage\(file, \(dataUrl\)/, "takePhoto is the only caller");
+  assert.ok(source.includes("takePhoto(f, (src)"), "screens must use takePhoto");
+  assert.equal((source.match(/takePhoto\(/g) || []).length, 5, "4 screens + the declaration");
+
+  // ③ 못 올리면 폰에 담는다 — 인터넷이 없다고 기록이 사라지면 안 됩니다
+  assert.match(take, /if \(!PHOTO\.ready\(\)\) return cb\(dataUrl\);/, "offline still returns a photo");
+  assert.match(take, /PHOTO\.put\(dataUrl\)\.then\(url => cb\(url \|\| dataUrl\)\)/, "a failed upload falls back");
+  assert.match(photo, /if \(!url\) break;/, "flush stops at the first failure instead of hammering");
+
+  // ④ 올리기는 동기화보다 먼저 — 아니면 base64 가 기록에 실려 올라갑니다
+  const run = source.slice(source.indexOf("async run(reason = 'manual')"));
+  const iFlush = run.indexOf("PHOTO.flush(");
+  const iPush = run.indexOf("await this.push()");
+  assert.ok(iFlush > 0 && iFlush < iPush, "photos must be uploaded before records are pushed");
+
+  // ⑤ 기록이 사라지면 서버 사진도 — 다만 실패가 삭제를 막으면 안 됩니다
+  assert.ok(source.includes("if (isPhotoUrl(gp)) { try { PHOTO.remove(gp); } catch (e) {} }"),
+    "a removed record takes its server photo with it, quietly");
+
+  // ⑥ 화질은 700px · 0.65 (다중 사용자 용량 때문에 900px 에서 내렸습니다)
+  assert.ok(source.includes("const PHOTO_MAX      = 700;"), "PHOTO_MAX must be 700");
+  assert.ok(source.includes("const PHOTO_Q        = 0.65;"), "PHOTO_Q must be 0.65");
+  assert.doesNotMatch(source, /const max = 500;/, "the old 500px cap must stay removed");
+
+  // ⑦ 화면 계약
+  for (const id of ["photo-move", "storage-photos"]) {
+    assert.ok(source.includes(`data-testid="${id}"`), `missing screen contract: ${id}`);
+  }
+});
+
+/* 서버가 자지 않게 — 무료 프로젝트는 일주일 조용하면 정지됩니다 */
+test("keeps the server awake", async () => {
+  const wf = await readFile(file(".github/workflows/supabase-keepalive.yml"), "utf8");
+  assert.match(wf, /schedule:/, "the ping must be scheduled, not manual only");
+  assert.match(wf, /cron: '17 3 \* \* \*'/, "once a day");
+  assert.match(wf, /rest\/v1\/cg_public\?select=code&limit=1/, "a light read is enough");
+  // 진짜 비밀 키가 들어갔는지만 봅니다 (주석의 "넣지 마세요" 경고문은 통과해야 합니다)
+  assert.doesNotMatch(wf, /sb_secret_[A-Za-z0-9]/, "never put the secret key in a workflow");
+  assert.doesNotMatch(wf, /eyJ[A-Za-z0-9_-]{20,}/, "never put a service-role JWT in a workflow");
+  assert.match(wf, /sb_publishable_/, "the publishable key is the one that belongs here");
+  assert.match(wf, /exit 1/, "a paused project must fail loudly, not pass silently");
 });
