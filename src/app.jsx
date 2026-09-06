@@ -374,7 +374,7 @@ const SERVER = {
 
    인터넷이 없거나 파일을 못 받으면 아무 것도 막지 않습니다(앱은 그대로 씁니다).
    ══════════════════════════════════════════ */
-const APP_VERSION = '5.3';
+const APP_VERSION = '5.4';
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -862,6 +862,7 @@ const EVENT_TYPES = [
   { key: 'shed',         label: '탈피',   emoji: '🌿', color: '#6E8B74' },
   { key: 'feeding',      label: '먹이',   emoji: '🍽️', color: '#C87F2F' },
   { key: 'health',       label: '이상',   emoji: '⚠️', color: '#B3261E' },
+  { key: 'condition',    label: '컨디션', emoji: '🌤️', color: '#5B8C7B' },
   { key: 'env',          label: '온습도', emoji: '🌡️', color: '#3F7C8C' },
   { key: 'photo',        label: '사진',   emoji: '📷', color: '#8A8177' },
   { key: 'memo',         label: '메모',   emoji: '📝', color: '#A08D7C' },
@@ -872,7 +873,92 @@ const STATUS = {
   available: { label: '🏷️ 분양가능', color: '#2E7D46' },
   reserved:  { label: '📌 예약중',   color: '#C87F2F' },
   sold:      { label: '🤝 분양완료', color: '#8A64A8' },
+  gone:      { label: '🌈 떠남',     color: '#6F6480' },
 };
+
+/* ══════════════════════════════════════════
+   곁에 있는 아이 / 곁을 떠난 아이
+   ★ "지금 내가 돌보는 아이인가"는 isHere() 한 곳에서만 판단합니다.
+     v3.4의 알 판정(clutchRows), v4.8의 근친 판정(relationOf)과 같은 방식입니다.
+     예전엔 `status !== 'sold'` 가 여덟 군데에 흩어져 있어서
+     새 상태를 하나 더하면 어딘가에서 떠난 아이가 다시 튀어나왔습니다.
+
+   ★★ 떠난 아이도 혈통에서는 절대 빠지지 않습니다.
+     분양을 보내도, 무지개다리를 건너도, 그 아이 자식들의 근친 판정은 그 아이를 통합니다.
+     그래서 지우지 않고 "여기 없음"으로만 표시합니다.
+   ══════════════════════════════════════════ */
+const AWAY_STATUS = ['sold', 'gone'];
+const statusOf = (i) => (i && i.status) || 'own';
+/* 지금 내 손에 있는 아이 — 목록·먹이·제안·짝 추천은 전부 이 기준을 씁니다 */
+const isHere = (i) => !!i && !i.isExternal && AWAY_STATUS.indexOf(statusOf(i)) < 0;
+/* 곁을 떠난 아이 (분양 갔거나 무지개다리를 건넜거나) */
+const isAway = (i) => !!i && AWAY_STATUS.indexOf(statusOf(i)) >= 0;
+/* 지금 어디 있는지 한마디 — 혈통 카드가 씁니다 */
+function whereNow(i) {
+  if (!i) return '';
+  if (i.isExternal) return '외부';
+  const st = statusOf(i);
+  if (st === 'gone') return i.goneDate ? `떠남 ${fmtDate(i.goneDate)}` : '떠남';
+  if (st === 'sold') return '분양';
+  return '';
+}
+
+/* ══════════════════════════════════════════
+   오늘 컨디션 — 한 번 눌러두는 기록
+   ★ 지금까지는 "이상"이 생긴 뒤에야 기록이 시작됐습니다.
+     좋을 때도 한 번씩 눌러둬야 나중에 "언제부터 처졌는지"를 볼 수 있습니다.
+   ══════════════════════════════════════════ */
+
+/* 떠난 이유 — 고르지 않아도 됩니다 */
+const GONE_REASONS = ['폐사', '실종·탈출', '기타'];
+/* 폐사 기록이 있으면 그날을 기본 날짜로 씁니다 */
+function lastDeathDate(id, evs) {
+  const e = (evs || DB.getEvents())
+    .filter(x => x.individualId === id && x.type === 'health' && x.data && x.data.issue === '폐사')
+    .sort((a, b) => (a.date < b.date ? 1 : -1))[0];
+  return e ? e.date : '';
+}
+
+const CONDITIONS = [
+  { level: 3, key: 'good', label: '좋아요',   emoji: '😊', color: '#2E7D46' },
+  { level: 2, key: 'soso', label: '보통',     emoji: '😐', color: '#C87F2F' },
+  { level: 1, key: 'down', label: '처져요',   emoji: '😟', color: '#B3362B' },
+];
+const conditionOf = (lv) => CONDITIONS.find(c => c.level === Number(lv)) || null;
+const CONDITION_STALE = 14;      // 이만큼 안 적으면 "요즘 기록이 없어요"
+
+/* 한 아이의 컨디션 기록 — 최근 것부터 */
+function conditionLog(id, evs) {
+  return (evs || DB.getEvents())
+    .filter(e => e.individualId === id && e.type === 'condition' && e.data && e.data.level)
+    .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+}
+const conditionToday = (id, evs) => {
+  const t = todayStr();
+  return conditionLog(id, evs).find(e => e.date === t) || null;
+};
+
+/* 처지기 시작한 날 — "안 먹기 며칠 전부터 내려가 있었다"를 말하기 위한 계산.
+   최근 기록부터 거슬러 올라가며 2 이하가 이어진 날수를 셉니다. */
+function conditionDip(id, evs) {
+  const log = conditionLog(id, evs);
+  if (!log.length) return null;
+  let run = 0, from = null;
+  for (const e of log) {
+    if (Number(e.data.level) <= 2) { run++; from = e.date; } else break;
+  }
+  if (run < 2) return null;                       // 하루 처진 건 그냥 그날 컨디션입니다
+  return { days: -daysUntil(from), count: run, from };
+}
+
+/* 오늘 컨디션을 남깁니다 — 같은 날 두 번 누르면 덮어씁니다(하루 한 줄) */
+function setConditionToday(id, level) {
+  const t = todayStr();
+  const old = conditionToday(id);
+  if (old) { DB.updateEvent(old.id, { data: { ...(old.data || {}), level: Number(level) } }); return old.id; }
+  const e = DB.addEvent({ individualId: id, type: 'condition', date: t, data: { level: Number(level) } });
+  return e && e.id;
+}
 
 /* 만든 사람 문의 링크.
    여기에 주소를 박아두면 앱을 쓰는 모든 분에게 똑같이 보입니다.
@@ -1311,7 +1397,7 @@ function layingForecasts(individuals, events) {
 
   const out = [];
   inds.forEach(i => {
-    if ((i.status || 'own') === 'sold' || i.isExternal) return;
+    if (!isHere(i)) return;
     const ls = (laysBy[i.id] || []).slice().sort((a, b) => (a.date > b.date ? 1 : -1));
     const ms = (matesBy[i.id] || []).slice().sort((a, b) => (a.date > b.date ? 1 : -1));
     if (!ls.length && !ms.length) return;
@@ -1610,6 +1696,65 @@ const PUB = {
   },
 };
 
+/* ══════════════════════════════════════════
+   작년 오늘 — 같은 날짜에 있었던 일
+   ★ 브리핑 맨 위는 v5.2에서 "오늘의 제안"에 준 자리입니다.
+     권할 것이 없는 날에만 나옵니다. 두 개를 같이 띄우면 그때 없앤 중복이 되돌아옵니다.
+   ══════════════════════════════════════════ */
+
+const MEMORY_KINDS = {          // 무엇이 더 기억할 만한가 (작은 숫자가 먼저)
+  hatching: 1, laying: 2, distribution: 3, mating: 4, growth: 5, shed: 6, photo: 7,
+};
+
+function onThisDay(individuals, events) {
+  const list = individuals || DB.getIndividuals();
+  const evs = events || DB.getEvents();
+  const byId = {}; list.forEach(i => { byId[i.id] = i; });
+  const today = todayStr();
+  const md = today.slice(5);                                  // MM-DD
+  const thisYear = Number(today.slice(0, 4));
+
+  // ① 떠난 아이의 그날 — 1년, 2년…
+  const gone = list.filter(i => statusOf(i) === 'gone' && String(i.goneDate || '').slice(5) === md
+                                && Number(String(i.goneDate).slice(0, 4)) < thisYear);
+  if (gone.length) {
+    const g = gone[0];
+    const yrs = thisYear - Number(String(g.goneDate).slice(0, 4));
+    return {
+      kind: 'gone', indId: g.id, years: yrs,
+      text: say(`${yrs}년 전 오늘, ${eunneun(g.name)} 우리 곁을 떠났어요 🌈`,
+                `${yrs}년 전 오늘이 ${g.name} 떠난 날이에요 🌈`,
+                `${g.name} 기일 · ${yrs}년`),
+    };
+  }
+
+  // ② 그날 있었던 기록 중 가장 기억할 만한 것
+  const past = evs.filter(e => String(e.date || '').slice(5) === md
+                               && Number(String(e.date).slice(0, 4)) < thisYear
+                               && MEMORY_KINDS[e.type]);
+  if (!past.length) return null;
+  past.sort((a, b) => (Number(String(b.date).slice(0, 4)) - Number(String(a.date).slice(0, 4)))
+                      || (MEMORY_KINDS[a.type] - MEMORY_KINDS[b.type]));
+  const e = past[0];
+  const yrs = thisYear - Number(String(e.date).slice(0, 4));
+  const nm = (byId[e.individualId] || {}).name || '';
+  if (!nm) return null;
+  const ago = `${yrs}년 전 오늘`;
+  const d = e.data || {};
+  let what = '';
+  if (e.type === 'hatching')          what = say(`${nm} 알에서 ${d.count || ''}${d.count ? '마리가 ' : ''}부화했어요 🐣`, `${nm} 알에서 애기가 나왔어요! 🐣`, `${nm} 해칭`);
+  else if (e.type === 'laying')       what = say(`${iga(nm)} 알 ${d.eggCount || ''}${d.eggCount ? '개를 ' : ''}낳았어요 🥚`, `${nm} 산란한 날이에요! 🥚`, `${nm} 산란`);
+  else if (e.type === 'distribution') what = say(`${eunneun(nm)} 새 집으로 갔어요 🤝`, `${nm} 분양 간 날이에요 🤝`, `${nm} 분양`);
+  else if (e.type === 'mating')       what = say(`${iga(nm)} 메이팅을 했어요 💞`, `${nm} 메이팅한 날이에요 💞`, `${nm} 메이팅`);
+  else if (e.type === 'growth')       what = say(`${nm} 몸무게가 ${d.weight}그램이었어요 📏`, `${nm}, 그땐 ${d.weight}그램이었어요 📏`, `${nm} ${d.weight}g`);
+  else if (e.type === 'shed')         what = say(`${iga(nm)} 탈피를 했어요 🌿`, `${nm} 탈피한 날이에요 🌿`, `${nm} 탈피`);
+  else                                what = say(`${nm} 사진을 남겼어요 📷`, `${nm} 사진 찍은 날이에요 📷`, `${nm} 사진`);
+  return {
+    kind: e.type, indId: e.individualId, years: yrs,
+    text: toneNow() === 'short' ? `${yrs}년 전 · ${what}` : `${ago},\n${what}`,
+  };
+}
+
 /* 브리핑 맨 위 문장들 — 인사 + 오늘의 제안
    ★ 할 일은 바로 아래 카드가 말합니다. 여기서 또 나열하면 같은 말이 두 번 됩니다.
      (대표님 지적: 크동이 산란 하나가 네 자리에서 나왔습니다) */
@@ -1621,7 +1766,11 @@ function briefLines() {
   const n = todayNudge();
   if (n) { lines.push(n.text); return lines; }
 
-  // 권할 것도 없고 할 일도 없는 날에만 한마디
+  // 권할 것이 없으면 옛날 이야기를 한 줄 (자리는 하나뿐입니다)
+  const mem = onThisDay();
+  if (mem) { lines.push(mem.text); return lines; }
+
+  // 권할 것도, 옛날 이야기도, 할 일도 없는 날에만 한마디
   const s = todaySituation();
   const busy = s.feedDue || s.lay.length || s.hatch.length || s.etc.length || s.worried.length;
   if (!busy) lines.push(say('오늘은 특별히 챙기실 일이 없어요 🌿', '오늘은 한가해요! 좀 쉬셔도 돼요 🌿', '오늘 할 일 없음'));
@@ -1669,8 +1818,7 @@ function recordNudge(n) {
 
 /* 지금 권할 만한 것들 — 기록에 실제로 빈칸이 있을 때만 후보가 됩니다 */
 function nudgeCandidates(individuals, events) {
-  const inds = (individuals || DB.getIndividuals())
-    .filter(i => (i.status || 'own') !== 'sold' && !i.isExternal);
+  const inds = (individuals || DB.getIndividuals()).filter(isHere);
   const evs = events || DB.getEvents();
   const out = [];
   const mine = {};
@@ -2082,7 +2230,8 @@ function mateSuggestions(target, all, evs) {
   const events = evs || DB.getEvents();
   if (!target || !target.gender || target.gender === 'unknown') return { error: 'gender' };
   const want = target.gender === 'male' ? 'female' : 'male';
-  const pool = list.filter(i => i.id !== target.id && i.gender === want && i.status !== 'sold' && !i.external);
+  // ⚠️ 예전엔 `!i.external` 이라 오타로 외부 개체가 짝 후보에 섞였습니다. isHere 로 한 번에 거릅니다
+  const pool = list.filter(i => i.id !== target.id && i.gender === want && isHere(i));
   if (!pool.length) return { error: 'empty', want };
 
   const rows = pool.map(i => {
@@ -2187,7 +2336,7 @@ const feedWarn = () => {
 const isAte = (e) => !(e.data && (e.data.ate === false || e.data.skipped));
 
 function feedPlan(individuals, events) {
-  const inds = (individuals || DB.getIndividuals()).filter(i => (i.status || 'own') !== 'sold' && !i.isExternal);
+  const inds = (individuals || DB.getIndividuals()).filter(isHere);
   const evs = (events || DB.getEvents()).filter(e => e.type === 'feeding');
   const today = todayStr();
   const lastRound = evs.reduce((a, e) => (!a || e.date > a) ? e.date : a, null);
@@ -2364,6 +2513,13 @@ const RE_FEED  = /피딩|먹이|밥|먹였|먹었|먹임|먹여|급여|사료|�
 const RE_NOFEED = /안\s*먹|못\s*먹|먹지\s*않|거식|남겼|안먹|입질\s*없/;
 /* 개체 이상 — 말한 그대로 항목을 잡습니다.
    ⚠️ '죽었'처럼 다른 뜻으로도 쓰는 말(귀뚜라미가 죽었어)은 일부러 넣지 않았습니다. */
+/* 컨디션 말 — 이상(HEALTH_RULES)보다 뒤에서 봅니다. "거식"은 이상이지 컨디션이 아닙니다 */
+const CONDITION_RULES = [
+  [/컨디션\s*(좋|괜찮|양호)|쌩쌩|활발|기운\s*(좋|넘)|잘\s*지내/, 3],
+  [/컨디션\s*(별로|안\s*좋|나쁘)|처져|축\s*늘어|기운\s*없|힘\s*없|시들/, 1],
+  [/컨디션\s*(보통|그저|그냥)/, 2],
+];
+
 const HEALTH_RULES = [
   [/거식/, '거식'],
   [/탈피\s*부전|탈피부전|허물\s*(안|못)\s*벗|묵은\s*허물/, '탈피부전'],
@@ -2428,6 +2584,10 @@ function extractFacts(text) {
 
   // 개체 이상 — 거식·탈피부전·자절 같은 것을 따로 남깁니다
   HEALTH_RULES.forEach(([re, issue]) => { if (re.test(text)) push('health', { issue, notes: '' }); });
+
+  // 오늘 컨디션 — "컨디션 좋아", "처져 있어", "쌩쌩해"
+  const cond = CONDITION_RULES.find(([re]) => re.test(text));
+  if (cond) push('condition', { level: cond[1] });
 
   // 먹이: 충식(귀뚜라미 계열)과 일반식(슈퍼푸드) 구분
   const feedTrigger = RE_FEED.test(text) || CRICKET_RE.test(text) || SUPU_RE.test(text);
@@ -3181,7 +3341,7 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
   const [sortOpen, setSortOpen] = useState(false);
   const pickSort = (k) => { setSortKey(k); setSortOpen(false); DB.saveSettings({ ...DB.getSettings(), listSort: k }); };
   const activeInds = useMemo(
-    () => individuals.filter(i => (i.status || 'own') !== 'sold' && !i.isExternal),
+    () => individuals.filter(isHere),
     [individuals],
   );
   const namePlans = useMemo(() => nameFixPlan(individuals), [individuals]);
@@ -3189,7 +3349,8 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
     total: activeInds.length,
     fav: activeInds.filter(i => i.favorite).length,
     keep: activeInds.filter(i => i.keep).length,
-    sold: individuals.filter(i => (i.status || 'own') === 'sold').length,
+    sold: individuals.filter(i => statusOf(i) === 'sold').length,
+    gone: individuals.filter(i => statusOf(i) === 'gone').length,
   }), [activeInds, individuals]);
   const bySearch = list => list.filter(i =>
     i.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -4120,7 +4281,8 @@ function SaleSection({ individuals, navigate, showToast, refreshIndividuals }) {
   const [search, setSearch] = useState('');
   const sortKey = DB.getSettings().listSort || SORT_DEFAULT;
   const missingPrice = soldMissingPrice(individuals);
-  const soldCount = individuals.filter(i => (i.status || 'own') === 'sold' && !i.isExternal).length;
+  const soldCount = individuals.filter(i => statusOf(i) === 'sold' && !i.isExternal).length;
+  const goneCount = individuals.filter(i => statusOf(i) === 'gone' && !i.isExternal).length;
   const bySearch = list => list.filter(i =>
     i.name.toLowerCase().includes(search.toLowerCase()) ||
     (i.morph || '').toLowerCase().includes(search.toLowerCase()));
@@ -4134,7 +4296,8 @@ function SaleSection({ individuals, navigate, showToast, refreshIndividuals }) {
         <input className="input" placeholder="🔍 이름 또는 모프 검색" value={search} onChange={e => setSearch(e.target.value)} />
       </div>
       <div style={{display:'flex', gap:6, padding:'10px 16px 0'}}>
-        {[['available','분양가능'],['reserved','예약중'],['sold',`분양완료${soldCount ? ' ' + soldCount : ''}`]].map(([k, l]) => (
+        {[['available','분양가능'],['reserved','예약중'],['sold',`분양완료${soldCount ? ' ' + soldCount : ''}`],
+          ...(goneCount ? [['gone',`🌈 떠남 ${goneCount}`]] : [])].map(([k, l]) => (
           <button key={k} className="chip-btn" style={{fontSize:12, padding:'6px 11px', ...(saleFilter === k ? {background:'var(--accent-soft)', fontWeight:700} : {})}}
             onClick={() => setSaleFilter(k)}>{l}</button>
         ))}
@@ -4159,6 +4322,12 @@ function SaleSection({ individuals, navigate, showToast, refreshIndividuals }) {
       ) : saleList.map(gecko => (
         <div key={gecko.id}>
           <GeckoCard gecko={gecko} onClick={() => navigate('profile', { gecko })} onToggleFav={toggleFav} />
+          {saleFilter === 'gone' && (
+            <div style={{fontSize:11.5, color:'var(--text3)', padding:'8px 2px 2px', lineHeight:1.65}}>
+              곁을 떠난 아이들이에요. 목록·먹이·제안에서는 빠졌지만
+              혈통에는 그대로 남아서 자식들의 근친 판정에 계속 쓰입니다.
+            </div>
+          )}
           {saleFilter === 'sold' && (
             <div style={{margin:'-6px 16px 10px', fontSize:11.5, color: salePriceLabel(gecko) ? 'var(--accent2)' : 'var(--text3)'}}>
               {salePriceLabel(gecko) ? `분양가 ${salePriceLabel(gecko)}` : '분양가 미기록'}
@@ -4567,10 +4736,16 @@ function PedigreeCard({ gecko, navigate }) {
     <div style={{padding:'0 16px 12px'}}>
       <div className="card" style={{margin:0}}>
         <div style={{fontSize:13, fontWeight:700, color:'var(--text2)', marginBottom:8}}>🧬 혈통</div>
+        {[sire, dam, ...mates, ...kids].some(x => x && isAway(x)) && (
+          <div style={{fontSize:11, color:'var(--text3)', marginBottom:8, lineHeight:1.6}}>
+            분양 갔거나 떠난 아이도 혈통에는 그대로 남습니다.
+            {'\n'}근친 판정은 이 아이들을 통해 계속 이루어져요.
+          </div>
+        )}
         {(sire || dam) && (
           <div style={{display:'flex', flexWrap:'wrap', gap:6}}>
-            {sire && <button className="chip-btn" onClick={() => navigate('profile', { gecko: sire })}>부 {genderEmoji(sire.gender || 'male')} {sire.name}</button>}
-            {dam && <button className="chip-btn" onClick={() => navigate('profile', { gecko: dam })}>모 {genderEmoji(dam.gender || 'female')} {dam.name}</button>}
+            {sire && <button className="chip-btn" onClick={() => navigate('profile', { gecko: sire })}>부 {genderEmoji(sire.gender || 'male')} {sire.name}{awayTag(sire)}</button>}
+            {dam && <button className="chip-btn" onClick={() => navigate('profile', { gecko: dam })}>모 {genderEmoji(dam.gender || 'female')} {dam.name}{awayTag(dam)}</button>}
           </div>
         )}
         {mates.length > 0 && (
@@ -4580,7 +4755,7 @@ function PedigreeCard({ gecko, navigate }) {
             </div>
             <div style={{display:'flex', flexWrap:'wrap', gap:6}}>
               {mates.map(m => (
-                <button key={m.id} className="chip-btn" onClick={() => navigate('profile', { gecko: m })}>{genderEmoji(m.gender)} {m.name}</button>
+                <button key={m.id} className="chip-btn" onClick={() => navigate('profile', { gecko: m })}>{genderEmoji(m.gender)} {m.name}{awayTag(m)}</button>
               ))}
             </div>
           </div>
@@ -4590,7 +4765,7 @@ function PedigreeCard({ gecko, navigate }) {
             <div style={{fontSize:11, color:'var(--text3)', marginBottom:4}}>자식 {kids.length}마리</div>
             <div style={{display:'flex', flexWrap:'wrap', gap:6}}>
               {kids.map(k => (
-                <button key={k.id} className="chip-btn" onClick={() => navigate('profile', { gecko: k })}>{genderEmoji(k.gender)} {k.name}</button>
+                <button key={k.id} className="chip-btn" onClick={() => navigate('profile', { gecko: k })}>{genderEmoji(k.gender)} {k.name}{awayTag(k)}</button>
               ))}
             </div>
           </div>
@@ -4600,6 +4775,14 @@ function PedigreeCard({ gecko, navigate }) {
   );
 }
 
+
+/* 혈통 칩에 붙는 작은 꼬리표 — 지금 내 손에 없는 아이임을 알려줍니다 */
+function awayTag(i) {
+  const w = whereNow(i);
+  if (!w) return '';
+  const mark = statusOf(i) === 'gone' ? '🌈 ' : statusOf(i) === 'sold' ? '🤝 ' : '';
+  return ` · ${mark}${w}`;
+}
 
 /* ══════════════════════════════════════════
    단일 💬 대화형 등록/기록 화면
@@ -5704,6 +5887,9 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
   const [events, setEvents] = useState(() => DB.getEventsFor(initialGecko.id).filter(e => e.type !== 'ledger'));
   const [showShare, setShowShare] = useState(false);
   const [pubBusy, setPubBusy] = useState(false);       // 공개 기록 올리는 중
+  const [goneOpen, setGoneOpen] = useState(false);     // 곁을 떠났어요 입력
+  const [goneWhen, setGoneWhen] = useState(todayStr());
+  const [goneReason, setGoneReason] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [editVals, setEditVals] = useState({});
@@ -5921,6 +6107,78 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
         </div>
       </div>
 
+      {/* ── 오늘 컨디션 ──
+          좋을 때도 눌러둬야 나중에 "언제부터 처졌는지"를 볼 수 있습니다. */}
+      {isHere(gecko) && (
+        <div style={{padding:'0 16px 10px'}}>
+          <div className="card" style={{margin:0}} data-testid="condition-card">
+            <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', gap:10, marginBottom:9}}>
+              <div style={{fontSize:13.5, fontWeight:800}}>🌤️ 오늘 컨디션</div>
+              {(() => {
+                const dip = conditionDip(gecko.id, events);
+                const last = conditionLog(gecko.id, events)[0];
+                if (dip) return <span style={{fontSize:11, color:'var(--danger)', fontWeight:700}}>{dip.count}번째 처짐</span>;
+                if (!last) return <span style={{fontSize:11, color:'var(--text3)'}}>아직 기록 없음</span>;
+                return <span style={{fontSize:11, color:'var(--text3)'}}>최근 {agoWord(last.date)}</span>;
+              })()}
+            </div>
+            <div style={{display:'flex', gap:5}}>
+              {CONDITIONS.map(c => {
+                const cur = conditionToday(gecko.id, events);
+                const on = cur && Number(cur.data.level) === c.level;
+                return (
+                  <button key={c.key} className="chip-btn" data-testid={`cond-${c.key}`}
+                    style={{flex:1, padding:'9px 4px', fontSize:12.5,
+                      ...(on ? {background:'var(--accent-soft)', fontWeight:800, borderColor:'var(--accent-edge)'} : {})}}
+                    onClick={() => {
+                      setConditionToday(gecko.id, c.level);
+                      refreshLocal();
+                    }}>
+                    {c.emoji} {c.label}
+                  </button>
+                );
+              })}
+            </div>
+            {(() => {
+              const log = conditionLog(gecko.id, events).slice(0, 14).reverse();
+              if (log.length < 2) return null;
+              return (
+                <div style={{display:'flex', gap:3, marginTop:10, alignItems:'flex-end', height:22}}>
+                  {log.map(e => {
+                    const c = conditionOf(e.data.level);
+                    return <div key={e.id} title={`${e.date} ${c ? c.label : ''}`}
+                      style={{flex:1, height: c ? 6 + c.level * 5 : 6, borderRadius:2,
+                              background: c ? c.color : 'var(--border)', opacity:.75}} />;
+                  })}
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      )}
+
+      {/* 폐사 기록은 있는데 아직 목록에 남아 있는 아이 — 조용히 한 번 물어봅니다 */}
+      {isHere(gecko) && lastDeathDate(gecko.id, events) && (
+        <div style={{padding:'0 16px 10px'}}>
+          <div className="card" data-testid="gone-hint"
+            style={{margin:0, background:'var(--bg3)', borderLeft:'3px solid var(--text3)'}}>
+            <div style={{fontSize:12.5, color:'var(--text2)', lineHeight:1.65}}>
+              폐사 기록이 남아 있는데 아직 목록에 있어요.{'\n'}정리해 드릴까요? 기록은 지우지 않습니다.
+            </div>
+            <button className="btn btn-secondary btn-sm" style={{marginTop:9}}
+              onClick={() => {
+                setGoneOpen(true); setGoneWhen(lastDeathDate(gecko.id, events)); setGoneReason('폐사');
+                setTimeout(() => {
+                  const el = document.getElementById('gone-area');
+                  el && el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }, 60);
+              }}>
+              🌈 곁을 떠났어요
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ── 기록 공개 ──
           앱 안에서 거래하지 않습니다. 대신 이 아이를 어떻게 키웠는지를 링크 하나로 보여드립니다.
           담기는 내용은 publicSnapshot() 한 곳에서만 정합니다(분양가·가계부는 나가지 않습니다). */}
@@ -6034,7 +6292,7 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
           );
         })()}
         <div data-testid="status-grid" style={{display:'grid', gridTemplateColumns:'repeat(4,minmax(0,1fr))', gap:5, paddingBottom:8}}>
-          {Object.entries(STATUS).map(([k, s]) => (
+          {Object.entries(STATUS).filter(([k]) => k !== 'gone').map(([k, s]) => (
             <button key={k} className="chip-btn" style={{whiteSpace:'nowrap', minWidth:0, width:'100%', padding:'7px 2px', fontSize:'clamp(9px,2.8vw,12px)', ...((gecko.status || 'own') === k ? {background:'var(--accent-soft)', fontWeight:700} : {})}}
               onClick={() => {
                 if ((gecko.status || 'own') === k) { if (k === 'sold') setSalePrompt(true); return; }
@@ -6047,6 +6305,61 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
             </button>
           ))}
         </div>
+
+        {/* ── 곁을 떠났어요 ──
+            지우지 않습니다. 목록·먹이·제안에서만 빠지고 혈통에는 그대로 남습니다. */}
+        <div id="gone-area" />
+        {statusOf(gecko) === 'gone' ? (
+          <div className="card" data-testid="gone-card"
+            style={{margin:'0 0 8px', padding:'12px 14px', background:'var(--bg3)'}}>
+            <div style={{fontSize:13, fontWeight:800, color:'var(--text2)'}}>
+              🌈 {gecko.goneDate ? `${fmtDate(gecko.goneDate)}에 떠났어요` : '곁을 떠났어요'}
+            </div>
+            <div style={{fontSize:11.5, color:'var(--text3)', marginTop:4, lineHeight:1.65, whiteSpace:'pre-line'}}>
+              {gecko.goneReason ? `${gecko.goneReason}\n` : ''}목록과 먹이·제안에서는 빠졌어요.
+              혈통에는 그대로 남아서, 이 아이 자식들의 근친 판정에 계속 쓰입니다.
+            </div>
+            <button className="btn btn-ghost btn-sm" style={{marginTop:10}} onClick={() => {
+              DB.updateIndividual(gecko.id, { status: 'own', goneDate: '', goneReason: '' });
+              refreshLocal(); showToast('다시 목록으로 돌려놨어요');
+            }}>되돌리기</button>
+          </div>
+        ) : goneOpen ? (
+          <div className="card" style={{margin:'0 0 8px', padding:'12px 14px'}}>
+            <div style={{fontSize:13, fontWeight:800, marginBottom:8}}>🌈 곁을 떠났나요?</div>
+            <div style={{fontSize:11, color:'var(--text3)', marginBottom:8, lineHeight:1.6}}>
+              기록은 지우지 않아요. 목록에서만 조용히 빼두고, 혈통에는 그대로 남깁니다.
+            </div>
+            <div style={{fontSize:11, color:'var(--text3)', marginBottom:4}}>언제</div>
+            <input className="input" type="date" value={goneWhen} max={todayStr()}
+              onChange={e => setGoneWhen(e.target.value)} />
+            <div style={{fontSize:11, color:'var(--text3)', margin:'10px 0 4px'}}>왜 <span style={{opacity:.65}}>(선택)</span></div>
+            <div style={{display:'flex', flexWrap:'wrap', gap:5}}>
+              {GONE_REASONS.map(r => (
+                <button key={r} className="chip-btn"
+                  style={goneReason === r ? {background:'var(--accent-soft)', fontWeight:700} : {}}
+                  onClick={() => setGoneReason(goneReason === r ? '' : r)}>{r}</button>
+              ))}
+            </div>
+            <div style={{display:'flex', gap:6, marginTop:12}}>
+              <button className="btn btn-primary btn-sm" style={{flex:1}} onClick={() => {
+                DB.updateIndividual(gecko.id, {
+                  status: 'gone', keep: false,
+                  goneDate: goneWhen || todayStr(), goneReason: goneReason,
+                });
+                setGoneOpen(false); refreshLocal();
+                showToast('🌈 목록에서 조용히 빼뒀어요. 혈통엔 그대로 있습니다');
+              }}>이렇게 할게요</button>
+              <button className="btn btn-secondary btn-sm" style={{flex:1}} onClick={() => setGoneOpen(false)}>취소</button>
+            </div>
+          </div>
+        ) : (
+          <button className="btn btn-ghost btn-sm" data-testid="gone-open"
+            style={{marginBottom:8, color:'var(--text3)'}}
+            onClick={() => { setGoneOpen(true); setGoneWhen(lastDeathDate(gecko.id) || todayStr()); }}>
+            🌈 곁을 떠났어요
+          </button>
+        )}
       </div>
 
       <WeightChart events={events} />
@@ -6219,6 +6532,10 @@ function formatEventDetail(ev) {
     case 'health':       return `${d.issue || '이상'}${d.notes ? ' · ' + d.notes : ''}`;
     case 'env':          return [d.temp ? `${d.temp}°C` : '', d.humid ? `습도 ${d.humid}%` : ''].filter(Boolean).join(' · ') || '온습도 기록';
     case 'shed':         return '탈피 완료';
+    case 'condition': {
+      const c = conditionOf(d.level);
+      return c ? `${c.emoji} 컨디션 ${c.label}` : '컨디션 기록';
+    }
     case 'feeding': {
       if (d.skipped) return '⏭️ 오늘은 안 줌';
       const f = d.foodType ? `${d.foodType === '충식' ? '🦗 충식' : '🥣 슈푸(일반식)'}` : '먹이';
@@ -7067,7 +7384,7 @@ function buildWorkbook(XLSX) {
   const blank = n => new Array(n).fill('');
 
   /* ── 1. 애기들 리스트 (축양) ── */
-  const own = inds.filter(i => (i.status || 'own') !== 'sold' && !i.isExternal);
+  const own = inds.filter(isHere);
   const a1 = [['', '크레건설 축양리스트'], [], [],
     ['', '넘버', '이름', '생년원일', '성별', '모프', '모프 특징사항', '점여부', '입양처', '부/모', '입양가', '특이사항']];
   let priceSum = 0;
