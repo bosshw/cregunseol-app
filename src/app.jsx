@@ -79,6 +79,15 @@ const DB = {
        예전처럼 실패를 못 본 척하면 기록이 조용히 사라집니다. */
     const ok = STORE.set(key, JSON.stringify(out));
     if (!ok) return false;
+    /* 사라진 기록에 서버 사진이 붙어 있었으면 서버에서도 지웁니다.
+       ★ 실패해도 그냥 넘어갑니다 — 서버에 파일이 남는 건 아깝지만,
+         그것 때문에 기록 삭제가 막히면 안 됩니다. */
+    if (key === 'cg_events' && gone.length) {
+      prevMap.forEach(r => {
+        const gp = r && r.data && r.data.photo;
+        if (isPhotoUrl(gp)) { try { PHOTO.remove(gp); } catch (e) {} }
+      });
+    }
     if (typeof SYNC !== 'undefined') {
       if (gone.length) SYNC.addTombstones(key, gone);
       if (changed.length) SYNC.markDirty(key, changed);
@@ -436,7 +445,7 @@ const SERVER = {
 
    인터넷이 없거나 파일을 못 받으면 아무 것도 막지 않습니다(앱은 그대로 씁니다).
    ══════════════════════════════════════════ */
-const APP_VERSION = '1.2';
+const APP_VERSION = '1.3';
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -583,7 +592,22 @@ const SYNC = {
       refresh_token: d.refresh_token,
       expires_at: Date.now() + (d.expires_in || 3600) * 1000,
       email: (d.user && d.user.email) || email,
+      id: (d.user && d.user.id) || '',
     });
+  },
+
+  /* 내 사용자 id — 사진이 들어갈 폴더 이름으로 씁니다.
+     예전에 로그인해 둔 분은 세션에 id 가 없어서, 토큰 안(sub)에서 꺼냅니다. */
+  userId() {
+    const s = this.ses();
+    if (!s) return '';
+    if (s.id) return s.id;
+    const part = String(s.access_token || '').split('.')[1];
+    if (!part) return '';
+    try {
+      const j = JSON.parse(atob(part.replace(/-/g, '+').replace(/_/g, '/')));
+      return j.sub || '';
+    } catch (e) { return ''; }
   },
 
   async signIn(email, password) {
@@ -781,6 +805,9 @@ const SYNC = {
     this.emit();
     try {
       await this.ensureSession();
+      /* ★ 올리기 전에 폰에 남은 사진부터 서버로 보냅니다.
+         순서가 반대면 base64 사진이 기록에 실린 채 서버로 올라갑니다. */
+      try { await PHOTO.flush(null, PHOTO_PER_SYNC); } catch (e) {}
       const sent = await this.push();
       const got = await this.pull();
       this.saveSt({ lastSyncAt: now(), lastError: null });
@@ -3334,19 +3361,152 @@ function recordSummary(target) {
 }
 
 // 사진 압축 (localStorage 용량 보호)
+/* ══════════════════════════════════════════
+   사진(PHOTO) — 사진이 서버로 나가고 들어오는 유일한 곳
+   ──────────────────────────────────────────
+   ★ 버킷 이름과 올리기·지우기는 여기 말고 어디서도 부르지 않습니다
+     (계약 테스트가 막습니다).
+
+   기록에 담기는 건 사진이 아니라 주소 한 줄입니다.
+     예전 : data:image/jpeg;base64,……         → 30KB 를 폰 칸에서 먹음
+     지금 : https://…/gecko-photos/내아이디/….jpg → 약 90바이트
+
+   ★ 못 올리는 상황(신호 없음·로그인 안 함)에서는 예전처럼 폰에 담아 둡니다.
+     그 사진은 다음 동기화 때 저절로 올라갑니다.
+     인터넷이 없다고 기록이 안 남는 일은 없습니다 — 이 앱의 성질이니까요.
+   ══════════════════════════════════════════ */
+const PHOTO_BUCKET   = 'gecko-photos';
+const PHOTO_MAX      = 700;    // 긴 쪽 픽셀 (v1.2까지 500 — 폰 칸을 아끼려고 깎았던 값)
+const PHOTO_Q        = 0.65;   // 품질     (v1.2까지 0.55)
+const PHOTO_PER_SYNC = 12;     // 동기화 한 번에 올릴 장수 (한꺼번에 다 올리면 오래 걸립니다)
+
+const isPhotoLocal = (v) => typeof v === 'string' && v.slice(0, 11) === 'data:image/';
+const isPhotoUrl   = (v) => typeof v === 'string' && v.slice(0, 8) === 'https://';
+
+/* 글자로 된 사진을 진짜 파일 덩어리로 (올리려면 필요합니다) */
+function photoBlob(dataUrl) {
+  try {
+    const comma = dataUrl.indexOf(',');
+    const bin = atob(dataUrl.slice(comma + 1));
+    const buf = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+    return new Blob([buf], { type: 'image/jpeg' });
+  } catch (e) { return null; }
+}
+
+const PHOTO = {
+  ready() {
+    if (!SYNC.active()) return false;
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return false;
+    return !!SYNC.userId();
+  },
+  base() { return String(SERVER.url || '').replace(/\/+$/, ''); },
+  urlOf(path) { return this.base() + '/storage/v1/object/public/' + PHOTO_BUCKET + '/' + path; },
+  pathOf(url) {
+    const mark = '/storage/v1/object/public/' + PHOTO_BUCKET + '/';
+    const i = String(url || '').indexOf(mark);
+    return i < 0 ? '' : url.slice(i + mark.length);
+  },
+
+  /* 한 장을 서버로. 성공하면 주소, 실패하면 null —
+     부르는 쪽은 null 을 받으면 예전처럼 폰에 담습니다. */
+  async put(dataUrl) {
+    if (!isPhotoLocal(dataUrl) || !this.ready()) return null;
+    const blob = photoBlob(dataUrl);
+    if (!blob) return null;
+    try {
+      await SYNC.ensureSession();
+      const ses = SYNC.ses();
+      const path = SYNC.userId() + '/' + uuid() + '.jpg';
+      const res = await fetch(this.base() + '/storage/v1/object/' + PHOTO_BUCKET + '/' + path, {
+        method: 'POST',
+        headers: {
+          apikey: SERVER.key,
+          Authorization: 'Bearer ' + ses.access_token,
+          'Content-Type': 'image/jpeg',
+          'x-upsert': 'false',
+        },
+        body: blob,
+      });
+      if (!res.ok) return null;
+      return this.urlOf(path);
+    } catch (e) { return null; }
+  },
+
+  /* 서버에서 지우기 — 실패해도 조용히 넘어갑니다(기록 삭제를 막으면 안 되니까요).
+     ※ 지운 직후 잠깐은 주소로 사진이 계속 보일 수 있습니다. 파일은 진짜 지워졌고,
+       중간 캐시(CDN)에 남아 있는 사본이 잠시 보이는 것입니다. 시간이 지나면 사라집니다. */
+  async remove(url) {
+    const path = this.pathOf(url);
+    if (!path || !this.ready()) return false;
+    try {
+      await SYNC.ensureSession();
+      const res = await SYNC.api('/storage/v1/object/' + PHOTO_BUCKET + '/' + path, { method: 'DELETE' });
+      return res.ok;
+    } catch (e) { return false; }
+  },
+
+  /* 아직 폰 안에 글자로 남아 있는 사진들 */
+  pending() {
+    const evs = DB.getEvents().filter(e => e && e.data && isPhotoLocal(e.data.photo));
+    const inds = DB.getIndividuals().filter(i => i && isPhotoLocal(i.avatar));
+    return { events: evs, inds, count: evs.length + inds.length };
+  },
+
+  /* 폰에 남은 사진을 서버로 옮깁니다.
+     한 장이라도 실패하면 그 자리에서 멈춥니다 — 신호가 끊긴 것이니
+     계속 두드려 봐야 소용이 없고, 다음 기회에 이어서 하면 됩니다. */
+  async flush(onStep, max) {
+    if (!this.ready()) return { done: 0, left: this.pending().count };
+    const p = this.pending();
+    const jobs = [];
+    p.events.forEach(e => jobs.push({ kind: 'event', id: e.id, src: e.data.photo }));
+    p.inds.forEach(i => jobs.push({ kind: 'ind', id: i.id, src: i.avatar }));
+    const todo = max ? jobs.slice(0, max) : jobs;
+    let done = 0;
+    for (let i = 0; i < todo.length; i++) {
+      const job = todo[i];
+      const url = await this.put(job.src);
+      if (!url) break;
+      if (job.kind === 'event') {
+        const all = DB.getEvents();
+        const hit = all.find(e => e.id === job.id);
+        if (hit) { hit.data = { ...hit.data, photo: url }; DB.saveEvents(all); }
+      } else {
+        DB.updateIndividual(job.id, { avatar: url });
+      }
+      done++;
+      if (onStep) { try { onStep(done, todo.length); } catch (e) {} }
+    }
+    return { done, left: this.pending().count };
+  },
+};
+
+/* 사진 한 장을 줄입니다. ★ 이 함수는 takePhoto 만 부릅니다 —
+   화면에서 직접 부르면 서버로 올라가지 않고 폰 칸만 먹습니다. */
 function compressImage(file, cb) {
   const img = new Image();
   img.onload = () => {
-    const max = 500;
+    const max = PHOTO_MAX;
     const scale = Math.min(1, max / Math.max(img.width, img.height));
     const c = document.createElement('canvas');
     c.width = Math.round(img.width * scale);
     c.height = Math.round(img.height * scale);
     c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
     URL.revokeObjectURL(img.src);
-    cb(c.toDataURL('image/jpeg', 0.55));
+    cb(c.toDataURL('image/jpeg', PHOTO_Q));
   };
   img.src = URL.createObjectURL(file);
+}
+
+/* 사진 한 장 받기 — 줄이고, 되면 서버로 올려 주소를 돌려줍니다.
+   못 올리면 예전처럼 글자로 돌려주고, 나중에 저절로 올라갑니다.
+   ★ 화면은 이것만 부릅니다. 무엇이 돌아오든 <img src> 에 그대로 넣으면 됩니다. */
+function takePhoto(file, cb) {
+  compressImage(file, (dataUrl) => {
+    if (!PHOTO.ready()) return cb(dataUrl);
+    PHOTO.put(dataUrl).then(url => cb(url || dataUrl)).catch(() => cb(dataUrl));
+  });
 }
 
 /* ══════════════════════════════════════════
@@ -4052,7 +4212,7 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals }) {
     const f = e.target.files && e.target.files[0];
     e.target.value = '';
     if (!f) return;
-    compressImage(f, (src) => { patch({ photo: src }); showToast('📷 알 사진을 넣었어요'); });
+    takePhoto(f, (src) => { patch({ photo: src }); showToast('📷 알 사진을 넣었어요'); });
   };
 
   const doHatch = () => {
@@ -5755,7 +5915,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     const file = e.target.files && e.target.files[0];
     e.target.value = '';
     if (!file) return;
-    compressImage(file, (dataUrl) => {
+    takePhoto(file, (dataUrl) => {
       addMsg({ role: 'user', photo: dataUrl });
       const g = geckoRef.current;
       const fact = { type: 'photo', data: { photo: dataUrl }, date: todayStr() };
@@ -6121,7 +6281,7 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
     const file = e.target.files && e.target.files[0];
     e.target.value = '';
     if (!file) return;
-    compressImage(file, (src) => {
+    takePhoto(file, (src) => {
       // 사진은 기록에 한 벌만 두고, 얼굴은 그 기록을 가리킵니다 (같은 사진 두 벌 금지)
       const ev = DB.addEvent({ individualId: gecko.id, type: 'photo', date: todayStr(), data: { photo: src } });
       if (!ev) return refreshLocal();
@@ -6135,7 +6295,7 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
     const file = e.target.files && e.target.files[0];
     e.target.value = '';
     if (!file) return;
-    compressImage(file, (url) => setEditVals(v => ({ ...v, photo: url })));
+    takePhoto(file, (url) => setEditVals(v => ({ ...v, photo: url })));
   };
 
   const refreshLocal = () => {
@@ -8046,15 +8206,29 @@ function SyncCard({ showToast, refreshIndividuals }) {
 }
 
 /* 저장 공간 막대.
-   ★ 숫자는 STORE.usage() 한 곳에서만 옵니다 — 화면에서 다시 세지 마세요.
+   ★ 숫자는 STORE.usage() 와 PHOTO.pending() 두 곳에서만 옵니다 — 화면에서 다시 세지 마세요.
    사진이 칸의 대부분을 먹기 때문에 "사진이 몇 장, 얼마"까지 같이 보여드립니다. */
-function StorageCard() {
+function StorageCard({ showToast }) {
+  const [tick, setTick] = useState(0);
+  const [busy, setBusy] = useState(null);          // {done, total} 옮기는 중
   const u = STORE.usage();
+  const pend = PHOTO.pending().count;
+  const onServer = DB.getEvents().filter(e => e && e.data && isPhotoUrl(e.data.photo)).length;
   const pct = Math.min(100, Math.round(u.ratio * 100));
   const mb = (n) => (n / 1000000).toFixed(2) + 'MB';
   const color = pct >= 90 ? 'var(--danger, #B3362B)' : pct >= STORE_WARN * 100 ? '#C87F2F' : '#2E7D46';
+
+  const moveAll = async () => {
+    if (!PHOTO.ready()) return showToast && showToast('⚠️ 로그인하고 인터넷이 연결돼야 옮길 수 있어요');
+    setBusy({ done: 0, total: pend });
+    const r = await PHOTO.flush((done, total) => setBusy({ done, total }));
+    setBusy(null);
+    setTick(t => t + 1);
+    if (showToast) showToast(r.left ? `📷 ${r.done}장 옮겼어요 · ${r.left}장 남음` : `📷 사진 ${r.done}장을 모두 옮겼어요`);
+  };
+
   return (
-    <div className="card" style={{margin:0}} data-testid="storage-card">
+    <div className="card" style={{margin:0}} data-testid="storage-card" key={tick}>
       <div style={{fontSize:13, fontWeight:700, marginBottom:4, color:'var(--text2)'}}>🗂️ 저장 공간</div>
       <div style={{fontSize:12, color:'var(--text3)', marginBottom:10, lineHeight:1.6}}>
         기록은 이 기기 안에 저장돼요. 칸이 꽉 차면 새 기록이 저장되지 않아요.
@@ -8066,11 +8240,21 @@ function StorageCard() {
         <span><b style={{color}}>{mb(u.used)}</b> / 약 5MB</span>
         <span style={{fontVariantNumeric:'tabular-nums'}}>{pct}%</span>
       </div>
-      <div style={{fontSize:11.5, color:'var(--text3)', marginTop:6, lineHeight:1.6}}>
-        {u.shots > 0
-          ? `그중 사진 ${u.shots}장이 ${mb(u.photo)}예요 (${Math.round(u.photo / Math.max(1, u.used) * 100)}%).`
-          : '아직 사진은 없어요.'}
+
+      <div style={{fontSize:11.5, color:'var(--text3)', marginTop:6, lineHeight:1.6}} data-testid="storage-photos">
+        {onServer > 0 && `☁️ 서버에 ${onServer}장 (폰 칸을 안 먹어요)`}
+        {onServer > 0 && pend > 0 && <br/>}
+        {pend > 0 && `📱 폰에 ${pend}장이 ${mb(u.photo)}를 쓰고 있어요`}
+        {onServer === 0 && pend === 0 && '아직 사진은 없어요.'}
       </div>
+
+      {pend > 0 && (
+        <button className="btn btn-secondary btn-sm" style={{width:'100%', marginTop:10}}
+          disabled={!!busy} onClick={moveAll} data-testid="photo-move">
+          {busy ? `옮기는 중… ${busy.done}/${busy.total}` : `☁️ 사진 ${pend}장 서버로 옮기기`}
+        </button>
+      )}
+
       {pct >= STORE_WARN * 100 && (
         <div style={{marginTop:9, padding:'9px 11px', borderRadius:9, background:'var(--bg3)',
                      fontSize:12, color:'var(--text2)', lineHeight:1.6, whiteSpace:'pre-line'}}>
@@ -8255,7 +8439,7 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
         </div>
         <DupMergeCard showToast={showToast} refreshIndividuals={refreshIndividuals} />
         <SyncCard showToast={showToast} refreshIndividuals={refreshIndividuals} />
-        <StorageCard />
+        <StorageCard showToast={showToast} />
         <div className="card" style={{margin:0}}>
           <div style={{fontSize:13, fontWeight:700, marginBottom:12, color:'var(--text2)'}}>데이터</div>
           <div style={{display:'flex', flexDirection:'column', gap:8}}>
@@ -8266,6 +8450,9 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
               애기들 리스트 · 메이팅기록 · 해칭기록 · 분양리스트 4시트
             </div>
             <button className="btn btn-secondary" onClick={exportData}>📦 데이터 백업 (JSON)</button>
+            <div style={{fontSize:11, color:'var(--text3)', margin:'-2px 2px 4px', lineHeight:1.5}}>
+              서버로 옮긴 사진은 백업 파일에 주소만 들어가요 (사진은 서버에 있어요)
+            </div>
             {importData ? (
               <div style={{background:'var(--bg3)', borderRadius:10, padding:12}}>
                 <div style={{fontSize:13, color:'var(--text2)', marginBottom:8}}>
