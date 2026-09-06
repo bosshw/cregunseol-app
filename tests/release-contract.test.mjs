@@ -26,7 +26,7 @@ test("keeps storage, synchronization, and core workflows intact", async () => {
     assert.ok(source.includes(contract), `missing contract: ${contract}`);
   }
 
-  assert.match(source, /const APP_VERSION = '1\.1'/);
+  assert.match(source, /const APP_VERSION = '1\.2'/);
   assert.match(source, /Powered by cre_construct · CC/);
   assert.doesNotMatch(source, /Powered by 크레건설/);
   assert.match(source, /addEvents\(events\)/);
@@ -43,10 +43,10 @@ test("keeps service worker and release metadata aligned", async () => {
     readFile(file("version.json"), "utf8").then(JSON.parse),
   ]);
 
-  assert.equal(version.app, "1.1");
+  assert.equal(version.app, "1.2");
   assert.equal(version.schema, 1);
   assert.equal(version.minSchema, 1);
-  assert.match(worker, /const CACHE = 'creg-v11'/);
+  assert.match(worker, /const CACHE = 'creg-v12'/);
 
   for (const asset of [
     "./index.html",
@@ -170,7 +170,7 @@ test("keeps the v4.8 kinship, morph and voice contracts", async () => {
   // 설정 미리보기는 고정 견본으로 — 데이터가 없는 날에도 차이가 보여야 합니다
   assert.ok(source.includes("{voiceSample().map("), "settings preview must use voiceSample()");
   // 버전 문자열 4곳
-  assert.ok(source.includes("const APP_VERSION = '1.1'"), "APP_VERSION must be 1.1");
+  assert.ok(source.includes("const APP_VERSION = '1.2'"), "APP_VERSION must be 1.2");
 });
 
 test("keeps the v5.0 particle, line-break and calendar fixes", async () => {
@@ -197,7 +197,7 @@ test("keeps the v5.0 particle, line-break and calendar fixes", async () => {
   assert.doesNotMatch(source, /'🍽️🥩'/, "fed emoji must be a single icon");
   // 홈 한 줄은 인사만 합니다 (v5.2 — 할 일은 브리핑 카드가 말합니다)
   assert.doesNotMatch(source, /\[greetLine\(\), what\]/, "home line no longer lists jobs");
-  assert.ok(source.includes("APP_VERSION = '1.1'"), "APP_VERSION must be 1.1");
+  assert.ok(source.includes("APP_VERSION = '1.2'"), "APP_VERSION must be 1.2");
 
   // 캘린더 먹이 줄에 이모지가 두 번 나오면 안 됩니다 (줄 앞에 이미 🦗/🥣 가 붙습니다)
   assert.ok(source.includes("if (e.type === 'feeding') label = label.replace"), "feed label must drop its own emoji");
@@ -234,7 +234,7 @@ test("keeps the v4.9 hatching, morph and wording fixes", async () => {
   assert.ok(source.includes("const dayWord = (n) => `${Math.abs(Math.round(Number(n) || 0))}일`"), "dayWord must be numeric");
   // 탭 이름
   assert.ok(source.includes("브리핑"), "reminders tab is now 브리핑");
-  assert.ok(source.includes("const APP_VERSION = '1.1'"), "APP_VERSION must be 1.1");
+  assert.ok(source.includes("const APP_VERSION = '1.2'"), "APP_VERSION must be 1.2");
 });
 
 test("keeps the v5.2 nudge contracts", async () => {
@@ -277,7 +277,7 @@ test("keeps the v5.2 nudge contracts", async () => {
   assert.ok(source.includes('data-testid="nudge-go"'), "nudge needs an action button");
   assert.ok(source.includes("recordNudge(nudge)"), "reminders screen must record the nudge");
 
-  assert.ok(source.includes("APP_VERSION = '1.1'"), "APP_VERSION must be 1.1");
+  assert.ok(source.includes("APP_VERSION = '1.2'"), "APP_VERSION must be 1.2");
 });
 
 test("keeps the v5.3 public-record contracts", async () => {
@@ -330,7 +330,7 @@ test("keeps the v5.3 public-record contracts", async () => {
   // 화면 계약
   assert.ok(source.includes('data-testid="public-card"'), "profile needs the public card");
   assert.ok(source.includes('data-testid="public-toggle"'), "public card needs its toggle");
-  assert.ok(source.includes("APP_VERSION = '1.1'"), "APP_VERSION must be 1.1");
+  assert.ok(source.includes("APP_VERSION = '1.2'"), "APP_VERSION must be 1.2");
 });
 
 test("keeps the v5.4 away / condition / memory contracts", async () => {
@@ -386,7 +386,7 @@ test("keeps the v5.4 away / condition / memory contracts", async () => {
     assert.ok(source.includes(`data-testid="${id}"`), `missing screen contract: ${id}`);
   }
   assert.ok(source.includes("data-testid={`cond-${c.key}`}"), "condition buttons need per-level testids");
-  assert.ok(source.includes("APP_VERSION = '1.1'"), "APP_VERSION must be 1.1");
+  assert.ok(source.includes("APP_VERSION = '1.2'"), "APP_VERSION must be 1.2");
 });
 
 test("keeps the v1.0 laying-season contracts", async () => {
@@ -435,5 +435,60 @@ test("keeps the v1.0 laying-season contracts", async () => {
   assert.ok(source.includes("data-testid={`season-${r.key}`}"), "each answer needs its own testid");
 
   // 정식 출시 — 버전은 1.0
-  assert.ok(source.includes("APP_VERSION = '1.1'"), "APP_VERSION must be 1.1");
+  assert.ok(source.includes("APP_VERSION = '1.2'"), "APP_VERSION must be 1.2");
+});
+
+/* ══════════════════════════════════════════
+   v1.2 — 저장 칸: 한 곳에서만 적고, 실패는 반드시 말한다
+   ══════════════════════════════════════════ */
+test("keeps the v1.2 storage contracts", async () => {
+  const source = await readFile(file("src/app.jsx"), "utf8");
+
+  // ① 브라우저 칸에 글을 적는 곳은 STORE 하나뿐입니다
+  const writes = source.match(/localStorage\.setItem\(/g) || [];
+  assert.equal(writes.length, 1, "localStorage.setItem may appear only inside STORE.set");
+  const removes = source.match(/localStorage\.removeItem\(/g) || [];
+  assert.equal(removes.length, 1, "localStorage.removeItem may appear only inside STORE.drop");
+  const store = source.slice(source.indexOf("const STORE = {"), source.indexOf("const withoutPhoto"));
+  assert.match(store, /localStorage\.setItem\(key, val\)/, "the one write must live in STORE.set");
+  assert.match(store, /catch \(e\) \{ this\.full = true; this\.say\(STORE_MSG\.full\(\)\); return false; \}/,
+    "a full store must be reported, never swallowed");
+
+  // ② 저장 실패는 위로 전해집니다 — 못 본 척하면 기록이 조용히 사라집니다
+  assert.ok(source.includes("const ok = STORE.set(key, JSON.stringify(out));"), "save must look at the result");
+  assert.ok(source.includes("if (!ok) return false;"), "save must report failure");
+  assert.ok(source.includes("if (!this.saveEvents([...this.getEvents(), ...added]))"),
+    "addEvents must notice a failed save");
+  assert.ok(source.includes("STORE.say(STORE_MSG.photoDropped());"),
+    "dropping the photo to save the record must be told");
+
+  // ③ 같은 사진을 두 벌 두지 않습니다 — 얼굴은 기록을 가리키기만 합니다
+  assert.doesNotMatch(source, /\{ avatar: src \}/, "the avatar must not copy the photo");
+  assert.doesNotMatch(source, /avatar: photoView\.src/, "the avatar must not copy the photo");
+  assert.doesNotMatch(source, /avatar: ev\.data\.photo/, "the avatar must not copy the photo");
+  assert.ok(source.includes("{ avatarRef: ev.id }"), "the first photo is pointed at, not copied");
+  assert.ok(source.includes("{ avatarRef: photoView.id, avatar: '' }"), "picking a face points at the record");
+
+  // ④ 얼굴을 찾는 곳은 avatarSrc 하나뿐이고, 옛 사진도 계속 보여야 합니다
+  const av = source.slice(source.indexOf("function avatarSrc(gecko, allEvents)"),
+                          source.indexOf("/* ══════════════════════════════════════════", source.indexOf("function avatarSrc(gecko, allEvents)")));
+  assert.match(av, /gecko\.avatarRef/, "avatarSrc must read the pointer");
+  assert.match(av, /if \(gecko\.avatar\) return gecko\.avatar;/, "old copies must keep showing");
+  assert.ok(source.includes("avatar: avatarSrc(gecko, evs) || ''"), "the public record must go through avatarSrc");
+
+  // ⑤ 한 번 도는 정리는 짝이 있는 것만 건드립니다
+  const dd = source.slice(source.indexOf("function dedupeAvatars()"), source.indexOf("function purgeStoredHatchReminders()"));
+  assert.match(dd, /if \(!hit\) return i;/, "an avatar with no matching record must be left alone");
+  assert.match(dd, /avatarRef: hit\.id, avatar: ''/, "the copy is replaced by a pointer");
+
+  // ⑥ 문장은 VOICE 한 곳에서만
+  const msg = source.slice(source.indexOf("const STORE_MSG = {"), source.indexOf("/* 날짜 수는 숫자로 씁니다"));
+  for (const k of ["full:", "photoDropped:", "near:"]) assert.ok(msg.includes(k), `missing STORE_MSG.${k}`);
+  assert.equal((msg.match(/say\(/g) || []).length, 3, "each storage message must go through say()");
+
+  // ⑦ 화면 계약
+  for (const id of ["storage-card", "store-bar"]) {
+    assert.ok(source.includes(`data-testid="${id}"`), `missing screen contract: ${id}`);
+  }
+  assert.ok(source.includes("const STORE_LIMIT = 5000000;"), "the measured limit must stay explicit");
 });
