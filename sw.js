@@ -1,11 +1,10 @@
-const CACHE = 'creg-v10';
+const CACHE = 'creg-v11';
 
 // 화면을 그리는 데 꼭 필요한 파일 — 이것도 폰에 저장해둬야 인터넷 없이 열립니다
 const ASSETS = [
   './index.html',
   './app.min.js',
-  './vendor/react.production.min.js',
-  './vendor/react-dom.production.min.js',
+  './vendor/preact-shim.min.js',
   './manifest.json',
   './icon-192.png',
   './icon-512.png',
@@ -46,4 +45,4 @@ self.addEventListener('fetch', e => {
     }))
   );
 });
-// v1.0 deploy 2026-09-06 정식 출시 (산란 시즌 확인 · 버전 1.0으로 재시작)
+// v1.1 deploy 2026-09-06 (화면 엔진을 Preact 로 — 첫 화면 140KB → 102KB)
