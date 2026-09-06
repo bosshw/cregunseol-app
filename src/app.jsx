@@ -374,7 +374,7 @@ const SERVER = {
 
    인터넷이 없거나 파일을 못 받으면 아무 것도 막지 않습니다(앱은 그대로 씁니다).
    ══════════════════════════════════════════ */
-const APP_VERSION = '5.4';
+const APP_VERSION = '1.0';
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -863,6 +863,7 @@ const EVENT_TYPES = [
   { key: 'feeding',      label: '먹이',   emoji: '🍽️', color: '#C87F2F' },
   { key: 'health',       label: '이상',   emoji: '⚠️', color: '#B3261E' },
   { key: 'condition',    label: '컨디션', emoji: '🌤️', color: '#5B8C7B' },
+  { key: 'season',       label: '산란 시즌', emoji: '🌙', color: '#7A6E8C' },
   { key: 'env',          label: '온습도', emoji: '🌡️', color: '#3F7C8C' },
   { key: 'photo',        label: '사진',   emoji: '📷', color: '#8A8177' },
   { key: 'memo',         label: '메모',   emoji: '📝', color: '#A08D7C' },
@@ -1064,7 +1065,7 @@ function eggUnitsOf(ev, opt) {
 const eggDone = u => u.status !== 'pending';
 
 /* 개체 이상 기록 — 대화·프로필 어느 쪽에서 적어도 같은 항목을 씁니다 */
-const HEALTH_ISSUES = ['거식', '탈피부전', '꼬리 자절', '외상', '설사', '폐사', '기타'];
+const HEALTH_ISSUES = ['거식', '탈피부전', '꼬리 자절', '외상', '설사', '에그바인딩', '폐사', '기타'];
 
 /* ── 가계부 ──
    수입은 분양 기록에서 저절로 생깁니다(두 번 적지 않게).
@@ -1380,6 +1381,79 @@ function layingGaps(layDates) {
   return gaps;
 }
 /* 암컷별 다음 산란 예정 — 저장하지 않고 매번 계산합니다(기록이 쌓이면 저절로 정확해집니다) */
+/* ══════════════════════════════════════════
+   산란 시즌 — 언제 끝났는지 적어두는 자리
+   ★ 지금까지 "이번 시즌은 여기까지"를 적을 곳이 없어서,
+     예정일이 한참 지나도 계속 예정일로 남아 있었습니다.
+
+   ★★ 시즌을 닫아도 계산은 멈추지 않습니다.
+     layingForecasts() 는 그대로 계산하고 seasonEnded 표시만 붙입니다.
+     보여줄지 말지는 화면이 정합니다(혹시 모르니 값은 늘 갖고 있게).
+   ══════════════════════════════════════════ */
+
+const LAY_LATE_WARN = 14;        // 예정일에서 이만큼 지나면 "확인해 주세요"
+const LAY_GIVE_UP   = 365;       // 마지막 기록에서 이만큼 지나면 계산 자체를 접습니다
+const SEASON_SNOOZE = { ok: 7, trouble: 3, bad: 3 };   // 답한 뒤 며칠 쉬어갈지
+
+/* 확인 화면에서 고르는 것들 — ends 가 true 면 예정일 표시를 멈춥니다 */
+const SEASON_RESULTS = [
+  { key: 'ended',   emoji: '🌙', label: '이번 시즌은 끝난 것 같아요', ends: true,  issue: '' },
+  { key: 'ok',      emoji: '🙂', label: '상태는 나쁘지 않아요',       ends: false, issue: '' },
+  { key: 'trouble', emoji: '🚨', label: '에그바인딩 같아요',          ends: false, issue: '에그바인딩' },
+  { key: 'bad',     emoji: '⚠️', label: '상태가 아주 나빠요',          ends: false, issue: '기타' },
+];
+const seasonResultOf = (k) => SEASON_RESULTS.find(r => r.key === k) || null;
+
+/* 이 아이의 산란 시즌 상태 — 판단은 여기 한 곳에서만 합니다.
+   ★ 시즌을 닫은 뒤에 산란이 또 있으면 저절로 다시 열립니다(사람이 안 눌러도 되게). */
+function seasonState(id, evs) {
+  const all = evs || DB.getEvents();
+  const mine = all.filter(e => e.individualId === id);
+  const last = mine.filter(e => e.type === 'season')
+    .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))[0];
+  if (!last) return { ended: false, checked: null, result: null, snoozeLeft: 0 };
+
+  /* 같은 날에 "시즌 끝"을 눌렀다가 그날 알을 낳는 일도 있습니다.
+     날짜가 같으면 적힌 순서(createdAt)로 어느 쪽이 나중인지 가립니다. */
+  const after = (e) => e.date > last.date
+    || (e.date === last.date && String(e.createdAt || '') >= String(last.createdAt || ''));
+  /* 같은 날 같은 순간이면 산란 쪽을 나중으로 봅니다 —
+     예정일을 숨겼다가 놓치는 것보다, 한 번 더 보여주는 쪽이 안전합니다. */
+  const laidAfter = mine.some(e => e.type === 'laying' && after(e));
+  const key = (last.data && last.data.result) || '';
+  const r = seasonResultOf(key);
+  const ended = !!(r && r.ends) && !laidAfter;
+  const since = -daysUntil(last.date);
+  const snooze = SEASON_SNOOZE[key] || 0;
+  return {
+    ended,
+    checked: last.date,
+    result: key,
+    snoozeLeft: (!ended && !laidAfter && snooze > since) ? (snooze - since) : 0,
+  };
+}
+
+/* 확인 결과를 남깁니다 — 몸 상태가 걸리는 답은 이상 기록도 함께 남깁니다 */
+function recordSeasonCheck(id, key, when) {
+  const r = seasonResultOf(key);
+  if (!r) return null;
+  const date = when || todayStr();
+  const e = DB.addEvent({ individualId: id, type: 'season', date, data: { result: key } });
+  if (r.issue) {
+    DB.addEvent({ individualId: id, type: 'health', date, data: { issue: r.issue, notes: '산란 예정일 확인 중 기록' } });
+  }
+  return e;
+}
+
+/* 시즌을 다시 엽니다 (잘못 눌렀거나 새 시즌이 시작됐을 때) */
+function reopenSeason(id) {
+  const evs = DB.getEvents();
+  const mine = evs.filter(e => e.individualId === id && e.type === 'season');
+  if (!mine.length) return 0;
+  DB.saveEvents(evs.filter(e => !(e.individualId === id && e.type === 'season')));
+  return mine.length;
+}
+
 function layingForecasts(individuals, events) {
   const inds = individuals || DB.getIndividuals();
   const evs = events || DB.getEvents();
@@ -1414,15 +1488,24 @@ function layingForecasts(individuals, events) {
       interval = LAYING_AFTER_MATING; basis = '메이팅 기준';
     }
     const eta = localISO(new Date(new Date(base).getTime() + interval * 86400000));
-    if (daysUntil(eta) < -21) return;                      // 너무 오래 지난 추정은 의미가 없습니다
+    /* 예전엔 21일이 지나면 접었습니다. 그러면 "많이 늦었어요"라고 말할 새도 없이 사라집니다.
+       이제는 마지막 기록에서 1년이 지날 때까지 들고 있다가, 확인을 받으면 그때 정리합니다. */
+    if (-daysUntil(base) > LAY_GIVE_UP) return;
     const lastMate = ms.length ? ms[ms.length - 1] : null;
     const dadName = (lastMate && lastMate.data && lastMate.data.partnerName)
       || ((byId[(lastMate && lastMate.data && lastMate.data.partnerId)] || {}).name) || null;
     const pairKey = i.id + '|' + (dadName || '?');
     const nth = rows.filter(r => r.pairKey === pairKey).length + 1;
+    const late = -daysUntil(eta);
+    const ss = seasonState(i.id, evs);
     out.push({
       indId: i.id, name: i.name, pairName: i.name + (dadName ? ' × ' + dadName : ''),
       eta, interval, basis, count: ls.length, nth, lastLay: ls.length ? ls[ls.length - 1].date : null,
+      late,                                   // 예정일에서 며칠 지났나 (음수면 아직 안 옴)
+      overdue: late >= LAY_LATE_WARN,         // 확인해 달라고 할 때가 됐나
+      seasonEnded: ss.ended,                  // ★ 계산은 했지만 화면에는 안 보일 아이
+      snoozeLeft: ss.snoozeLeft,              // 방금 확인해서 잠시 쉬는 중
+      season: ss,
     });
   });
   return out;
@@ -2294,7 +2377,9 @@ function allAlerts() {
     layingId: r.e.id,
     derived: true,
   }));
-  const lay = layingForecasts().map(f => ({
+  /* ★ 계산은 layingForecasts 가 전부 해둡니다.
+     여기서는 "지금 보여줄 것"만 고릅니다 — 시즌을 닫았거나 방금 확인한 아이는 뺍니다. */
+  const lay = layingForecasts().filter(f => !f.seasonEnded && !f.snoozeLeft).map(f => ({
     id: 'L:' + f.indId,
     individualId: f.indId,
     geckoName: f.pairName,
@@ -2306,6 +2391,8 @@ function allAlerts() {
       ? `${f.nth}차 산란 예정 · 약 ${f.interval}일 간격 (${f.basis})`
       : `${f.nth}차 산란 예정 · 메이팅 +${f.interval}일`,
     detail: f.count ? `약 ${f.interval}일 간격 · ${f.basis}` : `메이팅 +${f.interval}일`,
+    late: f.late,
+    overdue: f.overdue,                     // 2주 넘게 지났으면 경고로 그립니다
     derived: true,
   }));
   return [...stored, ...hatch, ...lay].sort((a, b) => (a.date > b.date ? 1 : -1));
@@ -2526,6 +2613,7 @@ const HEALTH_RULES = [
   [/꼬리\s*(자절|잘렸|잘림|끊|떨어|빠졌)|자절/, '꼬리 자절'],
   [/다쳤|상처|물렸|찢어|피\s*났|화상/, '외상'],
   [/설사|묽은\s*변|변이\s*묽/, '설사'],
+  [/에그\s*바인딩|알이?\s*(걸림|걸렸|걸린|막혔|막힌|안\s*나와|못\s*낳)|난막힘|산란\s*장애/, '에그바인딩'],
   [/폐사|무지개다리/, '폐사'],
 ];
 
@@ -5888,6 +5976,7 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
   const [showShare, setShowShare] = useState(false);
   const [pubBusy, setPubBusy] = useState(false);       // 공개 기록 올리는 중
   const [goneOpen, setGoneOpen] = useState(false);     // 곁을 떠났어요 입력
+  const [seasonAsk, setSeasonAsk] = useState(false);   // 산란 시즌 확인 열기
   const [goneWhen, setGoneWhen] = useState(todayStr());
   const [goneReason, setGoneReason] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -6106,6 +6195,79 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
           </div>
         </div>
       </div>
+
+      {/* ── 산란 시즌 ──
+          예정일이 2주 넘게 지나면 물어보고, 답한 내용에 따라 예정일 표시를 멈춥니다.
+          ★ 멈춰도 계산은 계속합니다(layingForecasts). 화면에만 안 보일 뿐입니다. */}
+      {(() => {
+        const fc = layingForecasts(DB.getIndividuals(), DB.getEvents()).find(f => f.indId === gecko.id);
+        if (!fc) return null;
+        const ss = fc.season || { ended: false };
+
+        if (ss.ended) return (
+          <div style={{padding:'0 16px 10px'}}>
+            <div className="card" data-testid="season-ended"
+              style={{margin:0, background:'var(--bg3)', borderLeft:'3px solid var(--text3)'}}>
+              <div style={{fontSize:13.5, fontWeight:800, color:'var(--text2)'}}>🌙 이번 산란 시즌은 끝난 걸로 해뒀어요</div>
+              <div style={{fontSize:11.5, color:'var(--text3)', marginTop:5, lineHeight:1.65, whiteSpace:'pre-line'}}>
+                {ss.checked ? `${fmtDate(ss.checked)}에 확인하셨어요.\n` : ''}
+                산란 예정일은 알림·캘린더에서 빼뒀습니다.
+                {'\n'}계산은 계속하고 있어요 — 지금 기준으로는 {fmtDate(fc.eta)}쯤입니다.
+                {'\n'}다시 산란하면 저절로 시즌이 열립니다.
+              </div>
+              <button className="btn btn-ghost btn-sm" style={{marginTop:10}} onClick={() => {
+                reopenSeason(gecko.id); refreshLocal(); showToast('산란 예정일을 다시 보여드릴게요');
+              }}>다시 열기</button>
+            </div>
+          </div>
+        );
+
+        if (!fc.overdue) return null;
+        if (fc.snoozeLeft && !seasonAsk) return (
+          <div style={{padding:'0 16px 10px'}}>
+            <div className="card" style={{margin:0, background:'var(--bg3)'}}>
+              <div style={{fontSize:12.5, color:'var(--text2)', lineHeight:1.65}}>
+                🌙 {fmtDate(ss.checked)}에 확인하셨어요. {fc.snoozeLeft}일 뒤에 다시 여쭤볼게요.
+              </div>
+              <button className="btn btn-ghost btn-sm" style={{marginTop:9}} onClick={() => setSeasonAsk(true)}>
+                지금 다시 확인하기
+              </button>
+            </div>
+          </div>
+        );
+
+        return (
+          <div style={{padding:'0 16px 10px'}}>
+            <div className="card" data-testid="season-card"
+              style={{margin:0, background:'var(--accent-soft)', border:'1px solid var(--accent-edge)'}}>
+              <div style={{fontSize:13.5, fontWeight:800, color:'var(--accent2)'}}>
+                🚨 산란 예정일이 {dayWord(fc.late)}이나 지났어요
+              </div>
+              <div style={{fontSize:11.5, color:'var(--text2)', marginTop:5, lineHeight:1.65, whiteSpace:'pre-line'}}>
+                {`${fmtDate(fc.eta)} 예정이었어요.\n지금 어떤 상태인지 알려주시면 그에 맞게 정리해 드릴게요.`}
+              </div>
+              <div style={{display:'flex', flexDirection:'column', gap:5, marginTop:11}}>
+                {SEASON_RESULTS.map(r => (
+                  <button key={r.key} className="chip-btn" data-testid={`season-${r.key}`}
+                    style={{textAlign:'left', padding:'10px 12px', fontSize:12.5}}
+                    onClick={() => {
+                      recordSeasonCheck(gecko.id, r.key);
+                      setSeasonAsk(false); refreshLocal();
+                      showToast(r.ends ? '🌙 시즌을 닫아뒀어요. 예정일은 이제 안 뜹니다'
+                        : r.issue ? `⚠️ ${r.issue}로 이상 기록도 함께 남겼어요`
+                        : '알겠어요. 며칠 뒤에 다시 여쭤볼게요');
+                    }}>
+                    {r.emoji} {r.label}
+                  </button>
+                ))}
+              </div>
+              <div style={{fontSize:11, color:'var(--text3)', marginTop:9, lineHeight:1.6}}>
+                에그바인딩이 의심되면 되도록 빨리 병원에 데려가 주세요.
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── 오늘 컨디션 ──
           좋을 때도 눌러둬야 나중에 "언제부터 처졌는지"를 볼 수 있습니다. */}
@@ -6536,6 +6698,10 @@ function formatEventDetail(ev) {
       const c = conditionOf(d.level);
       return c ? `${c.emoji} 컨디션 ${c.label}` : '컨디션 기록';
     }
+    case 'season': {
+      const r = seasonResultOf(d.result);
+      return r ? `${r.emoji} ${r.label}` : '산란 시즌 확인';
+    }
     case 'feeding': {
       if (d.skipped) return '⏭️ 오늘은 안 줌';
       const f = d.foodType ? `${d.foodType === '충식' ? '🦗 충식' : '🥣 슈푸(일반식)'}` : '먹이';
@@ -6934,6 +7100,23 @@ function buildTodo(reminders, navigateTo) {
           : say(twoLine(`${nm}의 ${nth}산란 예정일이`, '오늘이에요'),
                 twoLine(`${nm} ${nth}산란,`, '오늘이 예정일이에요! 🥚'),
                 `${r.geckoName || ''} ${nth}산란 예정`));
+    /* ── 2주 넘게 지난 산란 예정은 "예정"이 아니라 "확인해 주세요"입니다 ── */
+    if (!hatch && r.overdue) {
+      const ind0 = byId[r.individualId];
+      todo.push({
+        id: r.id, emoji: '🚨', late,
+        title: say(twoLine(`${nm}의 ${nth}산란 예정일이`, `${dayWord(late)}이나 지났어요`),
+                   twoLine(`${nm} ${nth}산란 예정일이`, `${dayWord(late)}이나 지났어요!`),
+                   `${r.momName || r.geckoName || ''} ${nth}산란 ${late}일 지남`),
+        sub: say('시즌이 끝났는지, 몸에 무리가 없는지\n한번 확인해 주세요',
+                 '시즌이 끝난 걸까요? 몸은 괜찮은지\n한번 확인해 주실래요?',
+                 '산란 시즌 확인 필요'),
+        hideLate: true, hideToday: true,
+        action: ind0 ? { label: '확인하기', go: () => navigateTo('profile', { gecko: ind0 }) } : null,
+      });
+      return;
+    }
+
     todo.push({
       id: r.id,
       emoji: hatch ? '🐣' : '🥚',
