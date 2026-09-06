@@ -1,4 +1,4 @@
-const CACHE = 'creg-v54';
+const CACHE = 'creg-v10';
 
 // 화면을 그리는 데 꼭 필요한 파일 — 이것도 폰에 저장해둬야 인터넷 없이 열립니다
 const ASSETS = [
@@ -46,4 +46,4 @@ self.addEventListener('fetch', e => {
     }))
   );
 });
-// v5.4 deploy 2026-09-06 (곁을 떠난 아이 · 오늘 컨디션 · 작년 오늘)
+// v1.0 deploy 2026-09-06 정식 출시 (산란 시즌 확인 · 버전 1.0으로 재시작)
