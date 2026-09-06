@@ -1,4 +1,4 @@
-const CACHE = 'creg-v53';
+const CACHE = 'creg-v54';
 
 // 화면을 그리는 데 꼭 필요한 파일 — 이것도 폰에 저장해둬야 인터넷 없이 열립니다
 const ASSETS = [
@@ -46,4 +46,4 @@ self.addEventListener('fetch', e => {
     }))
   );
 });
-// v5.3 deploy 2026-09-03 (기록 공개 링크 — 앱 밖에서 열리는 사육 기록 한 장)
+// v5.4 deploy 2026-09-06 (곁을 떠난 아이 · 오늘 컨디션 · 작년 오늘)
