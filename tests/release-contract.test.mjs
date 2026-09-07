@@ -26,7 +26,7 @@ test("keeps storage, synchronization, and core workflows intact", async () => {
     assert.ok(source.includes(contract), `missing contract: ${contract}`);
   }
 
-  assert.match(source, /const APP_VERSION = '1\.4'/);
+  assert.match(source, /const APP_VERSION = '1\.5'/);
   assert.match(source, /Powered by cre_construct · CC/);
   assert.doesNotMatch(source, /Powered by 크레건설/);
   assert.match(source, /addEvents\(events\)/);
@@ -43,10 +43,10 @@ test("keeps service worker and release metadata aligned", async () => {
     readFile(file("version.json"), "utf8").then(JSON.parse),
   ]);
 
-  assert.equal(version.app, "1.4");
+  assert.equal(version.app, "1.5");
   assert.equal(version.schema, 1);
   assert.equal(version.minSchema, 1);
-  assert.match(worker, /const CACHE = 'creg-v14'/);
+  assert.match(worker, /const CACHE = 'creg-v15'/);
 
   for (const asset of [
     "./index.html",
@@ -170,7 +170,7 @@ test("keeps the v4.8 kinship, morph and voice contracts", async () => {
   // 설정 미리보기는 고정 견본으로 — 데이터가 없는 날에도 차이가 보여야 합니다
   assert.ok(source.includes("{voiceSample().map("), "settings preview must use voiceSample()");
   // 버전 문자열 4곳
-  assert.ok(source.includes("const APP_VERSION = '1.4'"), "APP_VERSION must be 1.4");
+  assert.ok(source.includes("const APP_VERSION = '1.5'"), "APP_VERSION must be 1.5");
 });
 
 test("keeps the v5.0 particle, line-break and calendar fixes", async () => {
@@ -197,7 +197,7 @@ test("keeps the v5.0 particle, line-break and calendar fixes", async () => {
   assert.doesNotMatch(source, /'🍽️🥩'/, "fed emoji must be a single icon");
   // 홈 한 줄은 인사만 합니다 (v5.2 — 할 일은 브리핑 카드가 말합니다)
   assert.doesNotMatch(source, /\[greetLine\(\), what\]/, "home line no longer lists jobs");
-  assert.ok(source.includes("APP_VERSION = '1.4'"), "APP_VERSION must be 1.4");
+  assert.ok(source.includes("APP_VERSION = '1.5'"), "APP_VERSION must be 1.5");
 
   // 캘린더 먹이 줄에 이모지가 두 번 나오면 안 됩니다 (줄 앞에 이미 🦗/🥣 가 붙습니다)
   assert.ok(source.includes("if (e.type === 'feeding') label = label.replace"), "feed label must drop its own emoji");
@@ -234,7 +234,7 @@ test("keeps the v4.9 hatching, morph and wording fixes", async () => {
   assert.ok(source.includes("const dayWord = (n) => `${Math.abs(Math.round(Number(n) || 0))}일`"), "dayWord must be numeric");
   // 탭 이름
   assert.ok(source.includes("브리핑"), "reminders tab is now 브리핑");
-  assert.ok(source.includes("const APP_VERSION = '1.4'"), "APP_VERSION must be 1.4");
+  assert.ok(source.includes("const APP_VERSION = '1.5'"), "APP_VERSION must be 1.5");
 });
 
 test("keeps the v5.2 nudge contracts", async () => {
@@ -277,7 +277,7 @@ test("keeps the v5.2 nudge contracts", async () => {
   assert.ok(source.includes('data-testid="nudge-go"'), "nudge needs an action button");
   assert.ok(source.includes("recordNudge(nudge)"), "reminders screen must record the nudge");
 
-  assert.ok(source.includes("APP_VERSION = '1.4'"), "APP_VERSION must be 1.4");
+  assert.ok(source.includes("APP_VERSION = '1.5'"), "APP_VERSION must be 1.5");
 });
 
 test("keeps the v5.3 public-record contracts", async () => {
@@ -330,7 +330,7 @@ test("keeps the v5.3 public-record contracts", async () => {
   // 화면 계약
   assert.ok(source.includes('data-testid="public-card"'), "profile needs the public card");
   assert.ok(source.includes('data-testid="public-toggle"'), "public card needs its toggle");
-  assert.ok(source.includes("APP_VERSION = '1.4'"), "APP_VERSION must be 1.4");
+  assert.ok(source.includes("APP_VERSION = '1.5'"), "APP_VERSION must be 1.5");
 });
 
 test("keeps the v5.4 away / condition / memory contracts", async () => {
@@ -346,7 +346,7 @@ test("keeps the v5.4 away / condition / memory contracts", async () => {
     "function whereNow(i)",
     "function awayTag(i)",
     "gone:      { label: '🌈 떠남'",
-    "const GONE_REASONS =",
+    "const GONE_ISSUES = ['폐사', '실종·탈출']",
     "function lastDeathDate(id, evs)",
     // 오늘 컨디션
     "const CONDITIONS = [",
@@ -382,11 +382,11 @@ test("keeps the v5.4 away / condition / memory contracts", async () => {
     "the nudge must return early so only one line shows");
 
   // 화면 계약
-  for (const id of ["condition-card", "gone-open", "gone-card", "gone-hint"]) {
+  for (const id of ["condition-card", "gone-card"]) {
     assert.ok(source.includes(`data-testid="${id}"`), `missing screen contract: ${id}`);
   }
   assert.ok(source.includes("data-testid={`cond-${c.key}`}"), "condition buttons need per-level testids");
-  assert.ok(source.includes("APP_VERSION = '1.4'"), "APP_VERSION must be 1.4");
+  assert.ok(source.includes("APP_VERSION = '1.5'"), "APP_VERSION must be 1.5");
 });
 
 test("keeps the v1.0 laying-season contracts", async () => {
@@ -429,13 +429,13 @@ test("keeps the v1.0 laying-season contracts", async () => {
   assert.ok(source.includes("mine.some(e => e.type === 'laying' && after(e))"), "a new laying reopens the season");
 
   // 화면 계약
-  for (const id of ["season-card", "season-ended"]) {
+  for (const id of ["season-card"]) {
     assert.ok(source.includes(`data-testid="${id}"`), `missing screen contract: ${id}`);
   }
   assert.ok(source.includes("data-testid={`season-${r.key}`}"), "each answer needs its own testid");
 
   // 정식 출시 — 버전은 1.0
-  assert.ok(source.includes("APP_VERSION = '1.4'"), "APP_VERSION must be 1.4");
+  assert.ok(source.includes("APP_VERSION = '1.5'"), "APP_VERSION must be 1.5");
 });
 
 /* ══════════════════════════════════════════
@@ -564,4 +564,56 @@ test("keeps the server awake", async () => {
   assert.doesNotMatch(wf, /eyJ[A-Za-z0-9_-]{20,}/, "never put a service-role JWT in a workflow");
   assert.match(wf, /sb_publishable_/, "the publishable key is the one that belongs here");
   assert.match(wf, /exit 1/, "a paused project must fail loudly, not pass silently");
+});
+
+/* ══════════════════════════════════════════
+   v1.5 — 화면에서 덜어낸 것들
+   지운 것을 다시 들이지 않게, 여기서 "없어야 한다"를 못 박습니다.
+   ══════════════════════════════════════════ */
+test("keeps the v1.5 decluttering", async () => {
+  const raw = await readFile(file("src/app.jsx"), "utf8");
+  const source = raw.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+
+  // ① 브리더 이름은 설정 맨 위(비서 카드) 안에 있습니다
+  const voice = source.slice(source.indexOf('data-testid="voice-card"'), source.indexOf('data-testid="app-info"'));
+  assert.match(voice, /data-testid="breeder-name"/, "the breeder name belongs in the top card");
+  assert.equal((source.match(/data-testid="breeder-name"/g) || []).length, 1, "only one place edits it");
+
+  // ② 앱 정보는 버전과 최근 업데이트 날짜만
+  const info = source.slice(source.indexOf('data-testid="app-info"'));
+  const infoEnd = info.indexOf("</div>\n        </div>");
+  const card = info.slice(0, infoEnd);
+  assert.match(card, /APP_VERSION/, "the version stays");
+  assert.match(card, /APP_PATCHED/, "the patch date stays");
+  assert.doesNotMatch(card, /엑셀|동기화|캘린더|산란 간격/, "the feature list must stay out of the app");
+  assert.match(source, /const APP_PATCHED = '\d{4}-\d{2}-\d{2}'/, "the patch date must be a real date");
+
+  // ③ 해칭 이름 규칙은 두 가지뿐 ('직접 등록'은 '물어보기'와 같은 일이었습니다)
+  assert.ok(source.includes("const BABY_NAMING = ["), "the two modes live in one place");
+  assert.equal((source.match(/\['combo'|\['ask'/g) || []).length, 2, "exactly two naming modes");
+  assert.doesNotMatch(source, /'off', '자동 등록 안 함/, "the third mode must stay removed");
+  assert.doesNotMatch(source, /mode !== 'off'/, "no code may branch on the removed mode");
+  assert.match(source, /v === 'ask' \|\| v === 'off' \? 'ask'/, "an old 'off' setting must land on 'ask'");
+
+  // ④ 분양가는 이미 보낸 아이에게만 여쭤봅니다
+  assert.ok(source.includes("soldMissingPrice(individuals).forEach"), "the price nudge reads sold animals");
+  assert.doesNotMatch(source, /i\.status === 'available' && !String\(i\.salePrice/, "'분양가능' must not be nagged about price");
+  const nud = source.slice(source.indexOf("function nudgeCandidates(individuals, events)"), source.indexOf("function todayNudge(individuals, events)"));
+  assert.ok(nud.indexOf("soldMissingPrice") > nud.indexOf("inds.forEach"),
+    "sold animals are not isHere, so the price check must sit outside that loop");
+
+  // ⑤ 시즌을 닫은 뒤에는 아무것도 띄우지 않습니다
+  assert.ok(source.includes("if (ss.ended) return null;"), "a closed season shows nothing on the profile");
+  assert.doesNotMatch(source, /이번 산란 시즌은 끝난 걸로 해뒀어요/, "the long closed-season card must stay removed");
+  assert.doesNotMatch(source, /다시 열기/, "no manual reopen button — a new laying reopens it");
+  assert.ok(source.includes("mine.some(e => e.type === 'laying' && after(e))"), "a new laying still reopens the season");
+
+  // ⑥ 무지개다리는 이상 기록 안에서만
+  assert.doesNotMatch(source, /data-testid="gone-open"/, "the standalone rainbow button must stay removed");
+  assert.doesNotMatch(source, /🌈 곁을 떠났어요/, "and its label with it");
+  assert.ok(source.includes("const isGoneIssue = (issue)"), "one place decides which issue means gone");
+  const add = source.slice(source.indexOf("  addEvents(events) {"), source.indexOf("  addEvent(ev) {"));
+  assert.match(add, /if \(!isGoneIssue\(ev\.data\.issue\)\) return;/,
+    "recording 폐사·실종 must tidy the list, whether typed or tapped");
+  assert.match(add, /status: 'gone', keep: false/, "and it sets the status in that one place");
 });
