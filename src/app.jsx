@@ -134,6 +134,18 @@ const DB = {
       const me = this.getIndividuals().find(i => i.id === ev.individualId);
       if (me && !me.avatarRef && !me.avatar) this.updateIndividual(ev.individualId, { avatarRef: ev.id });
     });
+    /* 폐사·실종을 적으면 목록에서 조용히 빼둡니다 (기록은 지우지 않고 혈통에도 남습니다).
+       ★ 버튼으로 적든 대화로 말하든 같은 자리를 지나므로 여기 한 곳에서만 처리합니다. */
+    added.forEach(ev => {
+      if (ev.type !== 'health' || !ev.individualId || !ev.data) return;
+      if (!isGoneIssue(ev.data.issue)) return;
+      const me = this.getIndividuals().find(i => i.id === ev.individualId);
+      if (!me || statusOf(me) === 'gone') return;
+      this.updateIndividual(ev.individualId, {
+        status: 'gone', keep: false,
+        goneDate: ev.date || todayStr(), goneReason: ev.data.issue,
+      });
+    });
     return added;
   },
   addEvent(ev) {
@@ -445,7 +457,8 @@ const SERVER = {
 
    인터넷이 없거나 파일을 못 받으면 아무 것도 막지 않습니다(앱은 그대로 씁니다).
    ══════════════════════════════════════════ */
-const APP_VERSION = '1.4';
+const APP_VERSION = '1.5';
+const APP_PATCHED = '2026-09-06';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -999,9 +1012,7 @@ function whereNow(i) {
      좋을 때도 한 번씩 눌러둬야 나중에 "언제부터 처졌는지"를 볼 수 있습니다.
    ══════════════════════════════════════════ */
 
-/* 떠난 이유 — 고르지 않아도 됩니다 */
-const GONE_REASONS = ['폐사', '실종·탈출', '기타'];
-/* 폐사 기록이 있으면 그날을 기본 날짜로 씁니다 */
+/* 폐사 기록이 남아 있는 날 — "작년 오늘"과 옛 데이터 정리에 씁니다 */
 function lastDeathDate(id, evs) {
   const e = (evs || DB.getEvents())
     .filter(x => x.individualId === id && x.type === 'health' && x.data && x.data.issue === '폐사')
@@ -1154,7 +1165,28 @@ function eggUnitsOf(ev, opt) {
 const eggDone = u => u.status !== 'pending';
 
 /* 개체 이상 기록 — 대화·프로필 어느 쪽에서 적어도 같은 항목을 씁니다 */
-const HEALTH_ISSUES = ['거식', '탈피부전', '꼬리 자절', '외상', '설사', '에그바인딩', '폐사', '기타'];
+/* 해칭 베이비 이름 규칙 — 두 가지뿐입니다.
+   ★ v1.5에서 'off'(자동 등록 안 함)를 없앴습니다.
+     '물어보기'와 하는 일이 같아서 고를 이유가 없었습니다.
+     예전에 'off'로 저장해 두신 분은 '물어보기'로 봅니다. */
+const BABY_NAMING = [
+  ['combo', '부모 이름 조합 — 크순이×크한이 → 순한1호, 순한2호'],
+  ['ask',   '해칭 때마다 이름 물어보기'],
+];
+const BABY_NAMING_DEFAULT = 'combo';
+const babyNamingMode = (settings) => {
+  const v = (settings || DB.getSettings() || {}).babyNaming;
+  return v === 'ask' || v === 'off' ? 'ask' : BABY_NAMING_DEFAULT;
+};
+
+const HEALTH_ISSUES = ['거식', '탈피부전', '꼬리 자절', '외상', '설사', '에그바인딩', '폐사', '실종·탈출', '기타'];
+
+/* ★ 이 이상을 적으면 목록에서도 조용히 빠집니다 (곁을 떠난 것).
+   v1.5부터 "🌈 곁을 떠났어요" 버튼을 따로 두지 않습니다 —
+   죽은 걸 큰 버튼으로 자랑하듯 띄울 일이 아니고, 분양은 어차피 '분양완료'가 처리합니다.
+   판단은 여기 한 곳에서만 합니다. */
+const GONE_ISSUES = ['폐사', '실종·탈출'];
+const isGoneIssue = (issue) => GONE_ISSUES.indexOf(String(issue || '').trim()) >= 0;
 
 /* ── 가계부 ──
    수입은 분양 기록에서 저절로 생깁니다(두 번 적지 않게).
@@ -2069,14 +2101,6 @@ function nudgeCandidates(individuals, events) {
               `${nm} 몸무게 기록 없음`),
     });
 
-    // ⑥ 분양가능인데 분양가가 비어 있음
-    if (i.status === 'available' && !String(i.salePrice || '').trim() && !i.saleFree) out.push({
-      key: 'price', prio: 6, indId: i.id, weight: 0, emoji: '🏷️', go: 'profile',
-      text: say(`${iga(nm)} 분양가능인데 분양가가 비어 있어요.\n얼마로 올려둘까요?`,
-                `${nm} 분양가가 아직 비어 있어요!\n얼마로 할까요?`,
-                `${nm} 분양가 미기재`),
-    });
-
     // ⑦ 우리 집 아이인데 부모가 안 적혀 있음
     if (isMine(i) && !i.sireId && !i.damId) out.push({
       key: 'lineage', prio: 7, indId: i.id, weight: age || 0, emoji: '👪', go: 'profile',
@@ -2121,6 +2145,20 @@ function nudgeCandidates(individuals, events) {
   }
 
   // 때가 있는 것부터, 같은 급이면 오래 방치된 것부터
+  /* ⑥ 이미 보냈는데 받은 돈이 안 적힌 아이
+     ★ "분양가능"은 보낼 생각이라고 표시해 둔 것뿐입니다 — 값을 지금 정할 일이 아닙니다.
+       돈은 실제로 오간 뒤에 적는 것이라, 분양완료인데 빈 아이만 여쭤봅니다.
+     ★ 이 아이들은 이미 곁을 떠났으므로 위의 반복문(isHere) 밖에서 따로 봅니다. */
+  soldMissingPrice(individuals).forEach(i => {
+    const nm = i.name;
+    out.push({
+      key: 'price', prio: 6, indId: i.id, weight: 0, emoji: '🏷️', go: 'profile',
+      text: say(`${eunneun(nm)} 분양을 보냈는데 받은 돈이 안 적혀 있어요.\n얼마에 보내셨나요?`,
+                `${nm} 분양 보냈는데 얼마 받았는지 안 적혀 있어요!\n얼마였나요?`,
+                `${nm} 분양가 미기재`),
+    });
+  });
+
   return out.sort((a, b) => a.prio - b.prio || b.weight - a.weight);
 }
 
@@ -4237,10 +4275,9 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals }) {
     if (date < ev.date) return showToast('⚠️ 부화일이 산란일보다 빠를 수 없어요');
     if (date > todayStr()) return showToast('⚠️ 아직 오지 않은 날짜예요');
     const all = DB.getIndividuals();
-    const mode = DB.getSettings().babyNaming || 'combo';
     const mo = morphUnknown ? '' : morph.trim();
     let made = 0;
-    if (mode !== 'off') {
+    {
       const names = makeBabyNames(mom ? mom.name : '', dadName, n, all.map(i => i.name));
       names.slice(0, n).forEach(nm => {
         DB.addIndividual({
@@ -5911,7 +5948,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     }
 
     const hf = mapped.find(f => f.type === 'hatching');
-    if (hf && (DB.getSettings().babyNaming || 'combo') === 'ask') {
+    if (hf && babyNamingMode() === 'ask') {
       pendingBabyRef.current = hf;
       bot(`아기들 이름을 지어줄까요? 쉼표로 알려주세요 🐣\n예) 순한1호, 순한2호\n"자동으로"라고 하시면 제가 규칙대로 지어둘게요.`);
     }
@@ -6053,10 +6090,9 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
         }
       }
       if (f.type === 'hatching') {
-        const mode = DB.getSettings().babyNaming || 'combo';
         const named = f.data.babyNames && f.data.babyNames.length ? f.data.babyNames : null;
         const count = parseInt(f.data.count || '0', 10) || (named ? named.length : 0);
-        if (count > 0 && mode !== 'off') {
+        if (count > 0) {
           const all = DB.getIndividuals();
           const mom = all.find(i => i.id === f.targetId);
           const evs2 = DB.getEventsFor(f.targetId).sort((a, b) => b.date > a.date ? 1 : -1);
@@ -6271,10 +6307,7 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
   const [events, setEvents] = useState(() => DB.getEventsFor(initialGecko.id).filter(e => e.type !== 'ledger'));
   const [showShare, setShowShare] = useState(false);
   const [pubBusy, setPubBusy] = useState(false);       // 공개 기록 올리는 중
-  const [goneOpen, setGoneOpen] = useState(false);     // 곁을 떠났어요 입력
   const [seasonAsk, setSeasonAsk] = useState(false);   // 산란 시즌 확인 열기
-  const [goneWhen, setGoneWhen] = useState(todayStr());
-  const [goneReason, setGoneReason] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [editVals, setEditVals] = useState({});
@@ -6495,31 +6528,17 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
       </div>
 
       {/* ── 산란 시즌 ──
-          예정일이 2주 넘게 지나면 물어보고, 답한 내용에 따라 예정일 표시를 멈춥니다.
-          ★ 멈춰도 계산은 계속합니다(layingForecasts). 화면에만 안 보일 뿐입니다. */}
+          예정일이 2주 넘게 지나면 한 번 물어보고, 답한 내용에 따라 예정일 표시를 멈춥니다.
+          ★ v1.5 — 시즌을 닫은 뒤에는 여기에 아무것도 띄우지 않습니다.
+            닫는 그 순간에 한 번 알려드리는 것으로 끝입니다(토스트).
+            백그라운드 계산은 계속하지만 그것도 굳이 보여드리지 않습니다.
+            다시 산란을 적으시면 저절로 시즌이 열리고 예정일이 캘린더에 돌아옵니다. */}
       {(() => {
         const fc = layingForecasts(DB.getIndividuals(), DB.getEvents()).find(f => f.indId === gecko.id);
         if (!fc) return null;
         const ss = fc.season || { ended: false };
 
-        if (ss.ended) return (
-          <div style={{padding:'0 16px 10px'}}>
-            <div className="card" data-testid="season-ended"
-              style={{margin:0, background:'var(--bg3)', borderLeft:'3px solid var(--text3)'}}>
-              <div style={{fontSize:13.5, fontWeight:800, color:'var(--text2)'}}>🌙 이번 산란 시즌은 끝난 걸로 해뒀어요</div>
-              <div style={{fontSize:11.5, color:'var(--text3)', marginTop:5, lineHeight:1.65, whiteSpace:'pre-line'}}>
-                {ss.checked ? `${fmtDate(ss.checked)}에 확인하셨어요.\n` : ''}
-                산란 예정일은 알림·캘린더에서 빼뒀습니다.
-                {'\n'}계산은 계속하고 있어요 — 지금 기준으로는 {fmtDate(fc.eta)}쯤입니다.
-                {'\n'}다시 산란하면 저절로 시즌이 열립니다.
-              </div>
-              <button className="btn btn-ghost btn-sm" style={{marginTop:10}} onClick={() => {
-                reopenSeason(gecko.id); refreshLocal(); showToast('산란 예정일을 다시 보여드릴게요');
-              }}>다시 열기</button>
-            </div>
-          </div>
-        );
-
+        if (ss.ended) return null;
         if (!fc.overdue) return null;
         if (fc.snoozeLeft && !seasonAsk) return (
           <div style={{padding:'0 16px 10px'}}>
@@ -6613,28 +6632,6 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
                 </div>
               );
             })()}
-          </div>
-        </div>
-      )}
-
-      {/* 폐사 기록은 있는데 아직 목록에 남아 있는 아이 — 조용히 한 번 물어봅니다 */}
-      {isHere(gecko) && lastDeathDate(gecko.id, events) && (
-        <div style={{padding:'0 16px 10px'}}>
-          <div className="card" data-testid="gone-hint"
-            style={{margin:0, background:'var(--bg3)', borderLeft:'3px solid var(--text3)'}}>
-            <div style={{fontSize:12.5, color:'var(--text2)', lineHeight:1.65}}>
-              폐사 기록이 남아 있는데 아직 목록에 있어요.{'\n'}정리해 드릴까요? 기록은 지우지 않습니다.
-            </div>
-            <button className="btn btn-secondary btn-sm" style={{marginTop:9}}
-              onClick={() => {
-                setGoneOpen(true); setGoneWhen(lastDeathDate(gecko.id, events)); setGoneReason('폐사');
-                setTimeout(() => {
-                  const el = document.getElementById('gone-area');
-                  el && el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                }, 60);
-              }}>
-              🌈 곁을 떠났어요
-            </button>
           </div>
         </div>
       )}
@@ -6766,59 +6763,25 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
           ))}
         </div>
 
-        {/* ── 곁을 떠났어요 ──
-            지우지 않습니다. 목록·먹이·제안에서만 빠지고 혈통에는 그대로 남습니다. */}
-        <div id="gone-area" />
-        {statusOf(gecko) === 'gone' ? (
+        {/* ── 곁을 떠난 아이 ──
+            ★ v1.5부터 여기에 "🌈 곁을 떠났어요" 버튼을 두지 않습니다.
+              폐사·실종은 위의 [⚠️ 이상이 있어요]에서 적으면 저절로 정리됩니다.
+              아래 칸은 이미 떠난 아이일 때만, 되돌릴 수 있게 조용히 보여줍니다. */}
+        {statusOf(gecko) === 'gone' && (
           <div className="card" data-testid="gone-card"
-            style={{margin:'0 0 8px', padding:'12px 14px', background:'var(--bg3)'}}>
-            <div style={{fontSize:13, fontWeight:800, color:'var(--text2)'}}>
-              🌈 {gecko.goneDate ? `${fmtDate(gecko.goneDate)}에 떠났어요` : '곁을 떠났어요'}
-            </div>
-            <div style={{fontSize:11.5, color:'var(--text3)', marginTop:4, lineHeight:1.65, whiteSpace:'pre-line'}}>
-              {gecko.goneReason ? `${gecko.goneReason}\n` : ''}목록과 먹이·제안에서는 빠졌어요.
-              혈통에는 그대로 남아서, 이 아이 자식들의 근친 판정에 계속 쓰입니다.
-            </div>
-            <button className="btn btn-ghost btn-sm" style={{marginTop:10}} onClick={() => {
-              DB.updateIndividual(gecko.id, { status: 'own', goneDate: '', goneReason: '' });
-              refreshLocal(); showToast('다시 목록으로 돌려놨어요');
-            }}>되돌리기</button>
-          </div>
-        ) : goneOpen ? (
-          <div className="card" style={{margin:'0 0 8px', padding:'12px 14px'}}>
-            <div style={{fontSize:13, fontWeight:800, marginBottom:8}}>🌈 곁을 떠났나요?</div>
-            <div style={{fontSize:11, color:'var(--text3)', marginBottom:8, lineHeight:1.6}}>
-              기록은 지우지 않아요. 목록에서만 조용히 빼두고, 혈통에는 그대로 남깁니다.
-            </div>
-            <div style={{fontSize:11, color:'var(--text3)', marginBottom:4}}>언제</div>
-            <input className="input" type="date" value={goneWhen} max={todayStr()}
-              onChange={e => setGoneWhen(e.target.value)} />
-            <div style={{fontSize:11, color:'var(--text3)', margin:'10px 0 4px'}}>왜 <span style={{opacity:.65}}>(선택)</span></div>
-            <div style={{display:'flex', flexWrap:'wrap', gap:5}}>
-              {GONE_REASONS.map(r => (
-                <button key={r} className="chip-btn"
-                  style={goneReason === r ? {background:'var(--accent-soft)', fontWeight:700} : {}}
-                  onClick={() => setGoneReason(goneReason === r ? '' : r)}>{r}</button>
-              ))}
-            </div>
-            <div style={{display:'flex', gap:6, marginTop:12}}>
-              <button className="btn btn-primary btn-sm" style={{flex:1}} onClick={() => {
-                DB.updateIndividual(gecko.id, {
-                  status: 'gone', keep: false,
-                  goneDate: goneWhen || todayStr(), goneReason: goneReason,
-                });
-                setGoneOpen(false); refreshLocal();
-                showToast('🌈 목록에서 조용히 빼뒀어요. 혈통엔 그대로 있습니다');
-              }}>이렇게 할게요</button>
-              <button className="btn btn-secondary btn-sm" style={{flex:1}} onClick={() => setGoneOpen(false)}>취소</button>
+            style={{margin:'0 0 8px', padding:'10px 12px', background:'var(--bg3)'}}>
+            <div style={{display:'flex', alignItems:'center', gap:8, flexWrap:'wrap'}}>
+              <span style={{fontSize:12, color:'var(--text3)', flex:1, minWidth:0}}>
+                {gecko.goneDate ? `${fmtDate(gecko.goneDate)} 이후 목록에서 빠져 있어요` : '목록에서 빠져 있어요'}
+                {gecko.goneReason ? ` · ${gecko.goneReason}` : ''}
+              </span>
+              <button className="btn btn-ghost btn-sm" style={{width:'auto', padding:'5px 10px', fontSize:11.5}}
+                onClick={() => {
+                  DB.updateIndividual(gecko.id, { status: 'own', goneDate: '', goneReason: '' });
+                  refreshLocal(); showToast('다시 목록으로 돌려놨어요');
+                }}>되돌리기</button>
             </div>
           </div>
-        ) : (
-          <button className="btn btn-ghost btn-sm" data-testid="gone-open"
-            style={{marginBottom:8, color:'var(--text3)'}}
-            onClick={() => { setGoneOpen(true); setGoneWhen(lastDeathDate(gecko.id) || todayStr()); }}>
-            🌈 곁을 떠났어요
-          </button>
         )}
       </div>
 
@@ -8420,6 +8383,19 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
               <div key={i} style={{color: i === 0 ? 'var(--accent2)' : 'var(--text)', fontWeight: i === 0 ? 700 : 400, whiteSpace:'pre-line'}}>{l}</div>
             ))}
           </div>
+
+          {/* 브리더 이름 — 공개 기록 한 장에 찍히는 이름입니다.
+              ★ 자주 고치는 값이라 설정 맨 위로 올려두었습니다(v1.5). 비워두면 안 나옵니다. */}
+          <div style={{marginTop:14, paddingTop:12, borderTop:'1px solid var(--border)'}}>
+            <div style={{fontSize:11.5, color:'var(--text3)', marginBottom:5}}>🏷️ 브리더 이름 <span style={{opacity:.75}}>(공개 기록에 표시)</span></div>
+            <input className="input" style={{padding:'9px 11px', fontSize:13}} placeholder="예: 크레건설"
+              data-testid="breeder-name"
+              value={settings.breederName || ''}
+              onChange={e => {
+                const next = { ...settings, breederName: e.target.value };
+                DB.saveSettings(next); setSettings(next);
+              }} />
+          </div>
         </div>
 
         <div className="card" style={{margin:0}}>
@@ -8535,28 +8511,21 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
           <div style={{fontSize:13, fontWeight:700, marginBottom:4, color:'var(--text2)'}}>🐣 해칭 베이비 이름 규칙</div>
           <div style={{fontSize:12, color:'var(--text3)', marginBottom:10}}>해칭 기록 시 베이비를 자동 등록하는 방식이에요</div>
           <div style={{display:'flex', flexDirection:'column', gap:6}}>
-            {[['combo', '부모 이름 조합 — 크순이×크한이 → 순한1호, 순한2호'], ['ask', '해칭 때마다 이름 물어보기'], ['off', '자동 등록 안 함 (직접 등록)']].map(([k, l]) => (
-              <button key={k} className={`option-btn ${(settings.babyNaming || 'combo') === k ? 'selected' : ''}`} style={{textAlign:'left'}} onClick={() => setNaming(k)}>{l}</button>
+            {BABY_NAMING.map(([k, l]) => (
+              <button key={k} className={`option-btn ${babyNamingMode(settings) === k ? 'selected' : ''}`} style={{textAlign:'left'}} onClick={() => setNaming(k)}>{l}</button>
             ))}
           </div>
         </div>
-        <div className="card" style={{margin:0}}>
+        {/* 앱 정보 — 버전과 최근 업데이트 날짜만.
+            ★ 기능 목록은 여기 두지 않습니다. 진행 상황은 프로젝트 카드에만 적습니다(v1.5). */}
+        <div className="card" style={{margin:0}} data-testid="app-info">
           <div style={{fontSize:13, fontWeight:700, marginBottom:6, color:'var(--text2)'}}>앱 정보</div>
-          <div style={{fontSize:13, color:'var(--text3)', lineHeight:1.7}}>
-            크레건설 브리딩비서 v{APP_VERSION}<br/>
-            축양·분양·<b>산란</b>·메이팅·해칭 · 즐겨찾기 · 캘린더(날짜별 추가·수정)<br/>
-            사진 첨부 · 예정일 대비 차이 기록 · 백업 복원 · 비속어 필터<br/>
-            ☁️ 서버 동기화 — 회원가입·로그인, 폰·PC 같은 데이터<br/>
-            🔀 같은 이름 개체 합치기 · 기록 주인 바로잡기<br/>
-            📊 엑셀 내려받기(원본 양식) · 프로필 사진 · 🥚 알 상세·해칭<br/>
-            🌡️ 인큐 온도로 부화 예정일 계산 · ♀♂? 성별 표시<br/>
-            ✅ 오늘 할 일 알림(지난 일정 포함) · 메이팅별 산란 이력<br/>
-            ✏️ 부화일 수정 · 대화로 정보 정정("부화일 8월 6일이야")<br/>
-            🔢 몇 차 산란 표시 · 암컷별 필터 · 온도 바꾸면 예정일 전부 갱신<br/>
-            🦗 밥 주는 날 알림 · 일괄 급여 체크 · 안 먹는 아이 경고<br/>
-            📈 암컷별 산란 간격을 배워서 다음 산란 예정일 추정<br/>
-            테마: 아이보리 × 버건디 (크레건설 아이덴티티)<br/>
-            예정: AI 상담 연결
+          <div style={{display:'flex', justifyContent:'space-between', alignItems:'baseline', gap:10}}>
+            <span style={{fontSize:14, fontWeight:700}}>크레건설 브리딩비서</span>
+            <span style={{fontSize:14, fontWeight:800, color:'var(--accent2)', fontVariantNumeric:'tabular-nums'}}>v{APP_VERSION}</span>
+          </div>
+          <div style={{fontSize:12, color:'var(--text3)', marginTop:5}}>
+            최근 업데이트 {fmtDate(APP_PATCHED)}
           </div>
         </div>
         <div className="card" style={{margin:0}}>
@@ -8576,19 +8545,7 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
             </div>
           )}
 
-          {/* 공개 기록 한 장에 찍히는 이름 — 비워두면 안 나옵니다 */}
-          <div style={{marginTop:12}}>
-            <div style={{fontSize:11, color:'var(--text3)', marginBottom:4}}>🏷️ 브리더 이름 (공개 기록에 표시)</div>
-            <input className="input" style={{padding:'9px 11px', fontSize:12.5}} placeholder="예: 크레건설"
-              data-testid="breeder-name"
-              value={settings.breederName || ''}
-              onChange={e => {
-                const next = { ...settings, breederName: e.target.value };
-                DB.saveSettings(next); setSettings(next);
-              }} />
-          </div>
-
-          <button className="btn btn-secondary btn-sm" style={{marginTop:10}}
+          <button className="btn btn-secondary btn-sm" style={{marginTop:12}}
             onClick={() => setLinkEdit(v => !v)}>
             {linkEdit ? '닫기' : '🔗 문의 링크 넣기'}
           </button>
