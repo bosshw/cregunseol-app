@@ -26,7 +26,7 @@ test("keeps storage, synchronization, and core workflows intact", async () => {
     assert.ok(source.includes(contract), `missing contract: ${contract}`);
   }
 
-  assert.match(source, /const APP_VERSION = '1\.5'/);
+  assert.match(source, /const APP_VERSION = '1\.6'/);
   assert.match(source, /Powered by cre_construct · CC/);
   assert.doesNotMatch(source, /Powered by 크레건설/);
   assert.match(source, /addEvents\(events\)/);
@@ -43,10 +43,10 @@ test("keeps service worker and release metadata aligned", async () => {
     readFile(file("version.json"), "utf8").then(JSON.parse),
   ]);
 
-  assert.equal(version.app, "1.5");
+  assert.equal(version.app, "1.6");
   assert.equal(version.schema, 1);
   assert.equal(version.minSchema, 1);
-  assert.match(worker, /const CACHE = 'creg-v15'/);
+  assert.match(worker, /const CACHE = 'creg-v16'/);
 
   for (const asset of [
     "./index.html",
@@ -170,7 +170,7 @@ test("keeps the v4.8 kinship, morph and voice contracts", async () => {
   // 설정 미리보기는 고정 견본으로 — 데이터가 없는 날에도 차이가 보여야 합니다
   assert.ok(source.includes("{voiceSample().map("), "settings preview must use voiceSample()");
   // 버전 문자열 4곳
-  assert.ok(source.includes("const APP_VERSION = '1.5'"), "APP_VERSION must be 1.5");
+  assert.ok(source.includes("const APP_VERSION = '1.6'"), "APP_VERSION must be 1.6");
 });
 
 test("keeps the v5.0 particle, line-break and calendar fixes", async () => {
@@ -197,7 +197,7 @@ test("keeps the v5.0 particle, line-break and calendar fixes", async () => {
   assert.doesNotMatch(source, /'🍽️🥩'/, "fed emoji must be a single icon");
   // 홈 한 줄은 인사만 합니다 (v5.2 — 할 일은 브리핑 카드가 말합니다)
   assert.doesNotMatch(source, /\[greetLine\(\), what\]/, "home line no longer lists jobs");
-  assert.ok(source.includes("APP_VERSION = '1.5'"), "APP_VERSION must be 1.5");
+  assert.ok(source.includes("APP_VERSION = '1.6'"), "APP_VERSION must be 1.6");
 
   // 캘린더 먹이 줄에 이모지가 두 번 나오면 안 됩니다 (줄 앞에 이미 🦗/🥣 가 붙습니다)
   assert.ok(source.includes("if (e.type === 'feeding') label = label.replace"), "feed label must drop its own emoji");
@@ -234,7 +234,7 @@ test("keeps the v4.9 hatching, morph and wording fixes", async () => {
   assert.ok(source.includes("const dayWord = (n) => `${Math.abs(Math.round(Number(n) || 0))}일`"), "dayWord must be numeric");
   // 탭 이름
   assert.ok(source.includes("브리핑"), "reminders tab is now 브리핑");
-  assert.ok(source.includes("const APP_VERSION = '1.5'"), "APP_VERSION must be 1.5");
+  assert.ok(source.includes("const APP_VERSION = '1.6'"), "APP_VERSION must be 1.6");
 });
 
 test("keeps the v5.2 nudge contracts", async () => {
@@ -277,7 +277,7 @@ test("keeps the v5.2 nudge contracts", async () => {
   assert.ok(source.includes('data-testid="nudge-go"'), "nudge needs an action button");
   assert.ok(source.includes("recordNudge(nudge)"), "reminders screen must record the nudge");
 
-  assert.ok(source.includes("APP_VERSION = '1.5'"), "APP_VERSION must be 1.5");
+  assert.ok(source.includes("APP_VERSION = '1.6'"), "APP_VERSION must be 1.6");
 });
 
 test("keeps the v5.3 public-record contracts", async () => {
@@ -330,7 +330,7 @@ test("keeps the v5.3 public-record contracts", async () => {
   // 화면 계약
   assert.ok(source.includes('data-testid="public-card"'), "profile needs the public card");
   assert.ok(source.includes('data-testid="public-toggle"'), "public card needs its toggle");
-  assert.ok(source.includes("APP_VERSION = '1.5'"), "APP_VERSION must be 1.5");
+  assert.ok(source.includes("APP_VERSION = '1.6'"), "APP_VERSION must be 1.6");
 });
 
 test("keeps the v5.4 away / condition / memory contracts", async () => {
@@ -386,7 +386,7 @@ test("keeps the v5.4 away / condition / memory contracts", async () => {
     assert.ok(source.includes(`data-testid="${id}"`), `missing screen contract: ${id}`);
   }
   assert.ok(source.includes("data-testid={`cond-${c.key}`}"), "condition buttons need per-level testids");
-  assert.ok(source.includes("APP_VERSION = '1.5'"), "APP_VERSION must be 1.5");
+  assert.ok(source.includes("APP_VERSION = '1.6'"), "APP_VERSION must be 1.6");
 });
 
 test("keeps the v1.0 laying-season contracts", async () => {
@@ -419,8 +419,8 @@ test("keeps the v1.0 laying-season contracts", async () => {
                           source.indexOf("const KIDS ="));
   assert.doesNotMatch(fc, /if \(.*seasonEnded.*\) return;/, "forecasts must keep computing for closed seasons");
   assert.ok(fc.includes("seasonEnded: ss.ended"), "forecasts must flag, not drop");
-  assert.ok(source.includes("layingForecasts().filter(f => !f.seasonEnded && !f.snoozeLeft)"),
-    "alerts are where closed seasons get hidden");
+  assert.ok(source.includes("layingForecasts().filter(f => !f.seasonEnded && !f.snoozeLeft && !f.quiet)"),
+    "alerts are where closed and quiet seasons get hidden");
 
   // 예정일이 한참 지나도 확인 전에는 사라지면 안 됩니다 (예전 21일 컷 제거)
   assert.doesNotMatch(source, /daysUntil\(eta\) < -21/, "the old 21-day cutoff must stay removed");
@@ -435,7 +435,7 @@ test("keeps the v1.0 laying-season contracts", async () => {
   assert.ok(source.includes("data-testid={`season-${r.key}`}"), "each answer needs its own testid");
 
   // 정식 출시 — 버전은 1.0
-  assert.ok(source.includes("APP_VERSION = '1.5'"), "APP_VERSION must be 1.5");
+  assert.ok(source.includes("APP_VERSION = '1.6'"), "APP_VERSION must be 1.6");
 });
 
 /* ══════════════════════════════════════════
@@ -616,4 +616,48 @@ test("keeps the v1.5 decluttering", async () => {
   assert.match(add, /if \(!isGoneIssue\(ev\.data\.issue\)\) return;/,
     "recording 폐사·실종 must tidy the list, whether typed or tapped");
   assert.match(add, /status: 'gone', keep: false/, "and it sets the status in that one place");
+});
+
+/* ══════════════════════════════════════════
+   v1.6 — 밥 주는 요일 · 재촉하지 않기
+   ══════════════════════════════════════════ */
+test("keeps the v1.6 contracts", async () => {
+  const raw = await readFile(file("src/app.jsx"), "utf8");
+  const source = raw.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+
+  // ① 밥 주는 날은 간격이든 요일이든 nextDay 하나로 모입니다
+  assert.ok(source.includes("const feedMode = (s)"), "one place decides the mode");
+  assert.ok(source.includes("const feedDays = (s)"), "one place reads the chosen weekdays");
+  assert.ok(source.includes("function nextFeedDay(days, fromISO)"), "one place finds the next weekday");
+  assert.ok(source.includes("function feedSchedule(untilISO, plan)"), "the calendar must not walk dates itself");
+  const cal = source.slice(source.indexOf("const fp = feedPlan(individuals, calendarEvents);"), source.indexOf("const cRows = clutchRows(individuals, calendarEvents);"));
+  assert.match(cal, /feedSchedule\(last, fp\)/, "the calendar asks feedSchedule");
+  assert.doesNotMatch(cal, /fp\.interval \* 86400000/, "no hand-rolled interval maths in the calendar");
+  assert.match(source, /const planLabel = byDays \?/, "one label covers both modes");
+  for (const id of ["feed-mode-days", "feed-days"]) {
+    assert.ok(source.includes(`data-testid="${id}"`), `missing screen contract: ${id}`);
+  }
+  assert.doesNotMatch(source, /마지막으로 준 날 \+ 이 간격이 되면/, "the long explanation must stay removed");
+
+  // ② 호칭은 네 가지, 늘 무언가로 부릅니다
+  assert.equal((source.match(/\['breeder'|\['boss'|\['sajang'|\['custom'|\['nim'|\['none'/g) || []).length, 4,
+    "exactly four call options");
+  assert.doesNotMatch(source, /\['nim', '님'\]|\['none', '안 부름'\]/, "'님' and '안 부름' must stay removed");
+  assert.doesNotMatch(source, /if \(v\.call === 'none'\) return '';/, "there is no silent mode any more");
+  assert.match(source, /return callLabel\(v\.call\) \|\| callLabel\(CALL_DEFAULT\);/,
+    "an old setting must fall back to a real name");
+
+  // ③ 메이팅은 다 큰 암컷에게만 여쭤봅니다
+  assert.ok(source.includes("const MATE_AGE = 400;"), "the age lives in one place");
+  assert.match(source, /if \(i\.gender === 'female' && hasMale && age !== null && age >= MATE_AGE/,
+    "only females, and only when a male exists");
+  assert.doesNotMatch(source, /const other = i\.gender === 'male' \? hasFemale/, "males must not be nagged");
+  assert.doesNotMatch(source, /age >= 300 && countOf\(i\.id, 'mating'\)/, "the old 300-day rule must stay removed");
+
+  // ④ 산란 예정일 — 5일까지만, 6~13일은 조용히, 14일에 확인
+  assert.ok(source.includes("const LAY_GRACE     = 5;"), "the grace window is explicit");
+  assert.ok(source.includes("quiet: late > LAY_GRACE && late < LAY_LATE_WARN"), "the quiet window is computed, not guessed");
+  const fc = source.slice(source.indexOf("function layingForecasts(individuals, events)"), source.indexOf("const KIDS ="));
+  assert.doesNotMatch(fc, /if \(.*quiet.*\) return;/, "forecasts must keep computing through the quiet window");
+  assert.ok(source.includes("!f.seasonEnded && !f.snoozeLeft && !f.quiet"), "hiding happens only in allAlerts");
 });
