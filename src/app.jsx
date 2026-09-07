@@ -457,8 +457,8 @@ const SERVER = {
 
    인터넷이 없거나 파일을 못 받으면 아무 것도 막지 않습니다(앱은 그대로 씁니다).
    ══════════════════════════════════════════ */
-const APP_VERSION = '1.5';
-const APP_PATCHED = '2026-09-06';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
+const APP_VERSION = '1.6';
+const APP_PATCHED = '2026-09-07';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -1512,6 +1512,13 @@ function layingGaps(layDates) {
      보여줄지 말지는 화면이 정합니다(혹시 모르니 값은 늘 갖고 있게).
    ══════════════════════════════════════════ */
 
+/* 산란 예정일이 지난 뒤 알리는 구간.
+   ★ 예정일은 어차피 추정이라 며칠은 어긋납니다. 그 며칠만 알려드리고,
+     그 뒤로는 조용히 있다가, 정말 늦었다 싶을 때 한 번 여쭤봅니다.
+       0~5일  : 알립니다 (오차 범위)
+       6~13일 : 아무 말도 안 합니다
+       14일~  : "시즌이 끝났는지" 여쭤봅니다 */
+const LAY_GRACE     = 5;         // 예정일에서 이만큼까지는 오차로 보고 그대로 알립니다
 const LAY_LATE_WARN = 14;        // 예정일에서 이만큼 지나면 "확인해 주세요"
 const LAY_GIVE_UP   = 365;       // 마지막 기록에서 이만큼 지나면 계산 자체를 접습니다
 const SEASON_SNOOZE = { ok: 7, trouble: 3, bad: 3 };   // 답한 뒤 며칠 쉬어갈지
@@ -1624,6 +1631,7 @@ function layingForecasts(individuals, events) {
       eta, interval, basis, count: ls.length, nth, lastLay: ls.length ? ls[ls.length - 1].date : null,
       late,                                   // 예정일에서 며칠 지났나 (음수면 아직 안 옴)
       overdue: late >= LAY_LATE_WARN,         // 확인해 달라고 할 때가 됐나
+      quiet: late > LAY_GRACE && late < LAY_LATE_WARN,   // 조용히 있을 구간 (계산은 계속합니다)
       seasonEnded: ss.ended,                  // ★ 계산은 했지만 화면에는 안 보일 아이
       snoozeLeft: ss.snoozeLeft,              // 방금 확인해서 잠시 쉬는 중
       season: ss,
@@ -1640,9 +1648,11 @@ function layingForecasts(individuals, events) {
    ══════════════════════════════════════════ */
 
 const KIDS = '애깅이들';                       // 아이들을 부르는 말
+/* 호칭 — 한 줄에 들어가게 네 가지만 둡니다.
+   ★ v1.6에서 '님'과 '안 부름'을 뺐습니다. 안 부르는 경우는 없고,
+     '님'은 다른 셋과 겹칩니다. 예전에 그 둘을 골라두신 분은 기본값으로 봅니다. */
 const CALL_OPTIONS = [
-  ['breeder', '브리더님'], ['boss', '대표님'], ['sajang', '사장님'],
-  ['nim', '님'], ['custom', '직접 입력'], ['none', '안 부름'],
+  ['breeder', '브리더님'], ['boss', '대표님'], ['sajang', '사장님'], ['custom', '직접 입력'],
 ];
 const TONE_OPTIONS = [
   ['polite', '정중히'], ['friendly', '친근히'], ['short', '짧게'],
@@ -1658,12 +1668,13 @@ function voicePrefs() {
     tone: s.tone || TONE_DEFAULT,
   };
 }
-/* 부를 호칭 — 안 부르기로 했으면 빈 글자 */
+/* 부를 호칭 — 늘 무언가로는 부릅니다 (안 부르는 경우 없음) */
+const callLabel = (k) => (CALL_OPTIONS.find(c => c[0] === k) || [])[1] || '';
 function callName() {
   const v = voicePrefs();
-  if (v.call === 'none') return '';
-  if (v.call === 'custom') return v.custom;
-  return (CALL_OPTIONS.find(c => c[0] === v.call) || [])[1] || '';
+  if (v.call === 'custom') return v.custom || callLabel(CALL_DEFAULT);
+  // 예전 설정('님'·'안 부름')은 목록에 없으니 기본 호칭으로 돌려놓습니다
+  return callLabel(v.call) || callLabel(CALL_DEFAULT);
 }
 const toneNow = () => voicePrefs().tone;
 
@@ -2013,6 +2024,7 @@ function voiceSample() {
      (할 일은 바로 아래 카드가 이미 말합니다)
    ══════════════════════════════════════════ */
 
+const MATE_AGE = 400;      // 이 나이가 넘은 암컷에게만 "짝을 골라볼까요" 를 여쭤봅니다
 const NUDGE_KEEP = 5;      // 최근 이만큼은 같은 종류를 다시 권하지 않습니다
 const NUDGE_BUSY = 3;      // 오늘 할 일이 이보다 많으면 제안은 내일로 미룹니다
 
@@ -2109,9 +2121,12 @@ function nudgeCandidates(individuals, events) {
                 `${nm} 혈통 미기재`),
     });
 
-    // ⑧ 성체인데 메이팅 기록이 아예 없음 (붙일 상대가 있을 때만)
-    const other = i.gender === 'male' ? hasFemale : i.gender === 'female' ? hasMale : false;
-    if (other && age !== null && age >= 300 && countOf(i.id, 'mating') === 0) out.push({
+    /* ⑧ 다 큰 암컷인데 메이팅 기록이 아예 없음 (붙일 수컷이 있을 때만)
+       ★ v1.6 — 수컷에게는 여쭤보지 않습니다. 수컷 하나가 여러 암컷을 보므로
+         "아직 안 했네요"가 재촉일 뿐입니다. 산란을 하는 쪽은 암컷입니다.
+       ★ 나이도 300일 → 400일로 올렸습니다. 300일은 아직 이릅니다. */
+    if (i.gender === 'female' && hasMale && age !== null && age >= MATE_AGE
+        && countOf(i.id, 'mating') === 0) out.push({
       key: 'mate', prio: 8, indId: i.id, weight: age, emoji: '💞', go: 'chat',
       text: say(`${eunneun(nm)} 아직 메이팅 기록이 없어요.\n짝을 골라볼까요?`,
                 `${nm} 아직 메이팅을 안 했네요!\n짝을 골라볼까요?`,
@@ -2519,7 +2534,7 @@ function allAlerts() {
   }));
   /* ★ 계산은 layingForecasts 가 전부 해둡니다.
      여기서는 "지금 보여줄 것"만 고릅니다 — 시즌을 닫았거나 방금 확인한 아이는 뺍니다. */
-  const lay = layingForecasts().filter(f => !f.seasonEnded && !f.snoozeLeft).map(f => ({
+  const lay = layingForecasts().filter(f => !f.seasonEnded && !f.snoozeLeft && !f.quiet).map(f => ({
     id: 'L:' + f.indId,
     individualId: f.indId,
     geckoName: f.pairName,
@@ -2570,6 +2585,31 @@ function purgeStoredHatchReminders() {
    그래서 마지막으로 밥을 준 날 + 설정한 간격 = 다음 급여일로 잡고, 그날 한 번에 체크합니다. */
 const FEED_INTERVAL_DEFAULT = 3;   // 며칠에 한 번 주는지
 const FEED_WARN_DEFAULT = 7;       // 며칠째 안 먹으면 걱정하는지
+const FEED_GAPS = [1, 2, 3, 4, 5, 7];
+
+/* 밥 주는 방식 두 가지 (v1.6)
+   ★ 일수 간격으로 주는 분도 있고, "화·금" 처럼 요일을 정해두고 주는 분도 있습니다.
+     둘 중 무엇이든 결과는 "다음에 줄 날(nextDay)" 하나로 모입니다 —
+     캘린더도 브리핑도 밥주기 화면도 그 하나만 봅니다. */
+const feedMode = (s) => ((s || DB.getSettings() || {}).feedMode === 'days' ? 'days' : 'gap');
+const feedDays = (s) => {
+  const v = (s || DB.getSettings() || {}).feedDays;
+  if (!Array.isArray(v)) return [];
+  return [...new Set(v.map(Number).filter(n => n >= 0 && n <= 6))].sort((a, b) => a - b);
+};
+const feedDaysLabel = (days) => (days || []).map(n => WEEKDAY_KO[n]).join('·');
+
+/* 오늘(또는 준 날) 이후로 처음 오는 지정 요일 — 오늘이 그 요일이면 오늘입니다 */
+function nextFeedDay(days, fromISO) {
+  if (!days || !days.length) return null;
+  const base = new Date(fromISO || todayStr());
+  for (let k = 0; k <= 7; k++) {
+    const d = new Date(base.getTime() + k * 86400000);
+    if (days.indexOf(d.getDay()) >= 0) return localISO(d);
+  }
+  return null;
+}
+
 const feedInterval = () => {
   const v = Number((DB.getSettings() || {}).feedInterval);
   return v >= 1 && v <= 14 ? v : FEED_INTERVAL_DEFAULT;
@@ -2586,11 +2626,16 @@ function feedPlan(individuals, events) {
   const evs = (events || DB.getEvents()).filter(e => e.type === 'feeding');
   const today = todayStr();
   const lastRound = evs.reduce((a, e) => (!a || e.date > a) ? e.date : a, null);
+  const mode = feedMode();
+  const days = feedDays();
+  const byDays = mode === 'days' && days.length > 0;
   const interval = feedInterval();
-  const nextDay = lastRound
-    ? localISO(new Date(new Date(lastRound).getTime() + interval * 86400000))
-    : today;
+  /* 고정 요일이면 "오늘부터 처음 오는 그 요일", 간격이면 "마지막으로 준 날 + 간격" */
+  const nextDay = byDays
+    ? nextFeedDay(days, today)
+    : (lastRound ? localISO(new Date(new Date(lastRound).getTime() + interval * 86400000)) : today);
   const dLeft = daysUntil(nextDay);
+  const planLabel = byDays ? `${feedDaysLabel(days)} 고정` : `${interval}일 간격`;
 
   const ateBy = {}, seenBy = {};
   evs.forEach(e => {
@@ -2606,7 +2651,24 @@ function feedPlan(individuals, events) {
     .sort((a, b) => b.days - a.days);
 
   return { inds, evs, lastRound, nextDay, dLeft, due: dLeft <= 0, interval,
+           mode, days, byDays, planLabel,
            ateBy, seenBy, doneToday, worried, remaining: inds.filter(i => !doneToday.has(i.id)) };
+}
+
+/* 앞으로 줄 날들 — 캘린더가 한 달치를 미리 찍는 데 씁니다.
+   ★ 간격이든 고정 요일이든 여기 하나만 부릅니다. 날짜 계산을 화면에서 다시 하지 마세요. */
+function feedSchedule(untilISO, plan) {
+  const fp = plan || feedPlan();
+  const out = [];
+  let d = fp.nextDay, guard = 0;
+  while (d && d <= untilISO && guard++ < 60) {
+    out.push(d);
+    const tomorrow = localISO(new Date(new Date(d).getTime() + 86400000));
+    d = fp.byDays
+      ? nextFeedDay(fp.days, tomorrow)
+      : (fp.interval > 0 ? localISO(new Date(new Date(d).getTime() + fp.interval * 86400000)) : null);
+  }
+  return out;
 }
 
 /* 크레건설 출생(CG) 판정 — 우리 기록으로 부모를 아는 아이는 우리 집에서 나온 아이입니다.
@@ -7012,16 +7074,14 @@ function CalendarScreen({ navigate, individuals, showToast, onRemindersChanged }
   const fp = feedPlan(individuals, calendarEvents);
   /* 먹이 예정은 다음 한 번만이 아니라 **한 달치**를 미리 찍어 둡니다.
      달력을 넘겨봐도 언제 줘야 하는지 한눈에 보이게. (저장하지 않고 그때그때 계산합니다) */
-  if (fp.inds.length && fp.interval > 0) {
+  if (fp.inds.length && fp.nextDay) {
     const last = localISO(new Date(new Date(fp.nextDay).getTime() + 31 * 86400000));
-    let d = fp.nextDay, guard = 0;
-    while (d <= last && guard++ < 40) {
+    feedSchedule(last, fp).forEach(d => {
       add(d, {
-        emoji: CALENDAR_FEED_PLAN_EMOJI, label: '먹이 예정', detail: `전체 ${fp.inds.length}마리 · ${fp.interval}일 간격`,
+        emoji: CALENDAR_FEED_PLAN_EMOJI, label: '먹이 예정', detail: `전체 ${fp.inds.length}마리 · ${fp.planLabel}`,
         name: '', planned: true, feed: true,
       });
-      d = localISO(new Date(new Date(d).getTime() + fp.interval * 86400000));
-    }
+    });
   }
   // 캘린더에는 "일정"만 — 개체별 메모·사진·무게 같은 기록은 각 개체 프로필에서 봅니다
   // 산란·해칭은 알림과 같은 양식("엄마 × 아빠 · N차")으로 맞춥니다
@@ -7511,7 +7571,10 @@ function FeedingScreen({ navigate, showToast, refreshIndividuals }) {
   const q = search.trim().toLowerCase();
   const shown = q ? fp.inds.filter(i =>
     (i.name || '').toLowerCase().includes(q) || (i.morph || '').toLowerCase().includes(q)) : fp.inds;
-  const nextAfter = localISO(new Date(new Date(today).getTime() + fp.interval * 86400000));
+  const tomorrow = localISO(new Date(new Date(today).getTime() + 86400000));
+  const nextAfter = fp.byDays
+    ? nextFeedDay(fp.days, tomorrow)
+    : localISO(new Date(new Date(today).getTime() + fp.interval * 86400000));
   const kindOf = (ind) => {
     const e = todayBy[ind.id];
     if (!e) return null;
@@ -7533,7 +7596,8 @@ function FeedingScreen({ navigate, showToast, refreshIndividuals }) {
         <div className="card" style={{margin:'0 0 12px'}}>
           <div style={{fontSize:15, fontWeight:800}}>🦗 {today === todayStr() ? '오늘' : fmtDate(today)} 밥 주기</div>
           <div style={{fontSize:12, color:'var(--text3)', marginTop:4}}>
-            {fp.lastRound ? `지난 급여 ${fmtDate(fp.lastRound)} · ` : ''}{fp.interval}일 간격 · 다 주면 다음은 {fmtDate(nextAfter)}
+            {fp.lastRound ? `지난 급여 ${fmtDate(fp.lastRound)} · ` : ''}{fp.planLabel}
+            {nextAfter ? ` · 다음은 ${fmtDate(nextAfter)}` : ''}
           </div>
           {/* 밥 준 날 — 자정 넘겨 체크했을 때 어제로 돌려놓을 수 있습니다 */}
           <div style={{display:'flex', alignItems:'center', gap:8, marginTop:10}}>
@@ -8484,16 +8548,46 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
         <div className="card" style={{margin:0}}>
           <div style={{fontSize:13, fontWeight:700, marginBottom:4, color:'var(--text2)'}}>🦗 밥 주는 간격</div>
           <div style={{fontSize:12, color:'var(--text3)', marginBottom:10, lineHeight:1.6}}>
-            며칠에 한 번 주시나요?<br/>
-            마지막으로 준 날 + 이 간격이 되면 <b>브리핑 맨 위</b>에 "오늘 밥 주는 날"이 떠요.
+            며칠에 한 번 주시나요?
           </div>
+          {/* 일수 간격 · 고정 요일 — 둘 중 하나로 정합니다 (v1.6) */}
           <div style={{display:'flex', gap:6, flexWrap:'wrap'}}>
-            {[1, 2, 3, 4, 5, 7].map(n => (
+            {FEED_GAPS.map(n => (
               <button key={n} className="filter-chip"
-                style={(settings.feedInterval || FEED_INTERVAL_DEFAULT) === n ? CHIP_ON : CHIP_OFF}
-                onClick={() => setFeed({ feedInterval: n })}>{n}일</button>
+                style={(feedMode(settings) === 'gap' && (settings.feedInterval || FEED_INTERVAL_DEFAULT) === n) ? CHIP_ON : CHIP_OFF}
+                onClick={() => setFeed({ feedMode: 'gap', feedInterval: n })}>{n}일</button>
             ))}
+            <button className="filter-chip" data-testid="feed-mode-days"
+              style={feedMode(settings) === 'days' ? CHIP_ON : CHIP_OFF}
+              onClick={() => setFeed({ feedMode: 'days' })}>📅 고정 요일</button>
           </div>
+
+          {feedMode(settings) === 'days' && (
+            <div style={{marginTop:10}} data-testid="feed-days">
+              <div style={{fontSize:11.5, color:'var(--text3)', marginBottom:6}}>
+                무슨 요일에 주시나요? <span style={{opacity:.75}}>(여러 개 고를 수 있어요)</span>
+              </div>
+              <div style={{display:'flex', gap:5}}>
+                {WEEKDAY_KO.map((w, n) => {
+                  const on = feedDays(settings).indexOf(n) >= 0;
+                  return (
+                    <button key={n} className="filter-chip"
+                      style={{flex:1, padding:'9px 0', textAlign:'center', ...(on ? CHIP_ON : CHIP_OFF)}}
+                      onClick={() => {
+                        const cur = feedDays(settings);
+                        const next = on ? cur.filter(x => x !== n) : [...cur, n].sort((a, b) => a - b);
+                        setFeed({ feedMode: 'days', feedDays: next });
+                      }}>{w}</button>
+                  );
+                })}
+              </div>
+              <div style={{fontSize:11.5, color: feedDays(settings).length ? 'var(--accent2)' : 'var(--danger)', marginTop:7}}>
+                {feedDays(settings).length
+                  ? `${feedDaysLabel(feedDays(settings))}요일마다 알려드릴게요`
+                  : '요일을 하나 이상 골라주세요 (안 고르면 일수 간격으로 돕니다)'}
+              </div>
+            </div>
+          )}
           <div style={{fontSize:13, fontWeight:700, margin:'16px 0 4px', color:'var(--text2)'}}>⚠️ 걱정 시작일</div>
           <div style={{fontSize:12, color:'var(--text3)', marginBottom:10}}>
             며칠째 안 먹으면 알려드릴까요?
