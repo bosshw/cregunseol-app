@@ -26,7 +26,7 @@ test("keeps storage, synchronization, and core workflows intact", async () => {
     assert.ok(source.includes(contract), `missing contract: ${contract}`);
   }
 
-  assert.match(source, /const APP_VERSION = '1\.6'/);
+  assert.match(source, /const APP_VERSION = '1\.7'/);
   assert.match(source, /Powered by cre_construct · CC/);
   assert.doesNotMatch(source, /Powered by 크레건설/);
   assert.match(source, /addEvents\(events\)/);
@@ -43,10 +43,10 @@ test("keeps service worker and release metadata aligned", async () => {
     readFile(file("version.json"), "utf8").then(JSON.parse),
   ]);
 
-  assert.equal(version.app, "1.6");
+  assert.equal(version.app, "1.7");
   assert.equal(version.schema, 1);
   assert.equal(version.minSchema, 1);
-  assert.match(worker, /const CACHE = 'creg-v16'/);
+  assert.match(worker, /const CACHE = 'creg-v17'/);
 
   for (const asset of [
     "./index.html",
@@ -170,7 +170,7 @@ test("keeps the v4.8 kinship, morph and voice contracts", async () => {
   // 설정 미리보기는 고정 견본으로 — 데이터가 없는 날에도 차이가 보여야 합니다
   assert.ok(source.includes("{voiceSample().map("), "settings preview must use voiceSample()");
   // 버전 문자열 4곳
-  assert.ok(source.includes("const APP_VERSION = '1.6'"), "APP_VERSION must be 1.6");
+  assert.ok(source.includes("const APP_VERSION = '1.7'"), "APP_VERSION must be 1.7");
 });
 
 test("keeps the v5.0 particle, line-break and calendar fixes", async () => {
@@ -197,7 +197,7 @@ test("keeps the v5.0 particle, line-break and calendar fixes", async () => {
   assert.doesNotMatch(source, /'🍽️🥩'/, "fed emoji must be a single icon");
   // 홈 한 줄은 인사만 합니다 (v5.2 — 할 일은 브리핑 카드가 말합니다)
   assert.doesNotMatch(source, /\[greetLine\(\), what\]/, "home line no longer lists jobs");
-  assert.ok(source.includes("APP_VERSION = '1.6'"), "APP_VERSION must be 1.6");
+  assert.ok(source.includes("APP_VERSION = '1.7'"), "APP_VERSION must be 1.7");
 
   // 캘린더 먹이 줄에 이모지가 두 번 나오면 안 됩니다 (줄 앞에 이미 🦗/🥣 가 붙습니다)
   assert.ok(source.includes("if (e.type === 'feeding') label = label.replace"), "feed label must drop its own emoji");
@@ -234,7 +234,7 @@ test("keeps the v4.9 hatching, morph and wording fixes", async () => {
   assert.ok(source.includes("const dayWord = (n) => `${Math.abs(Math.round(Number(n) || 0))}일`"), "dayWord must be numeric");
   // 탭 이름
   assert.ok(source.includes("브리핑"), "reminders tab is now 브리핑");
-  assert.ok(source.includes("const APP_VERSION = '1.6'"), "APP_VERSION must be 1.6");
+  assert.ok(source.includes("const APP_VERSION = '1.7'"), "APP_VERSION must be 1.7");
 });
 
 test("keeps the v5.2 nudge contracts", async () => {
@@ -277,7 +277,7 @@ test("keeps the v5.2 nudge contracts", async () => {
   assert.ok(source.includes('data-testid="nudge-go"'), "nudge needs an action button");
   assert.ok(source.includes("recordNudge(nudge)"), "reminders screen must record the nudge");
 
-  assert.ok(source.includes("APP_VERSION = '1.6'"), "APP_VERSION must be 1.6");
+  assert.ok(source.includes("APP_VERSION = '1.7'"), "APP_VERSION must be 1.7");
 });
 
 test("keeps the v5.3 public-record contracts", async () => {
@@ -330,7 +330,7 @@ test("keeps the v5.3 public-record contracts", async () => {
   // 화면 계약
   assert.ok(source.includes('data-testid="public-card"'), "profile needs the public card");
   assert.ok(source.includes('data-testid="public-toggle"'), "public card needs its toggle");
-  assert.ok(source.includes("APP_VERSION = '1.6'"), "APP_VERSION must be 1.6");
+  assert.ok(source.includes("APP_VERSION = '1.7'"), "APP_VERSION must be 1.7");
 });
 
 test("keeps the v5.4 away / condition / memory contracts", async () => {
@@ -386,7 +386,7 @@ test("keeps the v5.4 away / condition / memory contracts", async () => {
     assert.ok(source.includes(`data-testid="${id}"`), `missing screen contract: ${id}`);
   }
   assert.ok(source.includes("data-testid={`cond-${c.key}`}"), "condition buttons need per-level testids");
-  assert.ok(source.includes("APP_VERSION = '1.6'"), "APP_VERSION must be 1.6");
+  assert.ok(source.includes("APP_VERSION = '1.7'"), "APP_VERSION must be 1.7");
 });
 
 test("keeps the v1.0 laying-season contracts", async () => {
@@ -435,7 +435,7 @@ test("keeps the v1.0 laying-season contracts", async () => {
   assert.ok(source.includes("data-testid={`season-${r.key}`}"), "each answer needs its own testid");
 
   // 정식 출시 — 버전은 1.0
-  assert.ok(source.includes("APP_VERSION = '1.6'"), "APP_VERSION must be 1.6");
+  assert.ok(source.includes("APP_VERSION = '1.7'"), "APP_VERSION must be 1.7");
 });
 
 /* ══════════════════════════════════════════
@@ -660,4 +660,46 @@ test("keeps the v1.6 contracts", async () => {
   const fc = source.slice(source.indexOf("function layingForecasts(individuals, events)"), source.indexOf("const KIDS ="));
   assert.doesNotMatch(fc, /if \(.*quiet.*\) return;/, "forecasts must keep computing through the quiet window");
   assert.ok(source.includes("!f.seasonEnded && !f.snoozeLeft && !f.quiet"), "hiding happens only in allAlerts");
+});
+
+/* ══════════════════════════════════════════
+   v1.7 — 설정 가는 길 · 기록 공유 · 혈통 성별 · 활동 기록 두 칸 · 부화 문장
+   ══════════════════════════════════════════ */
+test("keeps the v1.7 contracts", async () => {
+  const raw = await readFile(file("src/app.jsx"), "utf8");
+  const source = raw.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+
+  // ① 설정 톱니는 한 곳에서만 만들고, 대화를 뺀 네 화면이 같이 씁니다
+  assert.ok(source.includes("function GearBtn({ navigate })"), "one place makes the settings button");
+  assert.ok(source.includes('data-testid="gear-btn"'), "missing screen contract: gear-btn");
+  assert.equal((source.match(/<GearBtn navigate=\{navigate\} \/>/g) || []).length, 4,
+    "홈·캘린더·브리핑·가계부 네 화면에 정확히 하나씩");
+  assert.equal((source.match(/aria-label="설정"/g) || []).length, 1,
+    "톱니를 손으로 다시 그린 곳이 있으면 안 됩니다");
+  const chat = source.slice(source.indexOf("function SmartChatScreen("), source.indexOf("function ProfileScreen("));
+  assert.doesNotMatch(chat, /<GearBtn/, "대화 화면에는 설정이 올라가지 않습니다");
+
+  // ② 기록 공개 → 기록 공유
+  assert.ok(source.includes("🔗 기록 공유"), "카드 제목은 '기록 공유'");
+  assert.ok(source.includes("이 아이를 어떻게 키웠는지 공유할 수 있어요."), "설명도 공유로");
+  assert.ok(source.includes("'공유 끄기' : '공유하기'"), "버튼도 공유로");
+  assert.doesNotMatch(source, /🔗 기록 공개|'공개 끄기' : '공개하기'/, "'공개'라는 말은 화면에서 빠졌습니다");
+
+  // ③ 혈통 칩에는 성별을 보이지 않습니다
+  const ped = source.slice(source.indexOf("function PedigreeCard({ gecko, navigate })"), source.indexOf("function awayTag(i)"));
+  assert.doesNotMatch(ped, /genderEmoji/, "혈통 칩은 성별을 그리지 않습니다");
+
+  // ④ 활동 기록은 피딩 / 활동 두 칸, 나누는 기준은 한 곳
+  assert.ok(source.includes("const LOG_TABS = ["), "나누는 기준은 LOG_TABS 한 곳");
+  assert.match(source, /\['feed', '🍽️ 피딩', \(e\) => e\.type === 'feeding'\]/, "피딩 칸은 밥 기록만");
+  assert.match(source, /\['etc',  '📋 활동', \(e\) => e\.type !== 'feeding'\]/, "나머지는 전부 활동 칸으로");
+  for (const id of ["log-tab-", "gear-btn"]) {
+    assert.ok(source.includes(`data-testid=`) && raw.includes(id), `missing screen contract: ${id}`);
+  }
+  assert.ok(source.includes("const [logOpen, setLogOpen] = useState('')"), "열려 있는 칸은 한 곳에서 기억합니다");
+  assert.ok(source.includes("const sortedEvents = useMemo("), "정렬은 한 번만 하고 두 칸이 나눠 씁니다");
+
+  // ⑤ 부화 예정 문장은 산란과 헷갈리지 않습니다
+  assert.ok(source.includes("차 알에서 아기가 태어날 것 같아요 🐣"), "부화는 '태어난다'로 말합니다");
+  assert.doesNotMatch(source, /차 알이 나올 것 같아요/, "'알이 나온다'는 산란처럼 들려 빠졌습니다");
 });
