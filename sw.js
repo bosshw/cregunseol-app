@@ -1,4 +1,4 @@
-const CACHE = 'creg-v16';
+const CACHE = 'creg-v17';
 
 // 화면을 그리는 데 꼭 필요한 파일 — 이것도 폰에 저장해둬야 인터넷 없이 열립니다
 const ASSETS = [
@@ -45,4 +45,4 @@ self.addEventListener('fetch', e => {
     }))
   );
 });
-// v1.1 deploy 2026-09-06 (화면 엔진을 Preact 로 — 첫 화면 140KB → 102KB)
+// v1.7 deploy 2026-09-10 (설정 가는 길 4곳 · 기록 공유 · 혈통 성별 감춤 · 활동 기록 피딩/활동 두 칸 · 부화 문장)
