@@ -457,8 +457,8 @@ const SERVER = {
 
    인터넷이 없거나 파일을 못 받으면 아무 것도 막지 않습니다(앱은 그대로 씁니다).
    ══════════════════════════════════════════ */
-const APP_VERSION = '1.6';
-const APP_PATCHED = '2026-09-07';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
+const APP_VERSION = '1.7';
+const APP_PATCHED = '2026-09-10';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -2233,7 +2233,7 @@ function alertLine(r) {
   const tail = r.detail ? '\n' + r.detail : '';       // 날짜·부연은 아랫줄로 내립니다
   if (r.type === 'hatching_expected') {
     return say(`${whenWord(r.date)} ${r.nth}차 알이 부화할 예정이에요`,
-               `${whenWord(r.date)} ${r.nth}차 알이 나올 것 같아요 🐣`, '') + tail;
+               `${whenWord(r.date)} ${r.nth}차 알에서 아기가 태어날 것 같아요 🐣`, '') + tail;
   }
   if (r.type === 'laying_expected') {
     return say(`${whenWord(r.date)} ${r.nth}차 산란이 예상돼요`,
@@ -3638,6 +3638,18 @@ function useToast() {
 /* ══════════════════════════════════════════
    앱 루트
    ══════════════════════════════════════════ */
+/* 설정으로 가는 톱니 버튼 — 대화 화면을 뺀 모든 탭이 이 하나를 같이 씁니다.
+   ★ 모양을 바꾸려면 여기만 고치면 네 화면이 한꺼번에 바뀝니다. */
+function GearBtn({ navigate }) {
+  return (
+    <button onClick={() => navigate('settings')} aria-label="설정" data-testid="gear-btn"
+      style={{background:'var(--bg3)', border:'1px solid var(--border)', borderRadius:10, padding:'6px 7px',
+              cursor:'pointer', display:'flex', alignItems:'center', color:'var(--text2)', flexShrink:0}}>
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    </button>
+  );
+}
+
 /* 하단 탭에 있는 화면들 — 설정은 v3.8부터 탭이 아니라 홈 오른쪽 위 ⚙️ 로 들어갑니다 */
 const TAB_SCREENS = ['home', 'calendar', 'reminders', 'ledger'];
 
@@ -3864,11 +3876,7 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
             </div>
             {/* 설정은 v3.8부터 여기(예전 CG 배지 자리)로 올라왔습니다. 그 자리의 탭은 가계부가 씁니다 */}
             <div style={{display:'flex', alignItems:'center', gap:7, flexShrink:0}}>
-              <button onClick={() => navigate('settings')} aria-label="설정"
-                style={{background:'var(--bg3)', border:'1px solid var(--border)', borderRadius:10, padding:'6px 7px',
-                        cursor:'pointer', display:'flex', alignItems:'center', color:'var(--text2)'}}>
-                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-              </button>
+              <GearBtn navigate={navigate} />
             </div>
           </div>
         </div>
@@ -5087,11 +5095,7 @@ function LedgerScreen({ individuals, navigate, showToast, refreshIndividuals }) 
             <h1>가계부</h1>
             <div className="header-sub">🏷️ 분양과 오가는 돈을 한자리에서</div>
           </div>
-          <button onClick={() => navigate('settings')} aria-label="설정"
-            style={{background:'var(--bg3)', border:'1px solid var(--border)', borderRadius:10, padding:'6px 7px',
-                    cursor:'pointer', display:'flex', alignItems:'center', color:'var(--text2)', flexShrink:0}}>
-            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-          </button>
+          <GearBtn navigate={navigate} />
         </div>
       </div>
 
@@ -5208,6 +5212,8 @@ function WeightChart({ events }) {
   );
 }
 
+/* ★ 혈통 칩에는 성별을 보이지 않습니다(v1.7). 아직 성별이 안 잡힌 아이가 물음표로 나와
+   혈통 칸이 물음표 밭이 되는 걸 막기 위해서입니다. 성별은 각 아이 프로필에서 봅니다. */
 function PedigreeCard({ gecko, navigate }) {
   const all = DB.getIndividuals();
   const sire = all.find(i => i.id === gecko.sireId);
@@ -5227,8 +5233,8 @@ function PedigreeCard({ gecko, navigate }) {
         )}
         {(sire || dam) && (
           <div style={{display:'flex', flexWrap:'wrap', gap:6}}>
-            {sire && <button className="chip-btn" onClick={() => navigate('profile', { gecko: sire })}>부 {genderEmoji(sire.gender || 'male')} {sire.name}{awayTag(sire)}</button>}
-            {dam && <button className="chip-btn" onClick={() => navigate('profile', { gecko: dam })}>모 {genderEmoji(dam.gender || 'female')} {dam.name}{awayTag(dam)}</button>}
+            {sire && <button className="chip-btn" onClick={() => navigate('profile', { gecko: sire })}>부 {sire.name}{awayTag(sire)}</button>}
+            {dam && <button className="chip-btn" onClick={() => navigate('profile', { gecko: dam })}>모 {dam.name}{awayTag(dam)}</button>}
           </div>
         )}
         {mates.length > 0 && (
@@ -5238,7 +5244,7 @@ function PedigreeCard({ gecko, navigate }) {
             </div>
             <div style={{display:'flex', flexWrap:'wrap', gap:6}}>
               {mates.map(m => (
-                <button key={m.id} className="chip-btn" onClick={() => navigate('profile', { gecko: m })}>{genderEmoji(m.gender)} {m.name}{awayTag(m)}</button>
+                <button key={m.id} className="chip-btn" onClick={() => navigate('profile', { gecko: m })}>{m.name}{awayTag(m)}</button>
               ))}
             </div>
           </div>
@@ -5248,7 +5254,7 @@ function PedigreeCard({ gecko, navigate }) {
             <div style={{fontSize:11, color:'var(--text3)', marginBottom:4}}>자식 {kids.length}마리</div>
             <div style={{display:'flex', flexWrap:'wrap', gap:6}}>
               {kids.map(k => (
-                <button key={k.id} className="chip-btn" onClick={() => navigate('profile', { gecko: k })}>{genderEmoji(k.gender)} {k.name}{awayTag(k)}</button>
+                <button key={k.id} className="chip-btn" onClick={() => navigate('profile', { gecko: k })}>{k.name}{awayTag(k)}</button>
               ))}
             </div>
           </div>
@@ -6364,6 +6370,13 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
 /* ══════════════════════════════════════════
    개체 프로필
    ══════════════════════════════════════════ */
+/* 활동 기록을 나누는 기준 — 밥 기록만 따로 모읍니다.
+   ★ 여기 말고 다른 곳에서 나누지 마세요. 한 칸에 없는 기록은 반대 칸에 반드시 들어갑니다. */
+const LOG_TABS = [
+  ['feed', '🍽️ 피딩', (e) => e.type === 'feeding'],
+  ['etc',  '📋 활동', (e) => e.type !== 'feeding'],
+];
+
 function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndividuals, individuals }) {
   const [gecko, setGecko] = useState(() => DB.getIndividuals().find(i => i.id === initialGecko.id) || initialGecko);
   const [events, setEvents] = useState(() => DB.getEventsFor(initialGecko.id).filter(e => e.type !== 'ledger'));
@@ -6380,11 +6393,15 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
   const [nameEdit, setNameEdit] = useState(false);       // 이름 수정
   const [nameVal, setNameVal] = useState('');
   const [healthOpen, setHealthOpen] = useState(false);   // 이상 기록
+  const [logOpen, setLogOpen] = useState('');            // 활동 기록 — 열려 있는 칸('feed' 또는 'etc')
   const [hIssue, setHIssue] = useState('');
   const [hNote, setHNote] = useState('');
   const [hWhen, setHWhen] = useState(todayStr());
   const eventPhotoRef = useRef(null);
   const avatarFileRef = useRef(null);
+
+  // 최근 것이 위로 — 피딩·활동 두 칸이 이 목록 하나를 나눠 씁니다
+  const sortedEvents = useMemo(() => [...events].sort((a,b) => b.date > a.date ? 1 : -1), [events]);
 
   // 프로필 원형 사진 탭 → 대표사진 지정 (사진 기록으로도 남겨서 나중에 다시 고를 수 있게)
   const onAvatarPick = (e) => {
@@ -6432,7 +6449,7 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
       if (gecko.publicOn) {
         await PUB.remove(gecko.shareCode);
         DB.updateIndividual(gecko.id, { publicOn: false, publicAt: '' });
-        showToast('공개를 껐어요. 링크는 이제 안 열립니다');
+        showToast('공유를 껐어요. 링크는 이제 안 열립니다');
       } else {
         const code = gecko.shareCode || newShareCode();
         await PUB.put({ ...gecko, shareCode: code });
@@ -6698,23 +6715,23 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
         </div>
       )}
 
-      {/* ── 기록 공개 ──
+      {/* ── 기록 공유 ──
           앱 안에서 거래하지 않습니다. 대신 이 아이를 어떻게 키웠는지를 링크 하나로 보여드립니다.
           담기는 내용은 publicSnapshot() 한 곳에서만 정합니다(분양가·가계부는 나가지 않습니다). */}
       <div style={{padding:'0 16px 10px'}}>
         <div className="card" style={{margin:0}} data-testid="public-card">
           <div style={{display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:10}}>
             <div style={{minWidth:0, flex:1}}>
-              <div style={{fontSize:13.5, fontWeight:800}}>🔗 기록 공개</div>
+              <div style={{fontSize:13.5, fontWeight:800}}>🔗 기록 공유</div>
               <div style={{fontSize:11.5, color:'var(--text3)', marginTop:4, lineHeight:1.6, whiteSpace:'pre-line'}}>
                 {gecko.publicOn
                   ? '링크를 아는 분은 누구나 볼 수 있어요.\n분양가와 가계부는 나가지 않습니다.'
-                  : '이 아이를 어떻게 키웠는지 링크 하나로 보여드려요.\n분양 글에 붙이시면 됩니다.'}
+                  : '이 아이를 어떻게 키웠는지 공유할 수 있어요.\n분양 글에 붙이시면 됩니다.'}
               </div>
             </div>
             <button className="btn btn-secondary btn-sm" data-testid="public-toggle"
               style={{width:'auto', whiteSpace:'nowrap'}} disabled={pubBusy} onClick={togglePublic}>
-              {pubBusy ? '잠깐만요…' : gecko.publicOn ? '공개 끄기' : '공개하기'}
+              {pubBusy ? '잠깐만요…' : gecko.publicOn ? '공유 끄기' : '공유하기'}
             </button>
           </div>
 
@@ -6851,6 +6868,10 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
 
       <PedigreeCard gecko={gecko} navigate={navigate} />
 
+      {/* ── 활동 기록 ──
+          밥 기록이 하루에도 여러 줄씩 쌓여 나머지 기록이 저 아래로 밀려났습니다(v1.7).
+          그래서 🍽️ 피딩 / 📋 활동 두 칸으로 나누고, 누른 칸만 펼칩니다.
+          ★ 나누는 기준은 아래 LOG_TABS 한 곳에서만 정합니다. */}
       <div className="section-title">활동 기록 {events.length > 0 ? `(${events.length})` : ''}</div>
 
       {events.length === 0 ? (
@@ -6859,8 +6880,28 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
           <p>아직 기록이 없어요. 위 버튼으로 첫 기록을 남겨보세요.</p>
         </div>
       ) : (
-        <div className="timeline">
-          {[...events].sort((a,b) => b.date > a.date ? 1 : -1).map(ev => {
+        LOG_TABS.map(([tabKey, tabLabel, mine]) => {
+          const list = sortedEvents.filter(e => mine(e));
+          const open = logOpen === tabKey;
+          return (
+        <div key={tabKey} style={{padding:'0 16px 8px'}}>
+          <button data-testid={'log-tab-' + tabKey} aria-expanded={open}
+            onClick={() => setLogOpen(open ? '' : tabKey)}
+            style={{width:'100%', display:'flex', alignItems:'center', justifyContent:'space-between', gap:8,
+                    background:'var(--bg3)', border:'1px solid var(--border)', borderRadius:12,
+                    padding:'12px 14px', cursor:'pointer', color:'var(--text)', fontSize:13.5, fontWeight:800}}>
+            <span>{tabLabel} <span style={{color:'var(--text3)', fontWeight:600}}>({list.length})</span></span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" strokeWidth="2.5"
+              style={{flexShrink:0, transform: open ? 'rotate(180deg)' : 'none', transition:'transform .15s'}}>
+              <path d="M6 9l6 6 6-6" />
+            </svg>
+          </button>
+
+          {open && (list.length === 0 ? (
+            <div style={{fontSize:12.5, color:'var(--text3)', padding:'12px 4px'}}>아직 기록이 없어요.</div>
+          ) : (
+            <div className="timeline" style={{padding:0}}>
+          {list.map(ev => {
             const t = EVENT_TYPES.find(e => e.key === ev.type);
             const isEditing = editingId === ev.id;
             return (
@@ -6935,7 +6976,11 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
               </div>
             );
           })}
+            </div>
+          ))}
         </div>
+          );
+        })
       )}
 
       {/* 삭제 */}
@@ -7211,7 +7256,12 @@ function CalendarScreen({ navigate, individuals, showToast, onRemindersChanged }
   const WD = ['일', '월', '화', '수', '목', '금', '토'];
   return (
     <div className="screen">
-      <div className="header"><h1>📅 캘린더</h1></div>
+      <div className="header">
+        <div className="header-row">
+          <h1>📅 캘린더</h1>
+          <GearBtn navigate={navigate} />
+        </div>
+      </div>
       <div style={{padding:'12px 16px'}}>
         <div className="card" style={{margin:0}}>
           <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10}}>
@@ -7723,7 +7773,12 @@ function RemindersScreen({ navigate, onChanged }) {
 
   return (
     <div className="screen">
-      <div className="header"><h1>📝 브리핑</h1></div>
+      <div className="header">
+        <div className="header-row">
+          <h1>📝 브리핑</h1>
+          <GearBtn navigate={navigate} />
+        </div>
+      </div>
 
       {/* 오늘의 브리핑 — 카드를 늘어놓기 전에 하루를 먼저 정리해 드립니다 */}
       {brief.length > 0 && (
@@ -8451,7 +8506,7 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
           {/* 브리더 이름 — 공개 기록 한 장에 찍히는 이름입니다.
               ★ 자주 고치는 값이라 설정 맨 위로 올려두었습니다(v1.5). 비워두면 안 나옵니다. */}
           <div style={{marginTop:14, paddingTop:12, borderTop:'1px solid var(--border)'}}>
-            <div style={{fontSize:11.5, color:'var(--text3)', marginBottom:5}}>🏷️ 브리더 이름 <span style={{opacity:.75}}>(공개 기록에 표시)</span></div>
+            <div style={{fontSize:11.5, color:'var(--text3)', marginBottom:5}}>🏷️ 브리더 이름 <span style={{opacity:.75}}>(공유 기록에 표시)</span></div>
             <input className="input" style={{padding:'9px 11px', fontSize:13}} placeholder="예: 크레건설"
               data-testid="breeder-name"
               value={settings.breederName || ''}
