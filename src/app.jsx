@@ -462,8 +462,8 @@ const SERVER = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.0';
-const APP_PATCHED = '2026-09-10';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
+const APP_VERSION = '1.1';
+const APP_PATCHED = '2026-09-11';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -868,17 +868,91 @@ const todayStr = () => localISO(new Date());
 const daysUntil = (ds) => Math.ceil((new Date(ds) - new Date(todayStr())) / 86400000);
 const NOTIFY_WINDOW = 1; // 알림·배지는 D-1과 당일부터
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('ko-KR', { year:'numeric', month:'short', day:'numeric' }) : '-';
-const genderLabel = g => g === 'female' ? '♀ 암컷' : g === 'male' ? '♂ 수컷' : '? 미구분';
+/* 자리가 좁은 카드용 — 올해 일은 연도를 빼고 "9월 5일" 로만 적습니다.
+   ★ 자세히 보는 화면(프로필·상세)에서는 연도가 있는 fmtDate 를 그대로 씁니다. */
+const fmtDateShort = (d) => {
+  if (!d) return '-';
+  const t = new Date(d);
+  const sameYear = t.getFullYear() === new Date().getFullYear();
+  return t.toLocaleDateString('ko-KR', sameYear ? { month:'short', day:'numeric' } : { year:'2-digit', month:'short', day:'numeric' });
+};
+const genderLabel = g => g === 'female' ? '♀ 암컷' : g === 'male' ? '♂ 수컷' : '미구분';
 // 국제 통용 기호 — 사진을 넣어도 성별이 보이도록 이름 옆에도 함께 씁니다
-const GENDER_MARK = { female: '♀', male: '♂', unknown: '?' };
+const GENDER_MARK = { female: '♀', male: '♂', unknown: '미구분' };
 const GENDER_COLOR = { female: '#D6455B', male: '#3B82F6', unknown: '#9A9189' };
-const genderMark = g => GENDER_MARK[g] || '?';
+const genderMark = g => GENDER_MARK[g] || GENDER_MARK.unknown;
 const genderColor = g => GENDER_COLOR[g] || GENDER_COLOR.unknown;
 // 이름 옆 성별 기호 (색 포함)
+/* ★ 성별을 아직 모르는 아이는 물음표(?) 대신 "미구분" 이라고 적습니다.
+   물음표가 줄줄이 늘어서면 화면이 물음표 밭이 됐습니다(v1.1). */
 function GenderTag({ g, size = 13 }) {
-  return <span style={{ color: genderColor(g), fontWeight: 800, fontSize: size }}>{genderMark(g)}</span>;
+  const known = g === 'female' || g === 'male';
+  return known
+    ? <span style={{ color: genderColor(g), fontWeight: 800, fontSize: size }}>{genderMark(g)}</span>
+    : <span style={{ color: 'var(--text3)', fontWeight: 600, fontSize: Math.max(10, size - 3) }}>미구분</span>;
 }
 const genderEmoji = g => genderMark(g);
+
+/* ══════════════════════════════════════════
+   도트 그림 — 글자 한 칸이 네모 한 칸입니다.
+   '.' 은 빈 칸이고, 나머지 글자는 아래 색표에서 색을 찾습니다.
+   그림을 고치려면 아래 그림표만 고치면 됩니다(코드는 안 건드려도 됩니다).
+   ══════════════════════════════════════════ */
+function pixelSvg(rows, pal) {
+  let r = '';
+  rows.forEach((line, y) => {
+    let x = 0;
+    while (x < line.length) {
+      const c = line[x];
+      if (c === '.') { x++; continue; }
+      let w = 1;
+      while (line[x + w] === c) w++;
+      r += `<rect x="${x}" y="${y}" width="${w}" height="1" fill="${pal[c]}"/>`;
+      x += w;
+    }
+  });
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" shape-rendering="crispEdges">${r}</svg>`;
+}
+const pixelUri = (rows, pal) => 'data:image/svg+xml,' + encodeURIComponent(pixelSvg(rows, pal));
+
+/* 사진이 아직 없는 아이 자리에 들어가는 도트 크레스티드게코 */
+const DOT_GECKO_URI = pixelUri([
+  '', '',
+  '....DD....DD....',
+  '...DGGD..DGGD...',
+  '..DGGGGDDGGGGD..',
+  '..DGGGGGGGGGGD..',
+  '..DGWKGGGGWKGD..',
+  '..DGKKGGGGKKGD..',
+  '..DGGGGGGGGGGD..',
+  '...DGGGGGGGGD...',
+  '...DGGDDDDGGD...',
+  '....DGGGGGGD....',
+  '.....DDDDDD.....',
+], { D:'#3D7018', G:'#6DB033', K:'#0A0400', W:'#FFFFFF' });
+
+/* 알 자리에 들어가는 도트 알 (해칭 아이콘과 같은 색을 씁니다) */
+const DOT_EGG_URI = pixelUri([
+  '',
+  '......EEEE......',
+  '....EESSSSEE....',
+  '...ESSSSSSSSE...',
+  '..ESSSSSSSSSSE..',
+  '..ESSSSSSSSSSE..',
+  '.ESSSSSSSSSSSSE.',
+  '.ESSSSSSSSSSDDE.',
+  '.ESSSSSSSSSSDDE.',
+  '.ESSSSSSSSSDDDE.',
+  '..ESSSSSSSSDDE..',
+  '..ESSSSSSSDDDE..',
+  '...ESSSSSDDDE...',
+  '....EEDDDDEE....',
+  '......EEEE......',
+], { E:'#7A5820', S:'#F5E5BE', D:'#C8A870' });
+
+/* 화면 어디서나 같은 크기 규칙으로 쓰는 작은 그림 두 개 */
+const DotGecko = ({ size = 22 }) => <img src={DOT_GECKO_URI} alt="" width={size} height={size} style={{display:'block', imageRendering:'pixelated'}} />;
+const DotEgg   = ({ size = 16 }) => <img src={DOT_EGG_URI} alt="" width={size} height={size} style={{display:'inline-block', verticalAlign:'-3px', imageRendering:'pixelated'}} />;
 
 /* ── 해칭 커스텀 아이콘: 알에서 나오는 도마뱀 픽셀아트 ── */
 const HATCH_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" shape-rendering="crispEdges">
@@ -2236,13 +2310,15 @@ function alertLine(r) {
   const t = toneNow();
   if (t === 'short') return (r.message || '') + (r.detail ? ` · ${r.detail}` : '');
   const tail = r.detail ? '\n' + r.detail : '';       // 날짜·부연은 아랫줄로 내립니다
+  /* ★ 언제인지는 카드 아랫줄이 이미 말합니다("다음 주 화요일 · 2026년 9월 15일").
+     여기서 또 말하면 같은 말이 두 줄 연속으로 나옵니다. 그래서 문장에는 넣지 않습니다. */
   if (r.type === 'hatching_expected') {
-    return say(`${whenWord(r.date)} ${r.nth}차 알이 부화할 예정이에요`,
-               `${whenWord(r.date)} ${r.nth}차 알에서 아기가 태어날 것 같아요 🐣`, '') + tail;
+    return say(`${r.nth}차 알이 부화할 예정이에요`,
+               `${r.nth}차 알에서 아기가 태어날 것 같아요 🐣`, '') + tail;
   }
   if (r.type === 'laying_expected') {
-    return say(`${whenWord(r.date)} ${r.nth}차 산란이 예상돼요`,
-               `${whenWord(r.date)} ${r.nth}차 산란할 것 같아요 🥚`, '') + tail;
+    return say(`${r.nth}차 산란이 예상돼요`,
+               `${r.nth}차 산란할 것 같아요 🥚`, '') + tail;
   }
   return r.message || '';
 }
@@ -2386,7 +2462,7 @@ function morphForecast(a, b) {
     if (sup > 0) {
       pLily = het / (1 - sup);                       // 살아남은 아이들 중 비율
       sure.push(`릴리화이트 — 살아남은 아이 중 ${pct(pLily)}%`);
-      notes.push(`릴리끼리 붙이면 알 ${pct(sup)}%가 슈퍼 릴리가 되어\n부화하지 못하거나 며칠 안에 죽습니다.\n  한쪽만 릴리로 붙이시길 권해드려요.`);
+      notes.push(`릴리끼리 붙이면 알 ${pct(sup)}%가 슈퍼 릴리가 되어\n부화하지 못하거나 며칠 안에 죽어요.\n한쪽만 릴리로 붙이시길 권해드려요.`);
     } else {
       pLily = het;
       sure.push(`릴리화이트 — ${pct(het)}%`);
@@ -2408,7 +2484,7 @@ function morphForecast(a, b) {
     if (het) sure.push(`세이블 — ${pct(het)}%`);
     if (sup) sure.push(`슈퍼 세이블 — ${pct(sup)}%`);
     if (ga.capp || gb.capp) {
-      notes.push('카푸치노와 세이블이 같은 자리의 유전자인지는\n  아직 브리더들 사이에서도 결론이 안 났어요.\n  여기 확률은 서로 다른 자리라고 보고 계산한 값이라,\n  실제와 다를 수 있습니다.');
+      notes.push('카푸치노와 세이블이 같은 자리의 유전자인지는\n아직 브리더들 사이에서도 결론이 안 났어요.\n여기 확률은 서로 다른 자리라고 보고 계산한 값이라,\n실제와 다를 수 있어요.');
     }
   }
 
@@ -2421,7 +2497,7 @@ function morphForecast(a, b) {
   if (ga.axan && gb.axan) {
     sure.push('아잔틱 — 전부 (100%)');
   } else if (ga.axan || gb.axan) {
-    notes.push('아잔틱은 열성이에요.\n  한쪽만 아잔틱이면 베이비는 겉으로 아잔틱이 아니고\n  전부 보인자(헷 아잔틱)로 나옵니다.\n  상대가 헷인지 아닌지는 기록이 없어 앱이 알 수 없어요.');
+    notes.push('아잔틱은 열성이에요.\n한쪽만 아잔틱이면 베이비는 겉으로 아잔틱이 아니고\n전부 보인자(헷 아잔틱)로 나와요.\n상대가 헷인지 아닌지는 기록이 없어 제가 알 수 없어요.');
   }
 
   // ⑥ 무늬·색 — 확률이 아니라 경향입니다
@@ -2434,7 +2510,7 @@ function morphForecast(a, b) {
   } else if (anyPoly.length) {
     trend.push(`${anyPoly.join('·')} 쪽 느낌이 섞여 나올 수 있어요`);
   }
-  if (trend.length) trend.push('좋은 무늬가 나올 가능성이 조금 올라가는 정도로 봐주세요\n  확률로 계산되는 형질이 아닙니다');
+  if (trend.length) trend.push('좋은 무늬가 나올 가능성이 조금 올라가는 정도로 봐주세요.\n확률로 계산되는 형질은 아니에요.');
 
   return { sure, notes, trend, ga, gb };
 }
@@ -2484,7 +2560,7 @@ function mateSuggestions(target, all, evs) {
     const femW = fem.id === i.id ? wt : lastWeightOf(target.id, events);
     const f = morphForecast(target, i);
     const flags = [];
-    if (femW != null && femW < SAFE_FEMALE_G) flags.push(`${fem.name} ${femW}g — 암컷은 ${SAFE_FEMALE_G}g은 넘겨서\n     붙이시는 게 안전해요`);
+    if (femW != null && femW < SAFE_FEMALE_G) flags.push(`${fem.name} ${femW}g — 암컷은 ${SAFE_FEMALE_G}g은 넘겨서\n붙이시는 게 안전해요`);
     if (readGenes(target).lw && readGenes(i).lw) flags.push('릴리끼리라 알 4개 중 1개는 부화하지 못해요');
     return {
       ind: i, rel, flags, f,
@@ -3648,7 +3724,7 @@ function useToast() {
 function GearBtn({ navigate }) {
   return (
     <button onClick={() => navigate('settings')} aria-label="설정" data-testid="gear-btn"
-      style={{background:'var(--bg3)', border:'1px solid var(--border)', borderRadius:10, padding:'6px 7px',
+      style={{background:'var(--bg3)', border:'1px solid var(--border)', borderRadius:10, padding:'9px 10px',
               cursor:'pointer', display:'flex', alignItems:'center', color:'var(--text2)', flexShrink:0}}>
       <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
     </button>
@@ -3898,7 +3974,7 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
         )}
 
         {individuals.length > 0 && (
-          <div style={{display:'flex', alignItems:'center', gap:10, padding:'10px 16px 0', fontSize:13, color:'var(--text3)'}}>
+          <div className="taprow" style={{padding:'6px 16px 0', fontSize:13, color:'var(--text3)'}}>
             <span><b style={{fontSize:16, color:'var(--accent2)'}}>{stats.total}</b> 마리</span>
             <span style={{color:'var(--border)'}}>|</span>
             <button onClick={() => { setView('own'); setKeepOnly(false); setFavOnly(f => !f); }}
@@ -3914,11 +3990,12 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
             {/* 정렬 기준 — 지금까지는 등록순 고정이었습니다 */}
             <div style={{marginLeft:'auto', position:'relative'}}>
               <button onClick={() => setSortOpen(o => !o)}
-                style={{background:'none', border:'none', padding:0, cursor:'pointer', fontSize:12.5, color:'var(--text3)'}}>
+                style={{background:'none', border:'none', padding:'8px 2px', cursor:'pointer', fontSize:12.5, color:'var(--text3)',
+                        minHeight:34, display:'inline-flex', alignItems:'center'}}>
                 ↕ {(SORTS[sortKey] || SORTS[SORT_DEFAULT]).label}
               </button>
               {sortOpen && (
-                <div className="card" style={{position:'absolute', right:0, top:22, zIndex:40, margin:0, padding:6, minWidth:124}}>
+                <div className="card" style={{position:'absolute', right:0, top:34, zIndex:40, margin:0, padding:6, minWidth:124}}>
                   {Object.entries(SORTS).map(([k, s]) => (
                     <button key={k} onClick={() => pickSort(k)}
                       style={{display:'block', width:'100%', textAlign:'left', background: sortKey === k ? 'var(--accent-soft)' : 'none',
@@ -3966,7 +4043,7 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
           <>
             {ownList.length === 0 && (
               <div className="empty">
-                <div className="empty-icon">{favOnly ? '⭐' : '🦎'}</div>
+                <div className="empty-icon">{favOnly ? '⭐' : <DotGecko size={46} />}</div>
                 <p>{favOnly ? '즐겨찾기한 아이가 없어요.\n개체 카드의 ☆ 를 눌러 즐겨찾기에 추가해보세요.' : (individuals.length === 0 ? '아직 등록된 개체가 없어요.\n아래 💬 대화 버튼을 누르고 말씀해보세요.\n예) "크한이 12그램"' : '검색 결과가 없어요.')}</p>
               </div>
             )}
@@ -4146,7 +4223,7 @@ function MatingView({ individuals, navigate, showToast }) {
                       onClick={() => navigate('clutch', { layingId: l.id })}
                       style={{display:'flex', justifyContent:'space-between', alignItems:'center', gap:8, fontSize:13, padding:'6px 0', cursor:'pointer',
                               borderBottom: i < lays.length - 1 ? '1px dashed var(--border)' : 'none'}}>
-                      <span style={{color:'var(--text)', whiteSpace:'nowrap'}}>🥚 {i + 1}차</span>
+                      <span style={{color:'var(--text)', whiteSpace:'nowrap'}}><DotEgg /> {i + 1}차</span>
                       <span style={{color:'var(--text3)', flex:1, textAlign:'right', minWidth:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
                         {fmtDate(l.date)}{l.data.eggCount ? ` · ${l.data.eggCount}개` : ''}{l.data.notes ? ` · ${l.data.notes.slice(0, 10)}` : ''}
                       </span>
@@ -4440,7 +4517,7 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals }) {
             한 알은 정상, 다른 알은 곰팡이 — 같은 경우를 그대로 남기기 위한 칸입니다. */}
         <div className="card" style={{margin:'0 0 12px'}}>
           <div style={{display:'flex', alignItems:'baseline', gap:6, marginBottom:8}}>
-            <span style={{fontSize:12, fontWeight:700, color:'var(--text2)'}}>🥚 알별 기록</span>
+            <span style={{fontSize:12, fontWeight:700, color:'var(--text2)'}}><DotEgg size={15} /> 알별 기록</span>
             <span style={{fontSize:11, color:'var(--text3)'}}>알마다 상태를 따로 적을 수 있어요</span>
           </div>
           {units.map((u, i) => {
@@ -4451,7 +4528,7 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals }) {
               <div key={i} style={{border:'1px solid var(--border)', borderRadius:10, padding:'9px 10px', marginBottom:6, background:'var(--bg3)'}}>
                 <div style={{display:'flex', alignItems:'center', gap:8, cursor:'pointer'}}
                   onClick={() => { setOpenEgg(open ? null : i); setProbFor(null); }}>
-                  <span style={{fontSize:13, fontWeight:700, flexShrink:0}}>알 {i + 1}</span>
+                  <span style={{fontSize:13, fontWeight:700, flexShrink:0}}><DotEgg size={15} /> {i + 1}</span>
                   <span className="badge" style={{fontSize:10, flexShrink:0, background:'var(--bg2)', color:st.color, border:'1px solid var(--border)'}}>{st.label}</span>
                   <span style={{flex:1, minWidth:0, fontSize:11.5, color:'var(--text3)', textAlign:'right', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
                     {memo || (open ? '' : '눌러서 적기')}
@@ -4772,12 +4849,19 @@ function SalePrompt({ gecko, onDone, onClose }) {
    수입은 분양 기록에서 저절로 올라오고, 지출만 직접 적습니다.
    ══════════════════════════════════════════ */
 function SaleSection({ individuals, navigate, showToast, refreshIndividuals }) {
-  const [saleFilter, setSaleFilter] = useState('available');
+  /* ★ 처음 열 때는 "내용이 있는 칸"으로 엽니다.
+     예전엔 늘 분양가능으로 열려서, 내놓은 아이가 없으면 빈 화면부터 보였습니다. */
+  const [saleFilter, setSaleFilter] = useState(() => {
+    const has = (st) => individuals.some(i => (i.status || 'own') === st && !i.isExternal);
+    return has('available') ? 'available' : has('reserved') ? 'reserved' : has('sold') ? 'sold' : 'available';
+  });
   const [fillQueue, setFillQueue] = useState([]);      // 분양가 채우기 대기줄
   const [search, setSearch] = useState('');
   const sortKey = DB.getSettings().listSort || SORT_DEFAULT;
   const missingPrice = soldMissingPrice(individuals);
   const soldCount = individuals.filter(i => statusOf(i) === 'sold' && !i.isExternal).length;
+  const availCount = individuals.filter(i => (i.status || 'own') === 'available' && !i.isExternal && !i.keep).length;
+  const reservedCount = individuals.filter(i => (i.status || 'own') === 'reserved' && !i.isExternal).length;
   const goneCount = individuals.filter(i => statusOf(i) === 'gone' && !i.isExternal).length;
   const bySearch = list => list.filter(i =>
     i.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -4792,7 +4876,7 @@ function SaleSection({ individuals, navigate, showToast, refreshIndividuals }) {
         <input className="input" placeholder="🔍 이름 또는 모프 검색" value={search} onChange={e => setSearch(e.target.value)} />
       </div>
       <div style={{display:'flex', gap:6, padding:'10px 16px 0'}}>
-        {[['available','분양가능'],['reserved','예약중'],['sold',`분양완료${soldCount ? ' ' + soldCount : ''}`],
+        {[['available',`분양가능${availCount ? ' ' + availCount : ''}`],['reserved',`예약중${reservedCount ? ' ' + reservedCount : ''}`],['sold',`분양완료${soldCount ? ' ' + soldCount : ''}`],
           ...(goneCount ? [['gone',`🌈 떠남 ${goneCount}`]] : [])].map(([k, l]) => (
           <button key={k} className="chip-btn" style={{fontSize:12, padding:'6px 11px', ...(saleFilter === k ? {background:'var(--accent-soft)', fontWeight:700} : {})}}
             onClick={() => setSaleFilter(k)}>{l}</button>
@@ -4826,7 +4910,7 @@ function SaleSection({ individuals, navigate, showToast, refreshIndividuals }) {
           )}
           {saleFilter === 'sold' && (
             <div style={{margin:'-6px 16px 10px', fontSize:11.5, color: salePriceLabel(gecko) ? 'var(--accent2)' : 'var(--text3)'}}>
-              {salePriceLabel(gecko) ? `분양가 ${salePriceLabel(gecko)}` : '분양가 미기록'}
+              {salePriceLabel(gecko) ? `분양가 ${salePriceLabel(gecko)}` : '분양가 아직 안 적음'}
             </div>
           )}
         </div>
@@ -5134,7 +5218,7 @@ function GeckoCard({ gecko, onClick, onToggleFav }) {
     <div className="gecko-card" onClick={onClick}>
       <div className="gecko-avatar"
         style={av ? {backgroundImage:`url(${av})`, backgroundSize:'cover', backgroundPosition:'center'}
-                  : {color: genderColor(gecko.gender), fontWeight:800}}>{av ? '' : genderMark(gecko.gender)}</div>
+                  : null}>{av ? '' : <DotGecko size={26} />}</div>
       <div className="gecko-info">
         <div style={{display:'flex', alignItems:'center', gap:6, flexWrap:'wrap'}}>
           <div className="gecko-name">{gecko.name} <GenderTag g={gecko.gender} size={14} /></div>
@@ -5153,12 +5237,14 @@ function GeckoCard({ gecko, onClick, onToggleFav }) {
         <div className="gecko-line">
           {gecko.hatchDate ? `🎂 ${fmtDate(gecko.hatchDate)}` : ' '}
         </div>
-        <div className="gecko-line" style={{display:'flex', gap:10}}>
+        {/* ★ 이 줄에서 제일 중요한 건 밥 정보입니다. 좁은 화면(폴드 접힘 344px)에서
+            "최근"이 자리를 다 먹고 밥 쪽이 통째로 잘려 나갔습니다. 이제 최근 쪽이 먼저 줄어듭니다. */}
+        <div className="gecko-line" style={{display:'flex', gap:8}}>
           {lastEvent
-            ? <span>최근: {EVENT_TYPES.find(e=>e.key===lastEvent.type)?.emoji} {fmtDate(lastEvent.date)}</span>
+            ? <span style={{minWidth:0, overflow:'hidden', textOverflow:'ellipsis'}}>최근: {EVENT_TYPES.find(e=>e.key===lastEvent.type)?.emoji} {fmtDateShort(lastEvent.date)}</span>
             : <span>{' '}</span>}
           {feedDays !== null && (
-            <span style={{color: feedDays >= 3 ? 'var(--warning)' : 'var(--text3)', fontWeight: feedDays >= 3 ? 700 : 400}}>
+            <span style={{flexShrink:0, color: feedDays >= 3 ? 'var(--warning)' : 'var(--text3)', fontWeight: feedDays >= 3 ? 700 : 400}}>
               🍽️ {feedDays === 0 ? '오늘 먹음' : `${feedDays}일 전`}{feedDays >= 3 ? ' ⚠️' : ''}
             </span>
           )}
@@ -5168,7 +5254,9 @@ function GeckoCard({ gecko, onClick, onToggleFav }) {
         <button
           onClick={(e) => { e.stopPropagation(); onToggleFav(gecko); }}
           aria-label="즐겨찾기"
-          style={{background:'none', border:'none', cursor:'pointer', fontSize:20, lineHeight:1, padding:'2px 4px', color: gecko.favorite ? 'var(--gold)' : 'var(--text3)'}}>
+          style={{background:'none', border:'none', cursor:'pointer', fontSize:20, lineHeight:1, padding:'8px 7px',
+                  minWidth:38, minHeight:38, display:'flex', alignItems:'center', justifyContent:'center',
+                  color: gecko.favorite ? 'var(--gold)' : 'var(--text3)'}}>
           {gecko.favorite ? '⭐' : '☆'}
         </button>
       )}
@@ -6278,7 +6366,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
               className="input"
               rows={1}
               style={{flex:1, minHeight:0, height:46, resize:'none', lineHeight:'20px', paddingTop:12, paddingBottom:12, overflow:'hidden'}}
-              placeholder='예: 크한이 12그램 / 저장'
+              placeholder='예: 크한이 12그램'
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
@@ -6527,7 +6615,7 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
                 style={{width:64, height:64, borderRadius:'50%', flexShrink:0, border:'2px solid var(--border)', padding:0, cursor:'pointer',
                         background: av ? `url(${av}) center/cover` : 'var(--bg3)', position:'relative',
                         display:'flex', alignItems:'center', justifyContent:'center', fontSize:34}}>
-                {av ? '' : genderEmoji(gecko.gender)}
+                {av ? '' : <DotGecko size={40} />}
                 <span style={{position:'absolute', right:-2, bottom:-2, width:22, height:22, borderRadius:'50%',
                               background:'var(--accent)', color:'#fff', fontSize:11, lineHeight:'22px',
                               border:'2px solid var(--card)'}}>📷</span>
@@ -6731,7 +6819,7 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
               <div style={{fontSize:11.5, color:'var(--text3)', marginTop:4, lineHeight:1.6, whiteSpace:'pre-line'}}>
                 {gecko.publicOn
                   ? '링크를 아는 분은 누구나 볼 수 있어요.\n분양가와 가계부는 나가지 않습니다.'
-                  : '이 아이를 어떻게 키웠는지 공유할 수 있어요.\n분양 글에 붙이시면 됩니다.'}
+                  : '이 아이를 어떻게 키웠는지 공유할 수 있어요.\n분양 글에 붙여 두시면 돼요.'}
               </div>
             </div>
             <button className="btn btn-secondary btn-sm" data-testid="public-toggle"
@@ -8458,7 +8546,13 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
 
   return (
     <div className="screen">
-      <div className="header"><h1>⚙️ 설정</h1></div>
+      {/* 프로필·산란기록에는 있는 뒤로가기가 설정에만 없었습니다 */}
+      <div className="header">
+        <div className="header-row">
+          <button className="back-btn" onClick={() => navigate('home')}>‹ 뒤로</button>
+          <h1 style={{fontSize:16}}>⚙️ 설정</h1>
+        </div>
+      </div>
       <div style={{padding:'16px', display:'flex', flexDirection:'column', gap:12}}>
         {/* 비서 말투 — 알림·홈·대화에서 부르는 말과 말투를 고릅니다 */}
         <div className="card" style={{margin:0}} data-testid="voice-card">
@@ -8467,7 +8561,7 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
             브리핑·홈 화면·대화에서 어떻게 부르고 어떤 말투로 말할지 고릅니다.
           </div>
 
-          <div style={{fontSize:11.5, color:'var(--text3)', marginBottom:5}}>뭐라고 불러드릴까요</div>
+          <div style={{fontSize:11.5, color:'var(--text3)', marginBottom:5}}>뭐라고 불러드릴까요?</div>
           <div style={{display:'flex', flexWrap:'wrap', gap:5, marginBottom:8}}>
             {CALL_OPTIONS.map(([k, label]) => {
               const on = (settings.callName || CALL_DEFAULT) === k;
@@ -8497,12 +8591,12 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
           </div>
           <div style={{fontSize:11, color:'var(--text3)', lineHeight:1.6, marginBottom:10}}>
             <b>정중히</b>는 차분한 존댓말, <b>친근히</b>는 가볍고 다정한 말투예요.{' '}
-            <b>짧게</b>는 예전처럼 항목 이름만 보여줍니다.
+            <b>짧게</b>는 예전처럼 항목 이름만 보여드려요.
           </div>
 
           <div style={{padding:'11px 12px', borderRadius:10, background:'var(--accent-soft)',
                        border:'1px solid var(--accent-edge)', fontSize:13, lineHeight:1.7}}>
-            <div style={{fontSize:11, color:'var(--text3)', marginBottom:4}}>이렇게 말합니다</div>
+            <div style={{fontSize:11, color:'var(--text3)', marginBottom:4}}>이렇게 말해요</div>
             {voiceSample().map((l, i) => (
               <div key={i} style={{color: i === 0 ? 'var(--accent2)' : 'var(--text)', fontWeight: i === 0 ? 700 : 400, whiteSpace:'pre-line'}}>{l}</div>
             ))}
