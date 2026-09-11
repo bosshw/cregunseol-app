@@ -462,7 +462,7 @@ const SERVER = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.1';
+const APP_VERSION = '1.2';
 const APP_PATCHED = '2026-09-11';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -2736,13 +2736,18 @@ function feedPlan(individuals, events) {
            ateBy, seenBy, doneToday, worried, remaining: inds.filter(i => !doneToday.has(i.id)) };
 }
 
-/* 앞으로 줄 날들 — 캘린더가 한 달치를 미리 찍는 데 씁니다.
+/* 캘린더가 앞으로 며칠치를 미리 찍어둘지 — 대표님 확정: 석 달(2026-09-11).
+   ★ 이 숫자 하나만 고치면 캘린더가 보여주는 범위가 바뀝니다. */
+const CALENDAR_AHEAD_DAYS = 92;
+
+/* 앞으로 줄 날들 — 캘린더가 석 달치를 미리 찍는 데 씁니다.
    ★ 간격이든 고정 요일이든 여기 하나만 부릅니다. 날짜 계산을 화면에서 다시 하지 마세요. */
 function feedSchedule(untilISO, plan) {
   const fp = plan || feedPlan();
   const out = [];
   let d = fp.nextDay, guard = 0;
-  while (d && d <= untilISO && guard++ < 60) {
+  // 매일 주는 분도 석 달이면 92번이라 넉넉히 잡습니다
+  while (d && d <= untilISO && guard++ < 200) {
     out.push(d);
     const tomorrow = localISO(new Date(new Date(d).getTime() + 86400000));
     d = fp.byDays
@@ -3313,7 +3318,10 @@ function extractNameDecl(text) {
 }
 
 // 미등록 새 이름 후보 추측: 첫 단어에서 조사 제거
-const KEYWORD_START = /^(오늘|어제|그제|그저께|저장|사진|메모|모프|알|메이팅|교배|합사|산란|해칭|부화|분양|탈피|먹이|피딩|밥|귀뚜라미|외부|이름|몸무게|무게|체중|성별|나이|상태|기록|얘|걔|암컷|수컷|파트너|상대|아빠|엄마|아비|어미)/;
+/* 이 낱말로 시작하면 새 개체 이름이 아닙니다.
+   ★ 애기·아기·베이비·새끼·해츨링은 2026-09-11에 넣었습니다 —
+     "애기 태어났어"의 "애기"가 새 아이 이름으로 등록될 뻔했습니다. */
+const KEYWORD_START = /^(오늘|어제|그제|그저께|저장|사진|메모|모프|알|메이팅|교배|합사|산란|해칭|부화|분양|탈피|먹이|피딩|밥|귀뚜라미|외부|이름|몸무게|무게|체중|성별|나이|상태|기록|얘|걔|암컷|수컷|파트너|상대|아빠|엄마|아비|어미|애기|애깅|아기|베이비|새끼|해츨링|해츨)/;
 function guessNewName(text, individuals) {
   const first = text.trim().split(/\s+/)[0];
   if (!first) return null;
@@ -5677,7 +5685,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       if (isBadName(rt.name)) { bot(BAD_NAME_MSG); return; }
       pendingRetargetRef.current = rt;
       pendingNameRef.current = rt.name;
-      bot(`"${rt.name}"${eunneun(rt.name)} 처음 보는 이름이네요.\n새로 등록하고 그 기록을 옮길까요?`, [
+      bot(`${eunneun(rt.name)} 처음 보는 이름이네요.\n새로 등록하고 그 기록을 옮길까요?`, [
         { label: '🦎 네, 등록해주세요', kind: 'register-yes' },
         { label: '아니요, 다시 입력할게요', kind: 'register-no' },
       ]);
@@ -5850,13 +5858,40 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       }
       // 외부 개체 캡처: "마인이 외부 개체야"
       if (/외부/.test(text)) heldExternalRef.current = true;
-      bot(`"${newSubject}"${eunneun(newSubject)} 처음 보는 이름이네요.\n새 개체로 등록할까요?`, [
+      bot(`${eunneun(newSubject)} 처음 보는 이름이네요.\n새 개체로 등록할까요?`, [
         { label: '🦎 네, 등록해주세요', kind: 'register-yes' },
         { label: '아니요, 다시 입력할게요', kind: 'register-no' },
       ]);
       return;
     }
     if (!target) {
+      /* ★ "알에서 태어났어"처럼 **누구인지 말씀 안 하시고 부화만** 말씀하신 경우.
+         예전엔 "누구인가요?" 하고 물어서, 다음에 말씀하신 이름을 **새 개체로 등록**해버렸습니다
+         (2026-09-11 대표님 제보: "빛산2호"가 새 아이로 등록될 뻔했습니다).
+         이제는 지금 품고 있는 알을 늘어놓고, 고르시면 그 산란 기록을 부화로 바꿉니다.
+         고른 뒤 마릿수를 묻는 길(hatch-clutch → hatch-count)은 대상이 있을 때와 똑같이 씁니다. */
+      const hatchOnly = facts.find(f => f.type === 'hatching');
+      if (hatchOnly && !morph) {
+        const alive = clutchRows().filter(r => r.waiting);
+        if (!alive.length) {
+          bot('지금 품고 있는 알이 없어요 🥚\n산란을 먼저 적어주시면 부화도 이어서 적어드릴게요.\n예) "크빛이 알 2개 낳았어"');
+          return;
+        }
+        const inds2 = DB.getIndividuals();
+        bot(alive.length === 1
+            ? '축하드려요! 🐣 이 알에서 나온 게 맞을까요?'
+            : `지금 품고 있는 알이 ${alive.length}개 있어요.\n어느 알에서 나왔나요? 🐣`,
+          alive.map(r => {
+            const mom = inds2.find(i => i.id === r.e.individualId);
+            const f = { ...hatchOnly, date, targetId: r.e.individualId, targetName: (mom && mom.name) || r.momName };
+            return {
+              label: `${r.pairName} ${r.nth}차 (${fmtDate(r.e.date)} 산란)`,
+              kind: 'hatch-clutch',
+              value: { layingId: r.e.id, nth: r.nth, eggs: r.units.length, fact: f, rest: [] },
+            };
+          }));
+        return;
+      }
       bot('등록하려는 아이가 누구인가요? 이름을 알려주세요. 🦎');
       return;
     }
@@ -7210,10 +7245,11 @@ function CalendarScreen({ navigate, individuals, showToast, onRemindersChanged }
   });
   const calendarEvents = DB.getEvents();
   const fp = feedPlan(individuals, calendarEvents);
-  /* 먹이 예정은 다음 한 번만이 아니라 **한 달치**를 미리 찍어 둡니다.
-     달력을 넘겨봐도 언제 줘야 하는지 한눈에 보이게. (저장하지 않고 그때그때 계산합니다) */
+  /* 먹이 예정은 다음 한 번만이 아니라 **석 달치**를 미리 찍어 둡니다(CALENDAR_AHEAD_DAYS).
+     달력을 넘겨봐도 언제 줘야 하는지 한눈에 보이게. (저장하지 않고 그때그때 계산합니다)
+     ★ 기준은 오늘입니다. 예전엔 "다음 급여일 +31일"이라 급여일이 멀면 범위가 밀렸습니다. */
   if (fp.inds.length && fp.nextDay) {
-    const last = localISO(new Date(new Date(fp.nextDay).getTime() + 31 * 86400000));
+    const last = localISO(new Date(new Date(todayStr()).getTime() + CALENDAR_AHEAD_DAYS * 86400000));
     feedSchedule(last, fp).forEach(d => {
       add(d, {
         emoji: CALENDAR_FEED_PLAN_EMOJI, label: '먹이 예정', detail: `전체 ${fp.inds.length}마리 · ${fp.planLabel}`,
