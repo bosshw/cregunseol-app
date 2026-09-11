@@ -26,7 +26,7 @@ test("keeps storage, synchronization, and core workflows intact", async () => {
     assert.ok(source.includes(contract), `missing contract: ${contract}`);
   }
 
-  assert.match(source, /const APP_VERSION = '1\.1'/);
+  assert.match(source, /const APP_VERSION = '1\.2'/);
   assert.match(source, /Powered by cre_construct · CC/);
   assert.doesNotMatch(source, /Powered by 크레건설/);
   assert.match(source, /addEvents\(events\)/);
@@ -43,10 +43,10 @@ test("keeps service worker and release metadata aligned", async () => {
     readFile(file("version.json"), "utf8").then(JSON.parse),
   ]);
 
-  assert.equal(version.app, "1.1");
+  assert.equal(version.app, "1.2");
   assert.equal(version.schema, 1);
   assert.equal(version.minSchema, 1);
-  assert.match(worker, /const CACHE = 'creg-v19'/);
+  assert.match(worker, /const CACHE = 'creg-v20'/);
 
   for (const asset of [
     "./index.html",
@@ -170,7 +170,7 @@ test("keeps the v4.8 kinship, morph and voice contracts", async () => {
   // 설정 미리보기는 고정 견본으로 — 데이터가 없는 날에도 차이가 보여야 합니다
   assert.ok(source.includes("{voiceSample().map("), "settings preview must use voiceSample()");
   // 버전 문자열 4곳
-  assert.ok(source.includes("const APP_VERSION = '1.1'"), "APP_VERSION must be 1.1");
+  assert.ok(source.includes("const APP_VERSION = '1.2'"), "APP_VERSION must be 1.2");
 });
 
 test("keeps the v5.0 particle, line-break and calendar fixes", async () => {
@@ -197,7 +197,7 @@ test("keeps the v5.0 particle, line-break and calendar fixes", async () => {
   assert.doesNotMatch(source, /'🍽️🥩'/, "fed emoji must be a single icon");
   // 홈 한 줄은 인사만 합니다 (v5.2 — 할 일은 브리핑 카드가 말합니다)
   assert.doesNotMatch(source, /\[greetLine\(\), what\]/, "home line no longer lists jobs");
-  assert.ok(source.includes("APP_VERSION = '1.1'"), "APP_VERSION must be 1.1");
+  assert.ok(source.includes("APP_VERSION = '1.2'"), "APP_VERSION must be 1.2");
 
   // 캘린더 먹이 줄에 이모지가 두 번 나오면 안 됩니다 (줄 앞에 이미 🦗/🥣 가 붙습니다)
   assert.ok(source.includes("if (e.type === 'feeding') label = label.replace"), "feed label must drop its own emoji");
@@ -234,7 +234,7 @@ test("keeps the v4.9 hatching, morph and wording fixes", async () => {
   assert.ok(source.includes("const dayWord = (n) => `${Math.abs(Math.round(Number(n) || 0))}일`"), "dayWord must be numeric");
   // 탭 이름
   assert.ok(source.includes("브리핑"), "reminders tab is now 브리핑");
-  assert.ok(source.includes("const APP_VERSION = '1.1'"), "APP_VERSION must be 1.1");
+  assert.ok(source.includes("const APP_VERSION = '1.2'"), "APP_VERSION must be 1.2");
 });
 
 test("keeps the v5.2 nudge contracts", async () => {
@@ -277,7 +277,7 @@ test("keeps the v5.2 nudge contracts", async () => {
   assert.ok(source.includes('data-testid="nudge-go"'), "nudge needs an action button");
   assert.ok(source.includes("recordNudge(nudge)"), "reminders screen must record the nudge");
 
-  assert.ok(source.includes("APP_VERSION = '1.1'"), "APP_VERSION must be 1.1");
+  assert.ok(source.includes("APP_VERSION = '1.2'"), "APP_VERSION must be 1.2");
 });
 
 test("keeps the v5.3 public-record contracts", async () => {
@@ -330,7 +330,7 @@ test("keeps the v5.3 public-record contracts", async () => {
   // 화면 계약
   assert.ok(source.includes('data-testid="public-card"'), "profile needs the public card");
   assert.ok(source.includes('data-testid="public-toggle"'), "public card needs its toggle");
-  assert.ok(source.includes("APP_VERSION = '1.1'"), "APP_VERSION must be 1.1");
+  assert.ok(source.includes("APP_VERSION = '1.2'"), "APP_VERSION must be 1.2");
 });
 
 test("keeps the v5.4 away / condition / memory contracts", async () => {
@@ -386,7 +386,7 @@ test("keeps the v5.4 away / condition / memory contracts", async () => {
     assert.ok(source.includes(`data-testid="${id}"`), `missing screen contract: ${id}`);
   }
   assert.ok(source.includes("data-testid={`cond-${c.key}`}"), "condition buttons need per-level testids");
-  assert.ok(source.includes("APP_VERSION = '1.1'"), "APP_VERSION must be 1.1");
+  assert.ok(source.includes("APP_VERSION = '1.2'"), "APP_VERSION must be 1.2");
 });
 
 test("keeps the v1.0 laying-season contracts", async () => {
@@ -435,7 +435,7 @@ test("keeps the v1.0 laying-season contracts", async () => {
   assert.ok(source.includes("data-testid={`season-${r.key}`}"), "each answer needs its own testid");
 
   // 정식 출시 — 버전은 1.0
-  assert.ok(source.includes("APP_VERSION = '1.1'"), "APP_VERSION must be 1.1");
+  assert.ok(source.includes("APP_VERSION = '1.2'"), "APP_VERSION must be 1.2");
 });
 
 /* ══════════════════════════════════════════
@@ -750,4 +750,38 @@ test("keeps the v1.1 polish contracts", async () => {
 
   // ⑨ 말풍선 문장에 들여쓰기 공백이 남아 있으면 안 됩니다 (pre-line 이라 그대로 보입니다)
   assert.doesNotMatch(source, /\\n  한쪽만|\\n  아직 브리더들|\\n     붙이시는/, "줄바꿈 뒤 공백이 화면에 보입니다");
+});
+
+/* ══════════════════════════════════════════
+   v1.2 — 캘린더 석 달치 · 말로 부화 기록 · 이름 두 번 찍히던 것
+   ══════════════════════════════════════════ */
+test("keeps the v1.2 contracts", async () => {
+  const raw = await readFile(file("src/app.jsx"), "utf8");
+  const source = raw.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+
+  // ① 캘린더가 앞으로 보여주는 범위는 한 곳에서만 정합니다 (대표님 확정: 석 달)
+  assert.ok(source.includes("const CALENDAR_AHEAD_DAYS = 92;"), "범위는 한 곳에서만");
+  assert.match(source, /new Date\(todayStr\(\)\)\.getTime\(\) \+ CALENDAR_AHEAD_DAYS \* 86400000/,
+    "기준은 오늘 — 급여일이 멀면 범위가 밀리면 안 됩니다");
+  assert.doesNotMatch(source, /fp\.nextDay\)\.getTime\(\) \+ 31 \* 86400000/, "옛 한 달치 계산은 빠졌습니다");
+  assert.match(source, /guard\+\+ < 200/, "매일 주셔도 석 달이면 92번이라 넉넉해야 합니다");
+
+  // ② 대상을 안 말씀하셔도 부화를 적을 수 있습니다
+  //    (예전엔 "누구인가요?" 하고 물어서 다음에 말한 이름을 새 개체로 등록했습니다)
+  assert.match(source, /const hatchOnly = facts\.find\(f => f\.type === 'hatching'\);/,
+    "대상 없이 부화만 말씀하신 경우를 따로 봅니다");
+  assert.match(source, /clutchRows\(\)\.filter\(r => r\.waiting\)/, "지금 품고 있는 알만 보여드립니다");
+  assert.ok(source.includes("지금 품고 있는 알이 없어요"), "알이 없으면 그렇게 말씀드립니다");
+  // 고른 뒤 길은 대상이 있을 때와 같아야 합니다 (사본을 만들지 않습니다)
+  assert.equal((source.match(/kind: 'hatch-clutch'/g) || []).length, 2, "부화 클러치 고르기는 두 자리에서만");
+
+  // ③ 애기·베이비 같은 말이 새 개체 이름으로 잡히면 안 됩니다
+  for (const w of ["애기", "아기", "베이비", "새끼", "해츨링"]) {
+    assert.ok(new RegExp(`\\|${w}\\||\\|${w}\\)`).test(source) || source.includes(`|${w}|`) || source.includes(`|${w})`),
+      `KEYWORD_START 에 ${w} 가 있어야 합니다`);
+  }
+
+  // ④ 이름이 두 번 찍히던 것 — josa() 가 이미 이름을 붙여서 돌려줍니다
+  assert.doesNotMatch(source, /"\$\{newSubject\}"\$\{eunneun\(newSubject\)\}/, '이름이 두 번 나옵니다');
+  assert.doesNotMatch(source, /"\$\{rt\.name\}"\$\{eunneun\(rt\.name\)\}/, '이름이 두 번 나옵니다');
 });
