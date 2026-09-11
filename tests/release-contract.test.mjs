@@ -26,7 +26,7 @@ test("keeps storage, synchronization, and core workflows intact", async () => {
     assert.ok(source.includes(contract), `missing contract: ${contract}`);
   }
 
-  assert.match(source, /const APP_VERSION = '1\.0'/);
+  assert.match(source, /const APP_VERSION = '1\.1'/);
   assert.match(source, /Powered by cre_construct · CC/);
   assert.doesNotMatch(source, /Powered by 크레건설/);
   assert.match(source, /addEvents\(events\)/);
@@ -43,10 +43,10 @@ test("keeps service worker and release metadata aligned", async () => {
     readFile(file("version.json"), "utf8").then(JSON.parse),
   ]);
 
-  assert.equal(version.app, "1.0");
+  assert.equal(version.app, "1.1");
   assert.equal(version.schema, 1);
   assert.equal(version.minSchema, 1);
-  assert.match(worker, /const CACHE = 'creg-v18'/);
+  assert.match(worker, /const CACHE = 'creg-v19'/);
 
   for (const asset of [
     "./index.html",
@@ -170,7 +170,7 @@ test("keeps the v4.8 kinship, morph and voice contracts", async () => {
   // 설정 미리보기는 고정 견본으로 — 데이터가 없는 날에도 차이가 보여야 합니다
   assert.ok(source.includes("{voiceSample().map("), "settings preview must use voiceSample()");
   // 버전 문자열 4곳
-  assert.ok(source.includes("const APP_VERSION = '1.0'"), "APP_VERSION must be 1.0");
+  assert.ok(source.includes("const APP_VERSION = '1.1'"), "APP_VERSION must be 1.1");
 });
 
 test("keeps the v5.0 particle, line-break and calendar fixes", async () => {
@@ -197,7 +197,7 @@ test("keeps the v5.0 particle, line-break and calendar fixes", async () => {
   assert.doesNotMatch(source, /'🍽️🥩'/, "fed emoji must be a single icon");
   // 홈 한 줄은 인사만 합니다 (v5.2 — 할 일은 브리핑 카드가 말합니다)
   assert.doesNotMatch(source, /\[greetLine\(\), what\]/, "home line no longer lists jobs");
-  assert.ok(source.includes("APP_VERSION = '1.0'"), "APP_VERSION must be 1.0");
+  assert.ok(source.includes("APP_VERSION = '1.1'"), "APP_VERSION must be 1.1");
 
   // 캘린더 먹이 줄에 이모지가 두 번 나오면 안 됩니다 (줄 앞에 이미 🦗/🥣 가 붙습니다)
   assert.ok(source.includes("if (e.type === 'feeding') label = label.replace"), "feed label must drop its own emoji");
@@ -234,7 +234,7 @@ test("keeps the v4.9 hatching, morph and wording fixes", async () => {
   assert.ok(source.includes("const dayWord = (n) => `${Math.abs(Math.round(Number(n) || 0))}일`"), "dayWord must be numeric");
   // 탭 이름
   assert.ok(source.includes("브리핑"), "reminders tab is now 브리핑");
-  assert.ok(source.includes("const APP_VERSION = '1.0'"), "APP_VERSION must be 1.0");
+  assert.ok(source.includes("const APP_VERSION = '1.1'"), "APP_VERSION must be 1.1");
 });
 
 test("keeps the v5.2 nudge contracts", async () => {
@@ -277,7 +277,7 @@ test("keeps the v5.2 nudge contracts", async () => {
   assert.ok(source.includes('data-testid="nudge-go"'), "nudge needs an action button");
   assert.ok(source.includes("recordNudge(nudge)"), "reminders screen must record the nudge");
 
-  assert.ok(source.includes("APP_VERSION = '1.0'"), "APP_VERSION must be 1.0");
+  assert.ok(source.includes("APP_VERSION = '1.1'"), "APP_VERSION must be 1.1");
 });
 
 test("keeps the v5.3 public-record contracts", async () => {
@@ -330,7 +330,7 @@ test("keeps the v5.3 public-record contracts", async () => {
   // 화면 계약
   assert.ok(source.includes('data-testid="public-card"'), "profile needs the public card");
   assert.ok(source.includes('data-testid="public-toggle"'), "public card needs its toggle");
-  assert.ok(source.includes("APP_VERSION = '1.0'"), "APP_VERSION must be 1.0");
+  assert.ok(source.includes("APP_VERSION = '1.1'"), "APP_VERSION must be 1.1");
 });
 
 test("keeps the v5.4 away / condition / memory contracts", async () => {
@@ -386,7 +386,7 @@ test("keeps the v5.4 away / condition / memory contracts", async () => {
     assert.ok(source.includes(`data-testid="${id}"`), `missing screen contract: ${id}`);
   }
   assert.ok(source.includes("data-testid={`cond-${c.key}`}"), "condition buttons need per-level testids");
-  assert.ok(source.includes("APP_VERSION = '1.0'"), "APP_VERSION must be 1.0");
+  assert.ok(source.includes("APP_VERSION = '1.1'"), "APP_VERSION must be 1.1");
 });
 
 test("keeps the v1.0 laying-season contracts", async () => {
@@ -435,7 +435,7 @@ test("keeps the v1.0 laying-season contracts", async () => {
   assert.ok(source.includes("data-testid={`season-${r.key}`}"), "each answer needs its own testid");
 
   // 정식 출시 — 버전은 1.0
-  assert.ok(source.includes("APP_VERSION = '1.0'"), "APP_VERSION must be 1.0");
+  assert.ok(source.includes("APP_VERSION = '1.1'"), "APP_VERSION must be 1.1");
 });
 
 /* ══════════════════════════════════════════
@@ -704,4 +704,50 @@ test("keeps the screen-tidying contracts", async () => {
   // ⑤ 부화 예정 문장은 산란과 헷갈리지 않습니다
   assert.ok(source.includes("차 알에서 아기가 태어날 것 같아요 🐣"), "부화는 '태어난다'로 말합니다");
   assert.doesNotMatch(source, /차 알이 나올 것 같아요/, "'알이 나온다'는 산란처럼 들려 빠졌습니다");
+});
+
+/* ══════════════════════════════════════════
+   v1.1 — 출시 전 다듬기 (한글 줄바꿈 · 안전영역 · 도트 그림 · 미구분 · 누르는 자리)
+   ══════════════════════════════════════════ */
+test("keeps the v1.1 polish contracts", async () => {
+  const raw = await readFile(file("src/app.jsx"), "utf8");
+  const source = raw.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const html = await readFile(file("index.html"), "utf8");
+
+  // ① 한글이 낱말 안에서 끊기지 않습니다
+  assert.match(html, /word-break: keep-all/, "한글 줄바꿈 규칙이 빠졌습니다");
+  assert.match(html, /overflow-wrap: break-word/, "아주 긴 낱말은 그래도 끊어줘야 합니다");
+
+  // ② 아이폰 안전영역이 실제로 동작합니다 (viewport-fit 없으면 env() 가 0 입니다)
+  assert.match(html, /viewport-fit=cover/, "viewport-fit=cover 가 있어야 안전영역 값이 들어옵니다");
+  assert.match(html, /--safe-top: env\(safe-area-inset-top/, "위쪽 안전영역");
+  assert.match(html, /--safe-bottom: env\(safe-area-inset-bottom/, "아래쪽 안전영역");
+  assert.match(html, /\.header \{ background: var\(--bg2\); padding: calc\(12px \+ var\(--safe-top\)\)/, "헤더가 상태바를 피해야 합니다");
+
+  // ③ 도트 그림은 한 곳에서만 만듭니다
+  assert.ok(source.includes("function pixelSvg(rows, pal)"), "도트 그림 만드는 곳은 한 군데");
+  assert.ok(source.includes("const DOT_GECKO_URI"), "도마뱀 그림");
+  assert.ok(source.includes("const DOT_EGG_URI"), "알 그림");
+
+  // ④ 성별을 모르면 물음표가 아니라 "미구분"
+  assert.match(source, /GENDER_MARK = \{ female: '♀', male: '♂', unknown: '미구분' \}/, "물음표는 빠졌습니다");
+  assert.doesNotMatch(source, /genderMark = g => GENDER_MARK\[g\] \|\| '\?'/, "기본값도 물음표가 아닙니다");
+
+  // ⑤ 좁은 화면에서 밥 정보가 잘리지 않습니다
+  assert.ok(source.includes("const fmtDateShort ="), "카드용 짧은 날짜");
+  assert.match(source, /flexShrink:0, color: feedDays >= 3/, "밥 정보는 줄어들지 않습니다");
+
+  // ⑥ 손끝으로 누르는 자리
+  assert.match(html, /\.taprow > button \{ min-height: 34px/, "글자만 있는 버튼도 누를 높이가 있어야 합니다");
+  assert.match(html, /\.chip-btn \{ padding: 8px 13px; min-height: 36px;/, "칩도 마찬가지");
+
+  // ⑦ 설정에도 뒤로가기
+  const st = source.slice(source.indexOf("function SettingsScreen("));
+  assert.match(st, /‹ 뒤로/, "설정에서 돌아갈 길이 있어야 합니다");
+
+  // ⑧ 예정 카드가 "언제"를 두 번 말하지 않습니다
+  assert.doesNotMatch(source, /\$\{whenWord\(r\.date\)\} \$\{r\.nth\}차/, "아랫줄이 이미 말합니다");
+
+  // ⑨ 말풍선 문장에 들여쓰기 공백이 남아 있으면 안 됩니다 (pre-line 이라 그대로 보입니다)
+  assert.doesNotMatch(source, /\\n  한쪽만|\\n  아직 브리더들|\\n     붙이시는/, "줄바꿈 뒤 공백이 화면에 보입니다");
 });
