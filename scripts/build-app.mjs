@@ -15,7 +15,7 @@ await build({
   legalComments: "none",
   charset: "utf8",
   jsx: "transform",
-  jsxFactory: "React.createElement",
+  jsxFactory: "BrandElement",
   jsxFragment: "React.Fragment",
   tsconfigRaw: {
     compilerOptions: {

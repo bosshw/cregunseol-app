@@ -1,3 +1,18 @@
+/* JSX presentation adapter: never touches props.value, placeholders, stored text, or native select options. */
+function BrandElement(type, props, ...children) {
+ const art = window.CREG_ART;
+ if (art && (type === 'option' || type === 'optgroup')) {
+   children = art.plain(children);
+ } else if (art && ((typeof type === 'string' && !art.skip.has(type)) || type === React.Fragment)) {
+   children = art.children(children, React.createElement);
+   if(props && Object.prototype.hasOwnProperty.call(props,'children'))props={...props,children:art.children(props.children,React.createElement)};
+ }
+ return React.createElement(type, props, ...children);
+}
+function BrandIcon({name,size=22,alt='',style={},...rest}) {
+ return React.createElement('img',{src:window.CREG_ART.url(name),alt,width:size,height:size,className:'brand-icon brand-explicit',draggable:false,'data-art':name,style:{width:size,height:size,...style},...rest});
+}
+
 const { useState, useEffect, useCallback, useMemo, useRef } = React;
 
 /* ══════════════════════════════════════════
@@ -462,7 +477,7 @@ const SERVER = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.2';
+const APP_VERSION = '1.3';
 const APP_PATCHED = '2026-09-11';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -893,146 +908,10 @@ function GenderTag({ g, size = 13 }) {
 }
 const genderEmoji = g => genderMark(g);
 
-/* ══════════════════════════════════════════
-   도트 그림 — 글자 한 칸이 네모 한 칸입니다.
-   '.' 은 빈 칸이고, 나머지 글자는 아래 색표에서 색을 찾습니다.
-   그림을 고치려면 아래 그림표만 고치면 됩니다(코드는 안 건드려도 됩니다).
-   ══════════════════════════════════════════ */
-function pixelSvg(rows, pal) {
-  let r = '';
-  rows.forEach((line, y) => {
-    let x = 0;
-    while (x < line.length) {
-      const c = line[x];
-      if (c === '.') { x++; continue; }
-      let w = 1;
-      while (line[x + w] === c) w++;
-      r += `<rect x="${x}" y="${y}" width="${w}" height="1" fill="${pal[c]}"/>`;
-      x += w;
-    }
-  });
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" shape-rendering="crispEdges">${r}</svg>`;
-}
-const pixelUri = (rows, pal) => 'data:image/svg+xml,' + encodeURIComponent(pixelSvg(rows, pal));
-
-/* 사진이 아직 없는 아이 자리에 들어가는 도트 크레스티드게코 */
-const DOT_GECKO_URI = pixelUri([
-  '', '',
-  '....DD....DD....',
-  '...DGGD..DGGD...',
-  '..DGGGGDDGGGGD..',
-  '..DGGGGGGGGGGD..',
-  '..DGWKGGGGWKGD..',
-  '..DGKKGGGGKKGD..',
-  '..DGGGGGGGGGGD..',
-  '...DGGGGGGGGD...',
-  '...DGGDDDDGGD...',
-  '....DGGGGGGD....',
-  '.....DDDDDD.....',
-], { D:'#3D7018', G:'#6DB033', K:'#0A0400', W:'#FFFFFF' });
-
-/* 알 자리에 들어가는 도트 알 (해칭 아이콘과 같은 색을 씁니다) */
-const DOT_EGG_URI = pixelUri([
-  '',
-  '......EEEE......',
-  '....EESSSSEE....',
-  '...ESSSSSSSSE...',
-  '..ESSSSSSSSSSE..',
-  '..ESSSSSSSSSSE..',
-  '.ESSSSSSSSSSSSE.',
-  '.ESSSSSSSSSSDDE.',
-  '.ESSSSSSSSSSDDE.',
-  '.ESSSSSSSSSDDDE.',
-  '..ESSSSSSSSDDE..',
-  '..ESSSSSSSDDDE..',
-  '...ESSSSSDDDE...',
-  '....EEDDDDEE....',
-  '......EEEE......',
-], { E:'#7A5820', S:'#F5E5BE', D:'#C8A870' });
-
-/* 화면 어디서나 같은 크기 규칙으로 쓰는 작은 그림 두 개 */
-const DotGecko = ({ size = 22 }) => <img src={DOT_GECKO_URI} alt="" width={size} height={size} style={{display:'block', imageRendering:'pixelated'}} />;
-const DotEgg   = ({ size = 16 }) => <img src={DOT_EGG_URI} alt="" width={size} height={size} style={{display:'inline-block', verticalAlign:'-3px', imageRendering:'pixelated'}} />;
-
-/* ── 해칭 커스텀 아이콘: 알에서 나오는 도마뱀 픽셀아트 ── */
-const HATCH_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" shape-rendering="crispEdges">
-  <!-- 게코 머리 / 볏 -->
-  <rect x="28" y="0" width="8" height="4" fill="#3D7018"/>
-  <rect x="30" y="0" width="4" height="4" fill="#6DB033"/>
-  <!-- 머리 윗줄 테두리 -->
-  <rect x="18" y="4" width="28" height="4" fill="#3D7018"/>
-  <rect x="22" y="4" width="20" height="4" fill="#6DB033"/>
-  <!-- 눈 줄 -->
-  <rect x="18" y="8" width="4" height="4" fill="#3D7018"/>
-  <rect x="22" y="8" width="4" height="4" fill="#0A0400"/>
-  <rect x="22" y="8" width="2" height="2" fill="#FFFFFF"/>
-  <rect x="26" y="8" width="12" height="4" fill="#6DB033"/>
-  <rect x="38" y="8" width="4" height="4" fill="#0A0400"/>
-  <rect x="38" y="8" width="2" height="2" fill="#FFFFFF"/>
-  <rect x="42" y="8" width="4" height="4" fill="#3D7018"/>
-  <!-- 턱/주둥이 -->
-  <rect x="18" y="12" width="4" height="4" fill="#3D7018"/>
-  <rect x="22" y="12" width="20" height="4" fill="#6DB033"/>
-  <rect x="42" y="12" width="4" height="4" fill="#3D7018"/>
-  <rect x="27" y="14" width="10" height="2" fill="#3D7018"/>
-  <!-- 목 -->
-  <rect x="22" y="16" width="4" height="4" fill="#3D7018"/>
-  <rect x="26" y="16" width="12" height="4" fill="#6DB033"/>
-  <rect x="38" y="16" width="4" height="4" fill="#3D7018"/>
-  <!-- 몸통 + 앞발 -->
-  <rect x="10" y="20" width="4" height="4" fill="#3D7018"/>
-  <rect x="14" y="20" width="36" height="4" fill="#6DB033"/>
-  <rect x="50" y="20" width="4" height="4" fill="#3D7018"/>
-  <!-- 알 균열: 왼쪽 껍데기 조각 -->
-  <rect x="2" y="24" width="4" height="4" fill="#7A5820"/>
-  <rect x="6" y="24" width="8" height="4" fill="#F5E5BE"/>
-  <rect x="14" y="24" width="4" height="4" fill="#5A3810"/>
-  <!-- 균열 사이 게코 몸통 -->
-  <rect x="18" y="24" width="28" height="4" fill="#6DB033"/>
-  <!-- 알 균열: 오른쪽 껍데기 조각 -->
-  <rect x="46" y="24" width="4" height="4" fill="#5A3810"/>
-  <rect x="50" y="24" width="8" height="4" fill="#F5E5BE"/>
-  <rect x="58" y="24" width="4" height="4" fill="#7A5820"/>
-  <!-- 알 몸통 -->
-  <rect x="10" y="28" width="4" height="4" fill="#7A5820"/>
-  <rect x="14" y="28" width="36" height="4" fill="#F5E5BE"/>
-  <rect x="50" y="28" width="4" height="4" fill="#7A5820"/>
-  <rect x="6" y="32" width="4" height="4" fill="#7A5820"/>
-  <rect x="10" y="32" width="44" height="4" fill="#F5E5BE"/>
-  <rect x="54" y="32" width="4" height="4" fill="#7A5820"/>
-  <rect x="4" y="36" width="4" height="8" fill="#7A5820"/>
-  <rect x="8" y="36" width="48" height="8" fill="#F5E5BE"/>
-  <rect x="56" y="36" width="4" height="8" fill="#7A5820"/>
-  <rect x="6" y="44" width="4" height="4" fill="#7A5820"/>
-  <rect x="10" y="44" width="44" height="4" fill="#F5E5BE"/>
-  <rect x="54" y="44" width="4" height="4" fill="#7A5820"/>
-  <rect x="10" y="48" width="4" height="4" fill="#7A5820"/>
-  <rect x="14" y="48" width="36" height="4" fill="#F5E5BE"/>
-  <rect x="50" y="48" width="4" height="4" fill="#7A5820"/>
-  <rect x="14" y="52" width="4" height="4" fill="#7A5820"/>
-  <rect x="18" y="52" width="28" height="4" fill="#F5E5BE"/>
-  <rect x="46" y="52" width="4" height="4" fill="#7A5820"/>
-  <rect x="18" y="56" width="4" height="4" fill="#7A5820"/>
-  <rect x="22" y="56" width="20" height="4" fill="#F5E5BE"/>
-  <rect x="42" y="56" width="4" height="4" fill="#7A5820"/>
-  <rect x="22" y="60" width="20" height="4" fill="#7A5820"/>
-  <!-- 알 그림자(오른쪽 안쪽) -->
-  <rect x="46" y="32" width="8" height="4" fill="#C8A870"/>
-  <rect x="50" y="36" width="6" height="8" fill="#C8A870"/>
-  <rect x="46" y="44" width="8" height="4" fill="#C8A870"/>
-  <rect x="42" y="48" width="8" height="4" fill="#C8A870"/>
-  <rect x="36" y="52" width="8" height="4" fill="#C8A870"/>
-</svg>`;
-const HATCH_ICON_URI = 'data:image/svg+xml,' + encodeURIComponent(HATCH_ICON_SVG);
-function HatchIcon({ size = 20 }) {
-  return React.createElement('img', {
-    src: HATCH_ICON_URI,
-    width: size,
-    height: size,
-    alt: '🐣',
-    style: { imageRendering: 'pixelated', verticalAlign: 'middle', display: 'inline-block' }
-  });
-}
+/* Photo placeholders and hatch illustrations now use the approved brand set. */
+const DotGecko = ({size=22}) => <BrandIcon name="gecko" size={size}/>;
+const DotEgg = ({size=16}) => <BrandIcon name="egg" size={size}/>;
+function HatchIcon({size=20}) { return <BrandIcon name="hatch" size={size} alt="🐣"/>; }
 
 const EVENT_TYPES = [
   { key: 'growth',       label: '성장',   emoji: '📏', color: '#8E3B45' },
@@ -3734,7 +3613,7 @@ function GearBtn({ navigate }) {
     <button onClick={() => navigate('settings')} aria-label="설정" data-testid="gear-btn"
       style={{background:'var(--bg3)', border:'1px solid var(--border)', borderRadius:10, padding:'9px 10px',
               cursor:'pointer', display:'flex', alignItems:'center', color:'var(--text2)', flexShrink:0}}>
-      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      <BrandIcon name="settings" size={19}/>
     </button>
   );
 }
@@ -3883,25 +3762,25 @@ function App() {
       {[...TAB_SCREENS, 'settings'].includes(screen.name) && (
         <div className="tabbar">
           <button className={`tab-btn ${tab==='home'?'active':''}`} onClick={() => navigate('home')}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+            <BrandIcon name="home" size={22}/>
             홈
           </button>
           <button className={`tab-btn ${tab==='calendar'?'active':''}`} onClick={() => navigate('calendar')}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            <BrandIcon name="calendar" size={22}/>
             캘린더
           </button>
           {/* 가운데 대화 버튼 — 예전 우하단 ＋ 자리를 대신합니다 */}
           <button className="tab-btn tab-chat" onClick={() => navigate('chat')} aria-label="대화로 기록하기">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8z"/></svg>
+            <BrandIcon name="chat" size={25}/>
             대화
           </button>
           <button className={`tab-btn ${tab==='reminders'?'active':''}`} onClick={() => navigate('reminders')} style={{position:'relative'}}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 2h6a1 1 0 0 1 1 1v1H8V3a1 1 0 0 1 1-1z"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M9 12h6"/><path d="M9 16h4"/></svg>
+            <BrandIcon name="briefing" size={22}/>
             브리핑
             {badgeCount > 0 && <span className="notif-badge">{badgeCount}</span>}
           </button>
           <button className={`tab-btn ${tab==='ledger'?'active':''}`} onClick={() => navigate('ledger')}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4z"/></svg>
+            <BrandIcon name="ledger" size={22}/>
             가계부
           </button>
         </div>
@@ -3973,8 +3852,8 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
         {individuals.length > 0 && (
           <div style={{padding:'12px 16px 0'}}>
             <input
-              className="input"
-              placeholder="🔍 이름 또는 모프 검색"
+              className="input brand-search"
+              placeholder="이름 또는 모프 검색"
               value={search}
               onChange={e => setSearch(e.target.value)}
             />
@@ -4881,7 +4760,7 @@ function SaleSection({ individuals, navigate, showToast, refreshIndividuals }) {
   return (
     <>
       <div style={{padding:'12px 16px 0'}}>
-        <input className="input" placeholder="🔍 이름 또는 모프 검색" value={search} onChange={e => setSearch(e.target.value)} />
+        <input className="input brand-search" placeholder=" 이름 또는 모프 검색" value={search} onChange={e => setSearch(e.target.value)} />
       </div>
       <div style={{display:'flex', gap:6, padding:'10px 16px 0'}}>
         {[['available',`분양가능${availCount ? ' ' + availCount : ''}`],['reserved',`예약중${reservedCount ? ' ' + reservedCount : ''}`],['sold',`분양완료${soldCount ? ' ' + soldCount : ''}`],
@@ -5105,7 +4984,7 @@ function MoneySection({ individuals, navigate, showToast, refreshIndividuals }) 
               {r.auto && ind && (
                 <button onClick={() => navigate('profile', { gecko: ind })}
                   style={{background:'none', border:'none', cursor:'pointer', color:'var(--text3)', flexShrink:0}}>
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 18 15 12 9 6"/></svg>
+                  <BrandIcon name="next" size={16}/>
                 </button>
               )}
             </div>
@@ -5268,7 +5147,7 @@ function GeckoCard({ gecko, onClick, onToggleFav }) {
           {gecko.favorite ? '⭐' : '☆'}
         </button>
       )}
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" strokeWidth="2"><polyline points="9 18 15 12 9 6"/></svg>
+      <BrandIcon name="next" size={16}/>
     </div>
   );
 }
@@ -6354,7 +6233,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       <div className="header">
         <div className="header-row">
           <button className="back-btn" onClick={() => navigate('home')}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6"/></svg>
+            <BrandIcon name="back" size={18}/>
             홈
           </button>
           <span style={{fontSize:14, color:'var(--text3)'}}>
@@ -6628,12 +6507,12 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
       <div className="header">
         <div className="header-row">
           <button className="back-btn" onClick={() => { refreshIndividuals(); navigate('home'); }}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6"/></svg>
+            <BrandIcon name="back" size={18}/>
             목록
           </button>
           {SHOW_SHARE && (
             <button className="back-btn" onClick={() => setShowShare(s => !s)}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+              <BrandIcon name="link" size={18}/>
               공유
             </button>
           )}
@@ -6813,7 +6692,7 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
                 const cur = conditionToday(gecko.id, events);
                 const on = cur && Number(cur.data.level) === c.level;
                 return (
-                  <button key={c.key} className="chip-btn" data-testid={`cond-${c.key}`}
+                  <button key={c.key} className="chip-btn brand-condition-choice" data-testid={`cond-${c.key}`}
                     style={{flex:1, padding:'9px 4px', fontSize:12.5,
                       ...(on ? {background:'var(--accent-soft)', fontWeight:800, borderColor:'var(--accent-edge)'} : {})}}
                     onClick={() => {
@@ -7019,10 +6898,7 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
                     background:'var(--bg3)', border:'1px solid var(--border)', borderRadius:12,
                     padding:'12px 14px', cursor:'pointer', color:'var(--text)', fontSize:13.5, fontWeight:800}}>
             <span>{tabLabel} <span style={{color:'var(--text3)', fontWeight:600}}>({list.length})</span></span>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" strokeWidth="2.5"
-              style={{flexShrink:0, transform: open ? 'rotate(180deg)' : 'none', transition:'transform .15s'}}>
-              <path d="M6 9l6 6 6-6" />
-            </svg>
+            <BrandIcon name="next" size={14} style={{transform:open?'rotate(-90deg)':'rotate(90deg)',transition:'transform .15s'}}/>
           </button>
 
           {open && (list.length === 0 ? (
@@ -7417,7 +7293,7 @@ function CalendarScreen({ navigate, individuals, showToast, onRemindersChanged }
                   <div style={{fontSize:11, fontWeight: (isToday || isSel) ? 800 : 500, color: (isToday || isSel) ? 'var(--accent2)' : 'var(--text2)'}}>{d}</div>
                   <div style={{display:'flex', flexWrap:'wrap', justifyContent:'center', gap:1, lineHeight:1}}>
                     {its.slice(0, 3).map((it, j) => (
-                      <span key={j} style={{fontSize:10, opacity: it.planned ? 0.55 : 1}}>{it.emoji}</span>
+                      <span key={j} style={{fontSize:10, opacity: it.planned ? 0.55 : 1}}>{it.planned && it.emoji === CALENDAR_FEED_PLAN_EMOJI ? <BrandIcon name="feedingPlan" size={14}/> : it.emoji}</span>
                     ))}
                   </div>
                 </div>
@@ -7455,7 +7331,7 @@ function CalendarScreen({ navigate, individuals, showToast, onRemindersChanged }
                     <button data-testid="calendar-item-open" onClick={() => openCalendarItem(it)}
                       style={{background:'none', border:'none', padding:0, minWidth:0, flex:1, cursor:'pointer', textAlign:'left',
                               fontSize:13, color:'var(--text2)', display:'flex', alignItems:'center', gap:5}}>
-                      <span style={{minWidth:0, flex:1}}>{it.emoji} {itemText(it)}</span>
+                      <span style={{minWidth:0, flex:1}}>{it.planned && it.emoji === CALENDAR_FEED_PLAN_EMOJI ? <BrandIcon name="feedingPlan" size={14}/> : it.emoji} {itemText(it)}</span>
                       <span aria-hidden="true" style={{color:'var(--accent2)', fontSize:17}}>›</span>
                     </button>
                     <div style={{display:'flex', gap:10, flexShrink:0}}>
@@ -7539,7 +7415,7 @@ function CalendarScreen({ navigate, individuals, showToast, onRemindersChanged }
                 <button key={j} data-testid="calendar-month-item" onClick={() => openCalendarItem(it)}
                   style={{display:'flex', width:'100%', alignItems:'center', gap:6, background:'none', border:'none',
                           fontSize:13, color:'var(--text2)', padding:'4px 0', cursor:'pointer', textAlign:'left'}}>
-                  <span style={{minWidth:0, flex:1}}>{it.emoji} {itemText(it)}</span>
+                  <span style={{minWidth:0, flex:1}}>{it.planned && it.emoji === CALENDAR_FEED_PLAN_EMOJI ? <BrandIcon name="feedingPlan" size={14}/> : it.emoji} {itemText(it)}</span>
                   <span aria-hidden="true" style={{color:'var(--accent2)', fontSize:17}}>›</span>
                 </button>
               ))}
@@ -7803,8 +7679,8 @@ function FeedingScreen({ navigate, showToast, refreshIndividuals }) {
             남은 {fp.inds.length - doneCnt}마리 전부 "먹었어요"로
           </button>
           {/* 한 마리만 따로 챙길 때 (예: 크한이는 충식) 찾기 쉽도록 */}
-          <input className="input" style={{marginTop:10, padding:'9px 11px', fontSize:13}}
-            placeholder="🔍 이름 또는 모프로 찾기" value={search}
+          <input className="input brand-search" style={{marginTop:10, padding:'9px 11px', fontSize:13}}
+            placeholder="이름 또는 모프로 찾기" value={search}
             onChange={e => setSearch(e.target.value)} />
           {search && (
             <div style={{fontSize:11.5, color:'var(--text3)', marginTop:6, display:'flex', alignItems:'center', gap:8}}>

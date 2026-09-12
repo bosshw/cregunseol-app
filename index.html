@@ -16,6 +16,8 @@
        앱 코드는 그대로 React.createElement 를 부르고, 이 파일이 그 이름을 세워줍니다.
        되돌리려면 이 한 줄을 지우고 vendor/react*.min.js 두 줄을 되살리면 됩니다. -->
   <script defer src="./vendor/preact-shim.min.js"></script>
+  <script defer src="./brand-art.js"></script>
+  <link rel="stylesheet" href="./brand-art.css">
   <script defer src="./app.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
@@ -219,7 +221,7 @@
   <!-- 앱이 그려지면 이 자리는 통째로 지워집니다.
        못 그려지면(부품을 못 받아온 경우) 이 안내가 남아 하얀 화면을 막습니다. -->
   <div id="boot" style="height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:28px;text-align:center;font-family:-apple-system,'Noto Sans KR',sans-serif;color:#6B5A4E">
-    <div style="font-size:46px">🦎</div>
+    <img src="./assets/brand/gecko.webp" width="74" height="74" alt="크한이">
     <div id="boot-a" style="font-size:15px">불러오는 중이에요…</div>
     <div id="boot-b" style="display:none;max-width:280px">
       <div style="font-size:16px;font-weight:700;color:#8C2F39;margin-bottom:8px">인터넷 연결을 확인해 주세요</div>

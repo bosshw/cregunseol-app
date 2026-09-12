@@ -35,6 +35,8 @@ test("keeps the first-load application shell within budget", async () => {
   const paths = [
     "index.html",
     "app.min.js",
+    "brand-art.js",
+    "brand-art.css",
     "vendor/preact-shim.min.js",
   ];
   const buffers = await Promise.all(paths.map((name) => readFile(file(name))));

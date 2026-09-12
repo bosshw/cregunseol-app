@@ -77,6 +77,8 @@
   .state{text-align:center; padding:80px 20px; color:var(--text3); font-size:14px; line-height:1.9}
   .state b{display:block; color:var(--text); font-size:16px; margin-bottom:8px}
 </style>
+<script src="./brand-art.js"></script>
+<link rel="stylesheet" href="./brand-art.css">
 </head>
 <body>
 <div class="wrap" id="app">
@@ -213,6 +215,7 @@
 
     h += signHtml(d.breeder);
     app.innerHTML = h;
+    window.CREG_ART.decorate(app);
     if (d.name) document.title = d.name + ' · 사육 기록';
   }
 
