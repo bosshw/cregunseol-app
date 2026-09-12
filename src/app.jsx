@@ -477,8 +477,8 @@ const SERVER = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.3';
-const APP_PATCHED = '2026-09-11';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
+const APP_VERSION = '1.4';
+const APP_PATCHED = '2026-09-12';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -1022,11 +1022,11 @@ function setConditionToday(id, level) {
 /* 만든 사람 문의 링크.
    여기에 주소를 박아두면 앱을 쓰는 모든 분에게 똑같이 보입니다.
    비워두면 설정에서 각자 넣은 주소를 씁니다(대표님 기기에만 보임). */
-const CONTACT = { insta: 'https://www.instagram.com/cre_construct', blog: '', chat: '' };
+const CONTACT = { insta: 'https://www.instagram.com/cre_construct', blog: '', chat: 'https://open.kakao.com/o/sZ7wQNSd' };
 const CONTACT_FIELDS = [
   ['insta', '📸 인스타그램', 'https://instagram.com/...'],
   ['blog',  '📝 블로그',     'https://blog.naver.com/...'],
-  ['chat',  '💬 오픈채팅',   'https://open.kakao.com/...'],
+  ['chat',  '💬 문의·건의 오픈채팅', 'https://open.kakao.com/...'],
 ];
 /* 실제로 보여줄 주소 — 코드에 박힌 것이 먼저, 없으면 설정에 적어둔 것 */
 function contactLinks(settings) {
