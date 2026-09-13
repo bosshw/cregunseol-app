@@ -46,7 +46,7 @@ test("keeps service worker and release metadata aligned", async () => {
   assert.equal(version.app, "1.4.1");
   assert.equal(version.schema, 1);
   assert.equal(version.minSchema, 1);
-  assert.match(worker, /const CACHE = 'creg-v23'/);
+  assert.match(worker, /const CACHE = 'creg-v24'/);
 
   for (const asset of [
     "./index.html",
