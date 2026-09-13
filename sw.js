@@ -1,7 +1,7 @@
 // ★ 이 번호는 화면 버전과 따로 갑니다. 화면 버전은 1.7 → 1.0 으로 되돌렸지만
 //    캐시 이름은 올라가기만 합니다(v17 → v18). 옛 이름을 다시 쓰면 폰에 남아 있던
 //    헌 파일 묶음을 새것으로 착각해서 화면이 안 바뀝니다.
-const CACHE = 'creg-v23';
+const CACHE = 'creg-v24';
 
 // 화면을 그리는 데 꼭 필요한 파일 — 이것도 폰에 저장해둬야 인터넷 없이 열립니다
 const ASSETS = [
@@ -97,7 +97,8 @@ const ASSETS = [
 self.addEventListener('install', e => {
   // 하나가 실패해도 나머지는 저장되도록 한 개씩 담습니다 (addAll은 전부 아니면 전무)
   e.waitUntil(caches.open(CACHE).then(c =>
-    Promise.all(ASSETS.map(a => c.add(a).catch(() => {})))
+    // Revalidate the HTTP cache too, so a fresh worker never installs old artwork.
+    Promise.all(ASSETS.map(a => c.add(new Request(a, { cache: 'reload' })).catch(() => {})))
   ));
   self.skipWaiting();
 });

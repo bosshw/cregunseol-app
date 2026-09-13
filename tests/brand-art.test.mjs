@@ -54,12 +54,14 @@ test('every mapped artwork exists and is precached, including transparent avatar
 });
 
 test('service worker returns the installed character asset when network is offline',async()=>{
- const listeners={};const saved=new Map();const origin='https://example.test';
+ const listeners={};const saved=new Map();const requests=[];const origin='https://example.test';
  const key=x=>new URL(typeof x==='string'?x:x.url,origin+'/').href;
- const caches={open:async()=>({add:async u=>{saved.set(key(u),new Response('cached-art'));},put:async(u,v)=>saved.set(key(u),v)}),match:async u=>saved.get(key(u))};
- const ctx={self:{location:{origin},addEventListener:(n,f)=>listeners[n]=f,skipWaiting:()=>{}},caches,URL,fetch:async()=>{throw Error('offline');}};
+ const caches={open:async()=>({add:async u=>{requests.push(u);saved.set(key(u),new Response('cached-art'));},put:async(u,v)=>saved.set(key(u),v)}),match:async u=>saved.get(key(u))};
+ const ctx={self:{location:{origin},addEventListener:(n,f)=>listeners[n]=f,skipWaiting:()=>{}},caches,URL,Request:class {constructor(url,options){this.url=key(url);this.cache=options.cache;}},fetch:async()=>{throw Error('offline');}};
  vm.createContext(ctx);vm.runInContext(await read('sw.js'),ctx);
  let install;listeners.install({waitUntil:p=>install=p});await install;
+ assert.ok(requests.length>0 && requests.every(r=>r.cache==='reload'), 'fresh worker must bypass stale HTTP cache');
+ assert.ok(saved.has(key('/assets/brand/gecko-transparent.webp')));
  let response;listeners.fetch({request:{method:'GET',url:origin+'/assets/brand/good.webp'},respondWith:p=>response=p});
  assert.equal(await(await response).text(),'cached-art');
  let intercepted=false;listeners.fetch({request:{method:'GET',url:origin+'/version.json'},respondWith:()=>intercepted=true});assert.equal(intercepted,false);
