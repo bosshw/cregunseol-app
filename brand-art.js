@@ -6,7 +6,7 @@
  const raster = new Set(['gecko','hatch','good','normal','down','sad']);
  const re = new RegExp('(' + Object.keys(map).sort((a,b)=>b.length-a.length).join('|') + ')\uFE0F?', 'gu');
  const skip = new Set(['option','optgroup','textarea','input','select','script','style','svg','text','tspan','title','desc','code','pre']);
- const url = id => './assets/brand/' + id + (raster.has(id) ? '.webp' : '.svg');
+ const url = id => './assets/brand/' + (id === 'gecko' ? 'gecko-transparent' : id) + (raster.has(id) ? '.webp' : '.svg');
  function parts(value) {
    if (typeof value !== 'string') return null;
    re.lastIndex=0; let m,last=0; const result=[];
