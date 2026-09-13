@@ -477,7 +477,7 @@ const SERVER = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.4.1';
+const APP_VERSION = '1.5';
 const APP_PATCHED = '2026-09-13';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -843,6 +843,8 @@ const SYNC = {
       try { await PHOTO.flush(null, PHOTO_PER_SYNC, PHOTO.era()); } catch (e) {}
       const sent = await this.push();
       const got = await this.pull();
+      // 알림 일정표도 같이 올려둡니다 (실패해도 동기화는 성공으로 둡니다)
+      try { await PUSH.syncPlan(); } catch (e) {}
       this.saveSt({ lastSyncAt: now(), lastError: null });
       this.running = false;
       this.emit(got > 0);
@@ -2636,6 +2638,234 @@ function feedSchedule(untilISO, plan) {
   return out;
 }
 
+/* ══════════════════════════════════════════
+   폰 밖으로 나가는 알림 (웹 푸시) — v1.5
+
+   앱을 켜지 않아도 잠금화면에 뜨는 그 알림입니다.
+
+   ★ 무엇을 언제 보낼지는 "여기 한 곳"에서만 정합니다 (pushPlan).
+     서버는 규칙을 모릅니다 — 앱이 만들어 올린 일정표에서 오늘 날짜 줄만 꺼내 보냅니다.
+     부화 예정일·밥 주는 날 계산이 두 군데로 갈라지지 않게 하기 위해서입니다.
+
+   보내는 것은 대표님이 고르신 두 가지뿐입니다 (2026-09-13 확정).
+     ① 부화 예정 — 사흘 전과 당일
+     ② 밥 주는 날 — 그날 아침
+   매일 아침 8시에 그날 몫을 묶어서 한 통으로 보냅니다.
+
+   제약 (지키지 않으면 알림이 안 옵니다)
+     · 아이폰은 홈 화면에 추가한 뒤에만 받을 수 있습니다 (iOS 16.4+)
+     · 서버 동기화(로그인)가 켜져 있어야 합니다 — 누구에게 보낼지 알아야 하니까요
+     · 권한 요청은 반드시 사용자가 버튼을 누른 직후에만 뜹니다
+   ══════════════════════════════════════════ */
+const PUSH_AHEAD = 3;          // 부화 예정 며칠 전에 미리 알릴지
+const PUSH_PLAN_MAX = 400;     // 일정표 한 사람당 최대 줄 수
+
+/* 서버가 준 공개키(base64url)를 브라우저가 원하는 바이트 배열로 */
+function urlB64ToBytes(s) {
+  const t = (s || '').replace(/-/g, '+').replace(/_/g, '/');
+  const bin = atob(t + '='.repeat((4 - (t.length % 4)) % 4));
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+/* 오늘부터 석 달치 알림 일정표 — 서버는 이 표만 봅니다 */
+function pushPlan(individuals, events) {
+  const today = todayStr();
+  const until = localISO(new Date(Date.now() + CALENDAR_AHEAD_DAYS * 86400000));
+  const out = [];
+
+  // ① 부화 예정 — 사흘 전 한 번, 당일 한 번
+  clutchRows(individuals, events).forEach(r => {
+    if (!r.waiting || !r.etaISO || r.etaISO > until) return;
+    const eggs = (r.units || []).length;
+    const body = `${fmtDateShort(r.e.date)} 산란${eggs ? ` · 알 ${eggs}개` : ''}`;
+    const pre = localISO(new Date(new Date(r.etaISO).getTime() - PUSH_AHEAD * 86400000));
+    if (pre >= today) out.push({ d: pre, k: 'hatch', t: `${r.pairName} ${r.nth}차 알, 사흘 뒤가 부화 예정이에요 🥚`, b: body });
+    if (r.etaISO >= today) out.push({ d: r.etaISO, k: 'hatch', t: `${r.pairName} ${r.nth}차 알이 나올 때가 됐어요 🐣`, b: body });
+  });
+
+  // ② 밥 주는 날 — 고정 요일이든 며칠 간격이든 feedSchedule 한 곳에서 나옵니다
+  const fp = feedPlan(individuals, events);
+  feedSchedule(until, fp).forEach(d => {
+    if (d < today) return;
+    out.push({ d, k: 'feed', t: '오늘은 밥 주는 날이에요 🍽️', b: fp.planLabel || '' });
+  });
+
+  return out.sort((a, b) => (a.d < b.d ? -1 : a.d > b.d ? 1 : 0)).slice(0, PUSH_PLAN_MAX);
+}
+
+const PUSH = {
+  listeners: new Set(),
+  on(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); },
+  emit() { this.listeners.forEach(fn => { try { fn(); } catch (e) {} }); },
+
+  /* ── 이 기기가 할 수 있는가 ── */
+  supported() {
+    return typeof navigator !== 'undefined' && 'serviceWorker' in navigator
+      && typeof window !== 'undefined' && 'PushManager' in window && 'Notification' in window;
+  },
+  isIOS() {
+    const ua = (typeof navigator !== 'undefined' && navigator.userAgent) || '';
+    return /iPad|iPhone|iPod/.test(ua) || (/Macintosh/.test(ua) && typeof document !== 'undefined' && 'ontouchend' in document);
+  },
+  standalone() {
+    try {
+      return (typeof navigator !== 'undefined' && navigator.standalone === true)
+        || (typeof matchMedia === 'function' && matchMedia('(display-mode: standalone)').matches);
+    } catch (e) { return false; }
+  },
+
+  /* 지금 상태 한 낱말로 — 화면은 이것만 보고 그립니다 */
+  state() {
+    if (!this.supported()) return 'unsupported';
+    if (this.isIOS() && !this.standalone()) return 'need-install';
+    if (!SYNC.active()) return 'need-login';
+    if (typeof Notification !== 'undefined' && Notification.permission === 'denied') return 'denied';
+    return this.isOn() ? 'on' : 'off';
+  },
+
+  isOn() { try { return localStorage.getItem('cg_push_on') === '1'; } catch (e) { return false; } },
+  setOn(v) { v ? STORE.set('cg_push_on', '1') : STORE.drop('cg_push_on'); this.emit(); },
+
+  prefs() {
+    const s = DB.getSettings() || {};
+    return { hatch: s.pushHatch !== false, feed: s.pushFeed !== false };
+  },
+
+  /* ── 서버에서 공개키 받아오기 ──
+     앱에 박아두지 않는 이유: 대표님이 나중에 열쇠를 바꾸셔도 앱을 다시 배포하지 않아도 됩니다. */
+  async vapidKey() {
+    let cached = '';
+    try { cached = localStorage.getItem('cg_push_key') || ''; } catch (e) {}
+    if (cached) return cached;
+    const res = await SYNC.api('/functions/v1/push/key', { method: 'GET' });
+    if (!res.ok) throw new Error('서버에 알림 설정이 아직 안 돼 있어요');
+    const j = await res.json();
+    if (!j || !j.key) throw new Error('서버에 알림 설정이 아직 안 돼 있어요');
+    STORE.set('cg_push_key', j.key);
+    return j.key;
+  },
+
+  async subscription() {
+    if (!this.supported()) return null;
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      return await reg.pushManager.getSubscription();
+    } catch (e) { return null; }
+  },
+
+  /* 앱을 켤 때 실제 상태와 맞춰둡니다 (폰 설정에서 껐을 수도 있으니) */
+  async refresh() {
+    if (!this.supported()) return false;
+    const sub = await this.subscription();
+    const real = !!sub && (typeof Notification === 'undefined' || Notification.permission === 'granted');
+    if (real !== this.isOn()) this.setOn(real);
+    return real;
+  },
+
+  async saveSub(sub) {
+    const j = sub.toJSON();
+    const p = this.prefs();
+    const res = await SYNC.api('/rest/v1/cg_push_subs', {
+      method: 'POST',
+      headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+      body: JSON.stringify({
+        endpoint: j.endpoint,
+        user_id: SYNC.userId(),
+        p256dh: (j.keys && j.keys.p256dh) || '',
+        auth: (j.keys && j.keys.auth) || '',
+        hatch: p.hatch, feed: p.feed,
+        label: this.isIOS() ? '아이폰' : '안드로이드/PC',
+      }),
+    });
+    if (!res.ok) throw new Error(await SYNC.parseErr(res));
+  },
+
+  /* ── 켜기 ── 반드시 버튼을 누른 그 순간에 불러야 합니다 */
+  async enable() {
+    if (!this.supported()) throw new Error('이 브라우저는 알림을 지원하지 않아요');
+    if (this.isIOS() && !this.standalone()) throw new Error('아이폰은 홈 화면에 추가한 뒤에 켤 수 있어요');
+    if (!SYNC.active()) throw new Error('먼저 서버 동기화를 연결해주세요');
+
+    const key = await this.vapidKey();
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') {
+      throw new Error(perm === 'denied'
+        ? '알림이 차단됐어요. 폰 설정에서 이 앱의 알림을 켜주세요'
+        : '알림 허용을 취소하셨어요');
+    }
+
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    // 열쇠가 바뀌었으면 옛 구독은 버리고 새로 맺습니다
+    let used = '';
+    try { used = localStorage.getItem('cg_push_used') || ''; } catch (e) {}
+    if (sub && used && used !== key) { try { await sub.unsubscribe(); } catch (e) {} sub = null; }
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToBytes(key) });
+
+    await this.saveSub(sub);
+    STORE.set('cg_push_used', key);
+    this.setOn(true);
+    await this.syncPlan();
+    return true;
+  },
+
+  /* ── 끄기 ── 서버 목록에서도 지웁니다 */
+  async disable() {
+    const sub = await this.subscription();
+    if (sub) {
+      try {
+        await SYNC.api('/rest/v1/cg_push_subs?endpoint=eq.' + encodeURIComponent(sub.endpoint), { method: 'DELETE' });
+      } catch (e) {}
+      try { await sub.unsubscribe(); } catch (e) {}
+    }
+    this.setOn(false);
+    return true;
+  },
+
+  /* 받을 종류 바꾸기 — 이 기기 것만 바뀝니다 */
+  async savePrefs(patch) {
+    const s = { ...(DB.getSettings() || {}), ...patch };
+    DB.saveSettings(s);
+    this.emit();
+    const sub = await this.subscription();
+    if (!sub || !SYNC.active()) return;
+    const p = this.prefs();
+    try {
+      await SYNC.api('/rest/v1/cg_push_subs?endpoint=eq.' + encodeURIComponent(sub.endpoint), {
+        method: 'PATCH',
+        headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify({ hatch: p.hatch, feed: p.feed }),
+      });
+    } catch (e) {}
+  },
+
+  /* 시험 한 통 — 제대로 오는지 대표님이 직접 확인하실 수 있게 */
+  async test() {
+    const res = await SYNC.api('/functions/v1/push/test', { method: 'POST', body: '{}' });
+    if (!res.ok) throw new Error(await SYNC.parseErr(res));
+    return res.json();
+  },
+
+  /* ── 일정표 올리기 ──
+     동기화가 끝날 때마다 다시 올립니다. 서버에 표가 없거나 아직 준비 전이면 조용히 넘어갑니다
+     — 알림 때문에 기록 동기화가 실패하면 안 되니까요. */
+  async syncPlan() {
+    if (!this.isOn() || !SYNC.active()) return false;
+    const uid = SYNC.userId();
+    if (!uid) return false;
+    try {
+      const res = await SYNC.api('/rest/v1/cg_push_plan', {
+        method: 'POST',
+        headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+        body: JSON.stringify({ user_id: uid, plan: pushPlan() }),
+      });
+      return res.ok;
+    } catch (e) { return false; }
+  },
+};
+
 /* 크레건설 출생(CG) 판정 — 우리 기록으로 부모를 아는 아이는 우리 집에서 나온 아이입니다.
    직접 등록한 아이는 프로필에서 손으로 켜고 끌 수 있습니다. */
 /* 우리 집에서 나온 아이 표시 — 화면에는 MY 로 나옵니다.
@@ -3631,6 +3861,23 @@ function App() {
 
   const refreshIndividuals = () => setIndividuals(DB.getIndividuals());
   const refreshReminders = () => setRemVer(v => v + 1);
+
+  /* 알림을 눌러서 들어온 경우 그 화면으로 보내드립니다.
+     앱이 꺼져 있었으면 주소에 ?go=… 가 붙어 오고, 켜져 있었으면 서비스워커가 말을 걸어옵니다. */
+  useEffect(() => {
+    const GO_OK = ['reminders', 'feeding', 'calendar', 'home'];
+    const go = (name) => { if (GO_OK.includes(name)) navigate(name); };
+    try {
+      const q = new URLSearchParams(location.search).get('go');
+      if (q) {
+        go(q);
+        history.replaceState({}, '', location.pathname);
+      }
+    } catch (e) {}
+    const onMsg = (ev) => { if (ev && ev.data && ev.data.type === 'go') go(ev.data.screen); };
+    try { navigator.serviceWorker.addEventListener('message', onMsg); } catch (e) {}
+    return () => { try { navigator.serviceWorker.removeEventListener('message', onMsg); } catch (e) {} };
+  }, []);
 
   // 예전 버전이 저장해 둔 '부화 예정' 알림 정리 (이제 산란기록에서 매번 계산합니다)
   useEffect(() => {
@@ -8131,6 +8378,104 @@ function DupMergeCard({ showToast, refreshIndividuals }) {
 }
 
 /* ══════════════════════════════════════════
+   설정 · 폰 알림 카드
+
+   상태는 PUSH.state() 한 곳이 정합니다. 여기서는 그 낱말에 맞는 안내만 그립니다.
+   ══════════════════════════════════════════ */
+function PushCard({ showToast }) {
+  const [, bump] = useState(0);
+  const [busy, setBusy] = useState('');
+  useEffect(() => {
+    const off = PUSH.on(() => bump(v => v + 1));
+    const off2 = SYNC.on(() => bump(v => v + 1));
+    PUSH.refresh().catch(() => {});
+    return () => { off(); off2(); };
+  }, []);
+
+  const st = PUSH.state();
+  const prefs = PUSH.prefs();
+
+  const wrap = (children) => (
+    <div className="card" style={{margin:0}} data-testid="push-card">
+      <div style={{fontSize:13, fontWeight:700, color:'var(--text2)', marginBottom:10}}>🔔 폰 알림</div>
+      {children}
+    </div>
+  );
+  const note = (text) => (
+    <div style={{fontSize:12.5, color:'var(--text3)', lineHeight:1.6}}>{text}</div>
+  );
+
+  if (st === 'unsupported') return wrap(note('이 브라우저는 폰 알림을 지원하지 않아요.\n크롬이나 사파리에서 열어주세요.'));
+  if (st === 'need-install') return wrap(note('아이폰은 홈 화면에 추가한 뒤에 알림을 받을 수 있어요.\n사파리 아래 공유 버튼 → "홈 화면에 추가" 를 누르시고,\n거기서 열어서 다시 와주세요.'));
+  if (st === 'need-login') return wrap(note('먼저 위의 ☁️ 서버 동기화를 연결해주세요.\n어느 폰으로 보낼지 알아야 알림을 드릴 수 있어요.'));
+  if (st === 'denied') return wrap(note('알림이 차단돼 있어요.\n폰 설정 → 알림에서 이 앱을 허용해주신 뒤 다시 와주세요.'));
+
+  const doEnable = async () => {
+    setBusy('on');
+    try { await PUSH.enable(); showToast('🔔 알림을 켰어요'); }
+    catch (e) { showToast('⚠️ ' + ((e && e.message) || '실패')); }
+    setBusy('');
+  };
+  const doDisable = async () => {
+    setBusy('off');
+    try { await PUSH.disable(); showToast('알림을 껐어요'); }
+    catch (e) { showToast('⚠️ ' + ((e && e.message) || '실패')); }
+    setBusy('');
+  };
+  const doTest = async () => {
+    setBusy('test');
+    try { await PUSH.test(); showToast('📨 보냈어요. 잠시 뒤 알림이 뜰 거예요'); }
+    catch (e) { showToast('⚠️ ' + ((e && e.message) || '실패')); }
+    setBusy('');
+  };
+
+  if (st === 'off') return wrap(
+    <div>
+      {note('앱을 켜지 않아도 잠금화면으로 알려드려요.\n부화 예정일과 밥 주는 날, 아침 8시에 한 번씩이에요.')}
+      <button className="btn btn-primary" style={{marginTop:12}} data-testid="push-on"
+        disabled={busy === 'on'} onClick={doEnable}>
+        {busy === 'on' ? '켜는 중…' : '🔔 알림 받기'}
+      </button>
+    </div>
+  );
+
+  // 켜져 있음
+  const row = (key, label, sub, on) => (
+    <button key={key} className="chip-btn" data-testid={'push-' + key}
+      onClick={() => PUSH.savePrefs(key === 'hatch' ? { pushHatch: !on } : { pushFeed: !on })}
+      style={{display:'flex', alignItems:'center', gap:10, width:'100%', textAlign:'left',
+              padding:'11px 12px', ...(on ? CHIP_ON : CHIP_OFF)}}>
+      <span style={{fontSize:15}}>{on ? '☑' : '☐'}</span>
+      <span style={{flex:1, minWidth:0}}>
+        <span style={{display:'block', fontWeight:600, fontSize:13.5}}>{label}</span>
+        <span style={{display:'block', fontSize:11.5, opacity:.8, marginTop:2}}>{sub}</span>
+      </span>
+    </button>
+  );
+
+  return wrap(
+    <div>
+      <div style={{fontSize:12.5, color:'#2E7D46', fontWeight:600, marginBottom:10}}>● 이 기기로 알림을 받고 있어요</div>
+      <div style={{display:'flex', flexDirection:'column', gap:8}}>
+        {row('hatch', '🥚 부화 예정', '사흘 전과 당일 아침', prefs.hatch)}
+        {row('feed', '🍽️ 밥 주는 날', '그날 아침', prefs.feed)}
+      </div>
+      <div style={{display:'flex', gap:8, marginTop:12}}>
+        <button className="btn btn-secondary btn-sm" style={{flex:1}} data-testid="push-test"
+          disabled={busy === 'test'} onClick={doTest}>
+          {busy === 'test' ? '보내는 중…' : '📨 시험 알림'}
+        </button>
+        <button className="btn btn-secondary btn-sm" style={{flex:1}} data-testid="push-off"
+          disabled={busy === 'off'} onClick={doDisable}>알림 끄기</button>
+      </div>
+      <div style={{fontSize:11.5, color:'var(--text3)', marginTop:10, lineHeight:1.6}}>
+        아침 8시에 그날 챙길 것을 묶어서 한 통으로 보내드려요.
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════
    설정 · 서버 동기화 카드
    ══════════════════════════════════════════ */
 function SyncCard({ showToast, refreshIndividuals }) {
@@ -8560,6 +8905,7 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
         </div>
         <DupMergeCard showToast={showToast} refreshIndividuals={refreshIndividuals} />
         <SyncCard showToast={showToast} refreshIndividuals={refreshIndividuals} />
+        <PushCard showToast={showToast} />
         <StorageCard showToast={showToast} />
         <div className="card" style={{margin:0}}>
           <div style={{fontSize:13, fontWeight:700, marginBottom:12, color:'var(--text2)'}}>데이터</div>
