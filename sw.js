@@ -1,7 +1,7 @@
 // ★ 이 번호는 화면 버전과 따로 갑니다. 화면 버전은 1.7 → 1.0 으로 되돌렸지만
 //    캐시 이름은 올라가기만 합니다(v17 → v18). 옛 이름을 다시 쓰면 폰에 남아 있던
 //    헌 파일 묶음을 새것으로 착각해서 화면이 안 바뀝니다.
-const CACHE = 'creg-v24';
+const CACHE = 'creg-v25';
 
 // 화면을 그리는 데 꼭 필요한 파일 — 이것도 폰에 저장해둬야 인터넷 없이 열립니다
 const ASSETS = [
@@ -129,4 +129,43 @@ self.addEventListener('fetch', e => {
     }))
   );
 });
-// v1.2 deploy 2026-09-11 (캘린더 석 달치 · 말로 부화 기록 · 이름 두 번 찍히던 것)
+
+/* ══════════════════════════════════════════
+   폰 밖으로 나가는 알림 (웹 푸시)
+
+   앱이 꺼져 있어도 이 서비스워커는 깨어나 알림을 띄웁니다.
+   보낼 내용은 서버가 정해서 실어 보냅니다 — 여기서는 받아서 보여주기만 합니다.
+     t = 제목 / b = 내용 / u = 누르면 갈 화면 / g = 묶음 이름(같으면 덮어씁니다)
+   ══════════════════════════════════════════ */
+self.addEventListener('push', e => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch (_) {
+    try { d = { t: e.data.text() }; } catch (_e) { d = {}; }
+  }
+  const title = d.t || '브리딩비서';
+  e.waitUntil(self.registration.showNotification(title, {
+    body: d.b || '',
+    icon: './icon-192.png',
+    badge: './icon-192.png',
+    tag: d.g || 'creg',
+    renotify: true,
+    data: { url: d.u || 'reminders' },
+  }));
+});
+
+// 알림을 누르면 이미 열린 앱으로 가고, 없으면 새로 엽니다
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  const go = (e.notification.data && e.notification.data.url) || 'reminders';
+  const target = new URL('./?go=' + encodeURIComponent(go), self.location.href).href;
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
+    for (const c of list) {
+      if (c.url.startsWith(self.location.origin) && 'focus' in c) {
+        c.postMessage({ type: 'go', screen: go });
+        return c.focus();
+      }
+    }
+    return self.clients.openWindow(target);
+  }));
+});
+// v1.5 deploy 2026-09-13 (웹 푸시 — 부화 예정 · 밥 주는 날)
