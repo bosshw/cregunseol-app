@@ -35,13 +35,13 @@ test('JSX adapter preserves form values and native options while rendering neste
  assert.equal(frag.children.flat(Infinity)[0].props['data-art'],'down');
 });
 
-test('every mapped artwork exists and is precached, including four transparent Krhan expressions',async()=>{
+test('every mapped artwork exists and is precached, including transparent avatar and Krhan expressions',async()=>{
  const {window:{CREG_ART:art}}=await artContext();
  const worker=await read('sw.js');
  for(const [id]of Object.values(art.map)){
   const asset=art.url(id);await fs.access(new URL(asset,root));assert.ok(worker.includes("'"+asset+"'"),asset);
  }
- for(const id of ['good','normal','down','sad']){
+ for(const id of ['gecko','hatch','good','normal','down','sad']){
   const bytes=await fs.readFile(new URL(art.url(id),root));assert.equal(bytes.toString('ascii',8,12),'WEBP');
   // Lossless WebP alpha bit in VP8L, or alpha in extended VP8X, must be set.
   const chunk=bytes.toString('ascii',12,16);
