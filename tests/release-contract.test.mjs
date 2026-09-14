@@ -843,7 +843,15 @@ test("keeps the v1.5 push-notification contracts", async () => {
   assert.match(sql, /enable row level security/, "본인 것만 보이게");
   assert.match(sql, /'0 23 \* \* \*'/, "23:00 UTC = 한국시간 아침 8시");
 
-  // 비밀키가 저장소에 들어가면 안 됩니다
-  assert.ok(!/VAPID_PRIVATE\s*=\s*['"][A-Za-z0-9_-]{20,}/.test(fn + source + sql),
-    "비밀키는 저장소에 두지 않습니다");
+  // 열쇠는 함수가 스스로 만들어 표에 넣습니다 — 사람이 옮겨적지 않습니다
+  assert.match(fn, /async function keys\(\)/, "열쇠는 함수가 스스로 만듭니다");
+  assert.match(fn, /generateKey\(\{ name: 'ECDSA', namedCurve: 'P-256' \}/);
+  assert.match(sql, /create table if not exists public\.cg_push_keys/, "열쇠 보관함");
+  assert.ok(!/create policy\s+\w*cg_push_keys/.test(sql),
+    "열쇠 표에는 정책이 없어야 합니다 — 정책이 생기면 사용자에게 비밀키가 보입니다");
+  assert.match(sql, /alter table public\.cg_push_keys enable row level security/);
+
+  // 비밀키·암호가 저장소에 글자로 들어가면 안 됩니다
+  assert.ok(!/VAPID_PRIVATE|CRON_KEY/.test(fn + source + sql),
+    "비밀값을 저장소에 적지 않습니다 (표에서 꺼내 씁니다)");
 });
