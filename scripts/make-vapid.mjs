@@ -1,16 +1,11 @@
-/* 알림용 열쇠 한 쌍 만들기
-   쓰는 법: 이 폴더에서  node scripts/make-vapid.mjs
-   나오는 두 줄을 Supabase Edge Function Secrets 에 그대로 넣으시면 됩니다.
-   ⚠️ 비밀키(VAPID_PRIVATE)는 아무 데도 올리지 마세요. 저장소·메모장·카톡 금지입니다. */
-import { generateKeyPairSync } from 'node:crypto';
+/* ⚠️ 이제 쓰지 않습니다 (2026-09-14).
+   알림용 열쇠는 Edge Function 'push' 가 처음 불릴 때 스스로 만들어
+   cg_push_keys 표에 넣어둡니다. 사람이 만들거나 옮겨적을 일이 없습니다.
 
-const { publicKey, privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
-const der = publicKey.export({ type: 'spki', format: 'der' });
+   여기서 새로 만들어 어딘가에 넣으시면 기존 열쇠와 어긋나서
+   이미 알림을 켠 기기들이 알림을 못 받게 됩니다. 실행하지 마세요.
 
-console.log('');
-console.log('VAPID_PUBLIC  =', der.subarray(der.length - 65).toString('base64url'));
-console.log('VAPID_PRIVATE =', privateKey.export({ format: 'jwk' }).d);
-console.log('');
-console.log('※ 위 두 줄을 Supabase → Edge Functions → Secrets 에 넣으세요.');
-console.log('※ 이 창을 닫으면 다시 볼 수 없습니다. 열쇠를 잃어버리면 새로 만들고');
-console.log('   앱에서 알림을 껐다 켜면 됩니다(기록은 아무 영향 없습니다).');
+   열쇠를 정말 새로 만들어야 한다면: cg_push_keys 표의 줄을 지우면
+   다음 호출 때 함수가 새로 만듭니다. 그 뒤 각 기기에서 알림을 껐다 켜면 됩니다.
+   자세한 내용은 PUSH_SETUP.md 를 보세요. */
+console.log('이 도구는 더 이상 필요하지 않습니다. PUSH_SETUP.md 를 참고하세요.');
