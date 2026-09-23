@@ -477,7 +477,7 @@ const SERVER = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.6';
+const APP_VERSION = '1.6.1';
 const APP_PATCHED = '2026-09-23';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -4501,6 +4501,46 @@ function LayingView({ individuals, navigate }) {
   );
 }
 
+/* ── 부화 기록을 다른 알둥지로 옮기기 ──
+   ★ 잘못 붙는 일은 반드시 생깁니다(고를 때 잘못 누르거나, 앱이 잘못 짚거나).
+     그때 앱 안에서 고칠 길이 없으면 기록이 영영 틀어진 채로 남습니다.
+     옮기는 일은 여기 한 곳에서만 합니다 — 알 표시까지 같이 맞춰줘야 하니까요. */
+function moveHatchTo(hatchId, toLayingId) {
+  const evs = DB.getEvents();
+  const h = evs.find(e => e.id === hatchId);
+  const to = evs.find(e => e.id === toLayingId);
+  if (!h || !to || to.type !== 'laying') return false;
+  const fromId = h.data && h.data.layingId;
+  const n = Math.max(1, parseInt((h.data && h.data.count) || 0, 10) || 1);
+
+  /* ① 떠나는 알둥지: 이 기록 때문에 '부화'로 적혀 있던 알을 도로 대기로 돌립니다.
+        (손으로 적어둔 알 상태가 있을 때만 해당합니다 — 없으면 저절로 다시 계산됩니다) */
+  if (fromId && fromId !== toLayingId) {
+    const from = evs.find(e => e.id === fromId);
+    const saved = from && from.data && Array.isArray(from.data.eggUnits) ? from.data.eggUnits : null;
+    if (saved) {
+      let left = n;
+      DB.setEggUnits(fromId, saved.map(u =>
+        (u.status === 'hatched' && u.date === h.date && left-- > 0)
+          ? { ...u, status: 'pending', date: '' } : u));
+    }
+  }
+
+  // ② 기록을 새 알둥지로 옮기고, 예정일 대비 며칠이었는지도 다시 적습니다
+  const eta = hatchETA(to.date);
+  DB.updateEvent(hatchId, { data: { ...(h.data || {}), layingId: toLayingId, expectedDate: eta,
+    diffDays: Math.round((new Date(h.date) - new Date(eta)) / 86400000) } });
+
+  // ③ 받는 알둥지에 손으로 적어둔 알 상태가 있으면 그만큼 '부화'로 맞춥니다
+  const savedTo = to.data && Array.isArray(to.data.eggUnits) ? to.data.eggUnits : null;
+  if (savedTo) {
+    let left = n;
+    DB.setEggUnits(toLayingId, savedTo.map(u =>
+      (u.status === 'pending' && left-- > 0) ? { ...u, status: 'hatched', date: h.date } : u));
+  }
+  return true;
+}
+
 /* ── 클러치(알) 상세 — 알 묶음을 개체처럼 들여다보는 화면 ──
    알 사진 · 부/모 · 산란일 · 해칭 예정일, 그리고 [해칭했어요] 한 번으로 베이비 등록까지. ── */
 function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals }) {
@@ -4516,6 +4556,7 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals }) {
   const [morphUnknown, setMorphUnknown] = useState(false);
   const [openEgg, setOpenEgg] = useState(null);     // 펼쳐 본 알 (몇 번째)
   const [probFor, setProbFor] = useState(null);     // 문제 사유를 고르는 중 (-1 = 남은 알 전부)
+  const [moveFor, setMoveFor] = useState(null);     // 다른 알둥지로 옮길 부화 기록
   const fileRef = useRef(null);
   const bump = () => { setVer(v => v + 1); refreshIndividuals(); };
 
@@ -4528,7 +4569,11 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals }) {
   const inds = DB.getIndividuals();
   const mom = inds.find(i => i.id === ev.individualId);
   const evs = DB.getEvents();
-  const row = clutchRows(inds, evs).find(r => r.e.id === layingId) || null;   // 몇 차 산란인지 등
+  const allRows = clutchRows(inds, evs);
+  const row = allRows.find(r => r.e.id === layingId) || null;   // 몇 차 산란인지 등
+  const hatchesHere = (row && row.hatches) || [];
+  // 옮길 수 있는 곳 = 같은 엄마의 다른 산란 기록
+  const otherClutches = allRows.filter(r => r.e.individualId === ev.individualId && r.e.id !== layingId);
   const mate = evs.filter(e => e.type === 'mating' && e.individualId === ev.individualId && e.date <= ev.date)
     .sort((a, b) => (a.date < b.date ? 1 : -1))[0];
   const dadId = (ev.data && ev.data.sireId) || (mate && mate.data && mate.data.partnerId) || null;
@@ -4857,6 +4902,52 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals }) {
           </div>
         )}
       </div>
+
+      {/* ── 이 알둥지에 붙어 있는 부화 기록 ──
+          잘못 붙었을 때 여기서 다른 알둥지로 옮길 수 있습니다. */}
+      {hatchesHere.length > 0 && (
+        <div className="card" style={{margin:0}} data-testid="hatch-links">
+          <div style={{fontSize:12, fontWeight:700, color:'var(--text2)', marginBottom:4}}>🐣 이 알둥지에서 나온 기록</div>
+          <div style={{fontSize:11, color:'var(--text3)', marginBottom:10, lineHeight:1.6}}>
+            다른 알둥지 것이 잘못 붙어 있으면 옮길 수 있어요.
+          </div>
+          <div style={{display:'flex', flexDirection:'column', gap:8}}>
+            {hatchesHere.map(h => (
+              <div key={h.id} style={{background:'var(--bg2)', border:'1px solid var(--border)', borderRadius:12, padding:'10px 12px'}}>
+                <div style={{display:'flex', alignItems:'center', gap:8, flexWrap:'wrap'}}>
+                  <b style={{fontSize:13}}>{fmtDateShort(h.date)}</b>
+                  <span style={{fontSize:12, color:'var(--text3)'}}>{parseInt((h.data && h.data.count) || 1, 10) || 1}마리</span>
+                  <span style={{flex:1}} />
+                  <button className="btn btn-secondary btn-sm" style={{width:'auto', padding:'6px 10px', fontSize:11.5}}
+                    data-testid={'move-' + h.id}
+                    onClick={() => setMoveFor(moveFor === h.id ? null : h.id)}>
+                    {moveFor === h.id ? '닫기' : '다른 알둥지로'}
+                  </button>
+                </div>
+                {moveFor === h.id && (
+                  <div style={{marginTop:10, display:'flex', flexDirection:'column', gap:6}}>
+                    {otherClutches.length === 0 && (
+                      <div style={{fontSize:11.5, color:'var(--text3)'}}>옮길 다른 산란 기록이 없어요.</div>
+                    )}
+                    {otherClutches.map(r => (
+                      <button key={r.e.id} className="chip-btn" style={{textAlign:'left', fontSize:12, padding:'9px 11px'}}
+                        data-testid={'move-to-' + r.e.id}
+                        onClick={() => {
+                          if (moveHatchTo(h.id, r.e.id)) {
+                            setMoveFor(null); bump();
+                            showToast(`🐣 ${r.nth}차 (${fmtDateShort(r.e.date)} 산란)로 옮겼어요`);
+                          } else showToast('⚠️ 옮기지 못했어요');
+                        }}>
+                        {r.nth}차 · {fmtDateShort(r.e.date)} 산란 · 남은 알 {r.nPending}개
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
