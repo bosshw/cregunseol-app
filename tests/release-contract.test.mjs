@@ -26,7 +26,7 @@ test("keeps storage, synchronization, and core workflows intact", async () => {
     assert.ok(source.includes(contract), `missing contract: ${contract}`);
   }
 
-  assert.match(source, /const APP_VERSION = '1\.5'/);
+  assert.match(source, /const APP_VERSION = '1\.6'/);
   assert.match(source, /Powered by cre_construct · CC/);
   assert.doesNotMatch(source, /Powered by 크레건설/);
   assert.match(source, /addEvents\(events\)/);
@@ -43,10 +43,10 @@ test("keeps service worker and release metadata aligned", async () => {
     readFile(file("version.json"), "utf8").then(JSON.parse),
   ]);
 
-  assert.equal(version.app, "1.5");
+  assert.equal(version.app, "1.6");
   assert.equal(version.schema, 1);
   assert.equal(version.minSchema, 1);
-  assert.match(worker, /const CACHE = 'creg-v25'/);
+  assert.match(worker, /const CACHE = 'creg-v26'/);
 
   for (const asset of [
     "./index.html",
@@ -170,7 +170,7 @@ test("keeps the v4.8 kinship, morph and voice contracts", async () => {
   // 설정 미리보기는 고정 견본으로 — 데이터가 없는 날에도 차이가 보여야 합니다
   assert.ok(source.includes("{voiceSample().map("), "settings preview must use voiceSample()");
   // 버전 문자열 4곳
-  assert.ok(source.includes("const APP_VERSION = '1.5'"), "APP_VERSION must be 1.5");
+  assert.ok(source.includes("const APP_VERSION = '1.6'"), "APP_VERSION must be 1.6");
 });
 
 test("keeps the v5.0 particle, line-break and calendar fixes", async () => {
@@ -197,7 +197,7 @@ test("keeps the v5.0 particle, line-break and calendar fixes", async () => {
   assert.doesNotMatch(source, /'🍽️🥩'/, "fed emoji must be a single icon");
   // 홈 한 줄은 인사만 합니다 (v5.2 — 할 일은 브리핑 카드가 말합니다)
   assert.doesNotMatch(source, /\[greetLine\(\), what\]/, "home line no longer lists jobs");
-  assert.ok(source.includes("APP_VERSION = '1.5'"), "APP_VERSION must be 1.5");
+  assert.ok(source.includes("APP_VERSION = '1.6'"), "APP_VERSION must be 1.6");
 
   // 캘린더 먹이 줄에 이모지가 두 번 나오면 안 됩니다 (줄 앞에 이미 🦗/🥣 가 붙습니다)
   assert.ok(source.includes("if (e.type === 'feeding') label = label.replace"), "feed label must drop its own emoji");
@@ -234,7 +234,7 @@ test("keeps the v4.9 hatching, morph and wording fixes", async () => {
   assert.ok(source.includes("const dayWord = (n) => `${Math.abs(Math.round(Number(n) || 0))}일`"), "dayWord must be numeric");
   // 탭 이름
   assert.ok(source.includes("브리핑"), "reminders tab is now 브리핑");
-  assert.ok(source.includes("const APP_VERSION = '1.5'"), "APP_VERSION must be 1.5");
+  assert.ok(source.includes("const APP_VERSION = '1.6'"), "APP_VERSION must be 1.6");
 });
 
 test("keeps the v5.2 nudge contracts", async () => {
@@ -277,7 +277,7 @@ test("keeps the v5.2 nudge contracts", async () => {
   assert.ok(source.includes('data-testid="nudge-go"'), "nudge needs an action button");
   assert.ok(source.includes("recordNudge(nudge)"), "reminders screen must record the nudge");
 
-  assert.ok(source.includes("APP_VERSION = '1.5'"), "APP_VERSION must be 1.5");
+  assert.ok(source.includes("APP_VERSION = '1.6'"), "APP_VERSION must be 1.6");
 });
 
 test("keeps the v5.3 public-record contracts", async () => {
@@ -330,7 +330,7 @@ test("keeps the v5.3 public-record contracts", async () => {
   // 화면 계약
   assert.ok(source.includes('data-testid="public-card"'), "profile needs the public card");
   assert.ok(source.includes('data-testid="public-toggle"'), "public card needs its toggle");
-  assert.ok(source.includes("APP_VERSION = '1.5'"), "APP_VERSION must be 1.5");
+  assert.ok(source.includes("APP_VERSION = '1.6'"), "APP_VERSION must be 1.6");
 });
 
 test("keeps the v5.4 away / condition / memory contracts", async () => {
@@ -386,7 +386,7 @@ test("keeps the v5.4 away / condition / memory contracts", async () => {
     assert.ok(source.includes(`data-testid="${id}"`), `missing screen contract: ${id}`);
   }
   assert.ok(source.includes("data-testid={`cond-${c.key}`}"), "condition buttons need per-level testids");
-  assert.ok(source.includes("APP_VERSION = '1.5'"), "APP_VERSION must be 1.5");
+  assert.ok(source.includes("APP_VERSION = '1.6'"), "APP_VERSION must be 1.6");
 });
 
 test("keeps the v1.0 laying-season contracts", async () => {
@@ -435,7 +435,7 @@ test("keeps the v1.0 laying-season contracts", async () => {
   assert.ok(source.includes("data-testid={`season-${r.key}`}"), "each answer needs its own testid");
 
   // 정식 출시 — 버전은 1.0
-  assert.ok(source.includes("APP_VERSION = '1.5'"), "APP_VERSION must be 1.5");
+  assert.ok(source.includes("APP_VERSION = '1.6'"), "APP_VERSION must be 1.6");
 });
 
 /* ══════════════════════════════════════════
@@ -854,4 +854,34 @@ test("keeps the v1.5 push-notification contracts", async () => {
   // 비밀키·암호가 저장소에 글자로 들어가면 안 됩니다
   assert.ok(!/VAPID_PRIVATE|CRON_KEY/.test(fn + source + sql),
     "비밀값을 저장소에 적지 않습니다 (표에서 꺼내 씁니다)");
+});
+
+test("keeps the v1.6 split-hatch contracts", async () => {
+  const source = await readFile(file("src/app.jsx"), "utf8");
+
+  /* 한 알둥지에서 알이 며칠 걸쳐 나오는 일은 흔합니다.
+     그래서 산란 하나에 부화 기록이 여러 건 붙어야 합니다. */
+  assert.match(source, /const usedH = new Set\(\), hatchList = \{\}, hatchOf = \{\};/,
+    "부화 기록은 산란별로 목록(hatchList)으로 모읍니다");
+  assert.match(source, /const addH = \(layId, h\) =>/, "여러 건을 붙이는 통로는 한 곳(addH)");
+  assert.ok(!/const h = hatchings\.find\(x => x\.data && x\.data\.layingId === e\.id/.test(source),
+    "layingId 로 첫 한 건만 집어오던 옛 방식이 남아 있으면 안 됩니다");
+  assert.match(source, /eggUnitsOf\(e, \{ hatched, hatches, infertile \}\)/,
+    "알별 상태는 부화 기록 전부를 보고 정합니다");
+  assert.match(source, /const hs = \(Array\.isArray\(o\.hatches\) && o\.hatches\.length\)/,
+    "eggUnitsOf 가 여러 건을 받습니다");
+  assert.match(source, /let days = hs\.map\(h => h\.date\);/,
+    "아기는 부화한 날이 여러 날일 수 있습니다");
+
+  /* 2026-09-23 사고: 대표님이 고르신 클러치를 저장 직전 추측이 덮어써서
+     예정일이 한 달이나 먼 다음 클러치에 붙었습니다. */
+  assert.match(source, /const chosen = f\.data\.layingId \? rows\.find\(c => c\.e\.id === f\.data\.layingId\) : null;/,
+    "고르신 알이 있으면 추측이 덮지 않습니다");
+  assert.match(source, /const cand = chosen \|\| rows/, "고른 것이 먼저, 추측은 그 다음");
+  assert.ok(!/filter\(c => c\.e\.individualId === f\.targetId && !c\.hatched && !c\.infertile\)/.test(source),
+    "한 마리 나왔다고 그 알둥지를 후보에서 빼면 둘째가 붙을 곳이 없어집니다");
+  assert.match(source, /!c\.infertile && !c\.allDone/, "후보는 '아직 안 끝난 알'입니다");
+
+  // 고를 때 남은 알 개수를 보여드립니다
+  assert.match(source, /남은 알 \$\{r\.nPending\}개/);
 });
