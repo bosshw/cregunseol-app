@@ -124,12 +124,14 @@ const DB = {
     const list = this.getIndividuals();
     list.push({ ...ind, id: uuid(), createdAt: now() });
     this.saveIndividuals(list);
+    try { TRACK.step('record'); } catch (e) {}   // 이 기기에서 처음 뭔가 적은 순간
     return list[list.length - 1];
   },
   addEvents(events) {
     const createdAt = now();
     let added = (events || []).map(ev => ({ ...ev, id: uuid(), createdAt }));
     if (!added.length) return [];
+    try { TRACK.step('record'); } catch (e) {}   // 이 기기에서 처음 뭔가 적은 순간
     /* 칸이 꽉 차서 못 적었으면 — 사진만 떼고 한 번 더 넣어 봅니다.
        사진을 잃는 건 아깝지만, 기록까지 통째로 잃는 것보다는 낫습니다. */
     if (!this.saveEvents([...this.getEvents(), ...added])) {
@@ -462,6 +464,101 @@ const SERVER = {
 };
 
 /* ══════════════════════════════════════════
+   익명 방문 집계 — "몇 명이 열어봤고, 어디서 멈췄나"
+
+   왜 필요했나: 2026-09-23 기준으로 서버에 남는 건 "가입한 사람"뿐이라,
+   인스타 쇼츠를 600명이 봐도 앱을 열어보고 그냥 나간 사람이 몇 명인지 알 길이 없었습니다.
+   광고를 해도 효과가 있었는지 판단할 근거가 없다는 뜻입니다.
+
+   ★ 개인을 알아볼 수 있는 것은 **하나도** 보내지 않습니다.
+     안 보내는 것: 이름·이메일·아이피·브라우저 문자열·기기 고유번호 — 전부 안 보냅니다.
+     보내는 것: 단계 / 기기 종류(아이폰·안드로이드·PC) / 홈 화면으로 열었는지 /
+                이 기기의 몇 번째 방문인지 / 앱 버전. 이것뿐입니다.
+   ★ 그래서 "이 사람이 누구인지"는 서버도 모릅니다. 세는 것만 됩니다.
+   ★ 넣기만 되고 아무도 못 읽습니다 (표에 읽기 정책을 만들지 않았습니다).
+
+   단계 네 가지 — 어디서 빠지는지 보려고 나눴습니다
+     open   : 앱을 열었다 (같은 기기에서 30분 안에 다시 열면 한 번으로 봅니다)
+     record : 기록을 한 건이라도 적었다 (기기당 한 번)
+     signup : 서버 동기화를 연결했다 (기기당 한 번)
+     push   : 폰 알림을 켰다 (기기당 한 번)
+   ══════════════════════════════════════════ */
+const OWNER_UID = 'fa66ca69-3637-47b9-9cd3-58aac56c91d1';   // 대표님 계정 — 본인 방문은 세지 않습니다
+
+const TRACK = {
+  off() {
+    try {
+      if (localStorage.getItem('cg_track_off') === '1') return true;   // 이 기기는 빼기
+      if (SYNC.userId() === OWNER_UID) return true;                     // 대표님 기기
+    } catch (e) {}
+    return false;
+  },
+  setOff(v) { try { v ? STORE.set('cg_track_off', '1') : STORE.drop('cg_track_off'); } catch (e) {} },
+  isOff() { try { return localStorage.getItem('cg_track_off') === '1'; } catch (e) { return false; } },
+
+  device() {
+    const ua = (typeof navigator !== 'undefined' && navigator.userAgent) || '';
+    if (/iPad|iPhone|iPod/.test(ua)) return 'ios';
+    if (/Android/.test(ua)) return 'android';
+    return 'pc';
+  },
+  standalone() {
+    try {
+      return (navigator.standalone === true)
+        || (typeof matchMedia === 'function' && matchMedia('(display-mode: standalone)').matches);
+    } catch (e) { return false; }
+  },
+
+  // 이 기기의 몇 번째 방문인지 — 숫자 하나일 뿐, 누구인지는 모릅니다
+  bump() {
+    let n = 0;
+    try { n = parseInt(localStorage.getItem('cg_visit_no') || '0', 10) || 0; } catch (e) {}
+    n += 1;
+    try { STORE.set('cg_visit_no', String(n)); } catch (e) {}
+    return n;
+  },
+  // 단계는 기기당 한 번만 보냅니다
+  once(step) {
+    try {
+      const k = 'cg_step_' + step;
+      if (localStorage.getItem(k)) return false;
+      STORE.set(k, '1');
+      return true;
+    } catch (e) { return false; }
+  },
+
+  /* 보내기 — 실패해도 앱은 아무 영향 없습니다. 기다리지도 않습니다. */
+  send(step, visitNo) {
+    if (this.off()) return;
+    try {
+      fetch(SERVER.url.replace(/\/+$/, '') + '/rest/v1/cg_visits', {
+        method: 'POST',
+        keepalive: true,
+        headers: { apikey: SERVER.key, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+        body: JSON.stringify({
+          step,
+          device: this.device(),
+          standalone: this.standalone(),
+          visit_no: visitNo || 0,
+          app: APP_VERSION,
+        }),
+      }).catch(() => {});
+    } catch (e) {}
+  },
+
+  open() {
+    if (this.off()) return;
+    try {
+      const last = Number(localStorage.getItem('cg_visit_at') || 0);
+      if (Date.now() - last < 30 * 60 * 1000) return;   // 30분 안에 다시 열면 한 번으로
+      STORE.set('cg_visit_at', String(Date.now()));
+    } catch (e) {}
+    this.send('open', this.bump());
+  },
+  step(name) { if (!this.off() && this.once(name)) this.send(name, 0); },
+};
+
+/* ══════════════════════════════════════════
    버전 확인 — 새 버전 알림 · 옛 버전 안전장치
 
    version.json 하나로 두 가지를 합니다.
@@ -477,7 +574,7 @@ const SERVER = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.6.1';
+const APP_VERSION = '1.7';
 const APP_PATCHED = '2026-09-23';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -620,6 +717,7 @@ const SYNC = {
 
   /* ── 로그인 / 회원가입 / 비밀번호 재설정 ── */
   _store(d, email) {
+    try { TRACK.step('signup'); } catch (e) {}   // 이 기기에서 처음 서버에 연결한 순간
     this.saveSes({
       access_token: d.access_token,
       refresh_token: d.refresh_token,
@@ -2827,6 +2925,7 @@ const PUSH = {
     await this.saveSub(sub);
     STORE.set('cg_push_used', key);
     this.setOn(true);
+    try { TRACK.step('push'); } catch (e) {}
     await this.syncPlan();
     return true;
   },
@@ -3898,6 +3997,9 @@ function App() {
     try { navigator.serviceWorker.addEventListener('message', onMsg); } catch (e) {}
     return () => { try { navigator.serviceWorker.removeEventListener('message', onMsg); } catch (e) {} };
   }, []);
+
+  // 몇 명이 열어봤는지 익명으로 한 줄 남깁니다 (개인 정보는 하나도 안 보냅니다)
+  useEffect(() => { try { TRACK.open(); } catch (e) {} }, []);
 
   // 예전 버전이 저장해 둔 '부화 예정' 알림 정리 (이제 산란기록에서 매번 계산합니다)
   useEffect(() => {
@@ -8500,6 +8602,32 @@ function DupMergeCard({ showToast, refreshIndividuals }) {
 }
 
 /* ══════════════════════════════════════════
+   설정 · 익명 방문 집계 안내
+
+   숫자를 보여주는 화면은 없습니다(대표님 확정) — 무엇을 세는지 밝히고,
+   원하시면 이 기기는 빼는 스위치만 둡니다.
+   ══════════════════════════════════════════ */
+function TrackCard({ showToast }) {
+  const [off, setOff] = useState(() => TRACK.isOff());
+  return (
+    <div className="card" style={{margin:0}} data-testid="track-card">
+      <div style={{fontSize:13, fontWeight:700, color:'var(--text2)', marginBottom:8}}>📊 익명 방문 집계</div>
+      <div style={{fontSize:12.5, color:'var(--text3)', lineHeight:1.7}}>
+        앱이 얼마나 쓰이는지 보려고 <b>사람 수만</b> 셉니다.{'\n'}
+        이름·이메일·아이피 같은 건 <b>하나도 보내지 않습니다.</b> 기록 내용도 물론이고요.
+      </div>
+      <button className="chip-btn" data-testid="track-off"
+        onClick={() => { const v = !off; TRACK.setOff(v); setOff(v); showToast(v ? '이 기기는 세지 않을게요' : '집계에 다시 포함했어요'); }}
+        style={{display:'flex', alignItems:'center', gap:9, width:'100%', textAlign:'left',
+                marginTop:12, padding:'11px 12px', ...(off ? CHIP_ON : CHIP_OFF)}}>
+        <span style={{fontSize:15}}>{off ? '☑' : '☐'}</span>
+        <span style={{flex:1, minWidth:0, fontWeight:600, fontSize:13}}>이 기기는 세지 않기</span>
+      </button>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════
    설정 · 폰 알림 카드
 
    상태는 PUSH.state() 한 곳이 정합니다. 여기서는 그 낱말에 맞는 안내만 그립니다.
@@ -9028,6 +9156,7 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
         <DupMergeCard showToast={showToast} refreshIndividuals={refreshIndividuals} />
         <SyncCard showToast={showToast} refreshIndividuals={refreshIndividuals} />
         <PushCard showToast={showToast} />
+        <TrackCard showToast={showToast} />
         <StorageCard showToast={showToast} />
         <div className="card" style={{margin:0}}>
           <div style={{fontSize:13, fontWeight:700, marginBottom:12, color:'var(--text2)'}}>데이터</div>
