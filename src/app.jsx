@@ -477,8 +477,8 @@ const SERVER = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.5';
-const APP_PATCHED = '2026-09-13';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
+const APP_VERSION = '1.6';
+const APP_PATCHED = '2026-09-23';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -1106,18 +1106,28 @@ const EGG_STATE = {
      - 부화한 클러치면 부화 마릿수만큼 '부화', 나머지는 '대기'
      - '무정' 표시가 있으면 전부 '무정란'
    손대기 전에는 저장하지 않으므로 옛 기록이 마음대로 바뀌지 않습니다. */
+/* ★ 한 클러치에서 알이 하루이틀 차이로 따로 나오는 일이 흔합니다.
+     그래서 부화 기록은 산란 하나에 **여러 건** 붙을 수 있습니다 (opt.hatches).
+     먼저 나온 기록부터 알을 하나씩 채우고, 알마다 그 날짜를 적어둡니다. */
 function eggUnitsOf(ev, opt) {
   const o = opt || {};
   const d = (ev && ev.data) || {};
   const n = Math.max(1, parseInt(d.eggCount || 0, 10) || 1);
   const saved = Array.isArray(d.eggUnits) ? d.eggUnits : null;
   const out = [];
-  const hatchedCount = o.hatched ? Math.max(1, parseInt((o.hatched.data && o.hatched.data.count) || 0, 10) || n) : 0;
+  const hs = (Array.isArray(o.hatches) && o.hatches.length) ? o.hatches : (o.hatched ? [o.hatched] : []);
+  // 부화한 알 자리마다 "언제 나왔는지"를 깔아둡니다
+  const hatchDates = [];
+  hs.forEach(h => {
+    // 마릿수를 안 적어둔 옛 기록은, 그 기록 하나뿐일 때만 알 전체가 나온 것으로 봅니다
+    const c = Math.max(1, parseInt((h.data && h.data.count) || 0, 10) || (hs.length === 1 ? n : 1));
+    for (let k = 0; k < c; k++) hatchDates.push(h.date);
+  });
   for (let i = 0; i < n; i++) {
     if (saved && saved[i]) { out.push({ look: '', status: 'pending', reason: '', note: '', date: '', ...saved[i] }); continue; }
     let status = 'pending', date = '';
     if (o.infertile) status = 'infertile';
-    else if (o.hatched && i < hatchedCount) { status = 'hatched'; date = o.hatched.date; }
+    else if (i < hatchDates.length) { status = 'hatched'; date = hatchDates[i]; }
     out.push({ look: '', status, reason: '', note: '', date });
   }
   return out;
@@ -1358,22 +1368,30 @@ function clutchRows(individuals, events) {
   /* ── 부화 기록·아기를 산란에 "하나씩만" 배정합니다 ──
      예전에는 같은 부화 기록이 1차·2차에 동시에 붙어서
      같은 아기가 두 번 나오고 뒤쪽 클러치는 비어 보였습니다. */
-  const usedH = new Set(), hatchOf = {};
-  // (1) layingId로 직접 연결된 것이 최우선
+  /* ★ 산란 하나에 부화 기록이 **여러 건** 붙습니다 (알이 하루이틀 차이로 나오니까요).
+     hatchList[산란id] = [부화기록, …] 이 판단의 원본이고, hatchOf 는 그 중 첫 건입니다. */
+  const usedH = new Set(), hatchList = {}, hatchOf = {};
+  const addH = (layId, h) => { (hatchList[layId] = hatchList[layId] || []).push(h); usedH.add(h.id); };
+  // (1) layingId로 직접 연결된 것이 최우선 — 같은 알에 여러 번 붙어도 전부 가져갑니다
   lays.forEach(e => {
-    const h = hatchings.find(x => x.data && x.data.layingId === e.id && !usedH.has(x.id));
-    if (h) { hatchOf[e.id] = h; usedH.add(h.id); }
+    hatchings.forEach(x => {
+      if (x.data && x.data.layingId === e.id && !usedH.has(x.id)) addH(e.id, x);
+    });
   });
-  // (2) 연결이 없는 예전 기록은 오래된 산란부터 가장 이른 부화를 가져갑니다
+  // (2) 연결이 없는 예전 기록은 오래된 산란부터 가장 이른 부화를 가져갑니다 (한 건만)
   lays.forEach(e => {
-    if (hatchOf[e.id]) return;
+    if ((hatchList[e.id] || []).length) return;
     const eta = hatchETA(e.date);
     const cand = hatchings
       .filter(h => !usedH.has(h.id) && !(h.data && h.data.layingId)
         && h.individualId === e.individualId && h.date >= e.date
         && Math.abs((new Date(h.date) - new Date(eta)) / 86400000) <= 45)
       .sort((a, b) => (a.date < b.date ? -1 : 1));
-    if (cand[0]) { hatchOf[e.id] = cand[0]; usedH.add(cand[0].id); }
+    if (cand[0]) addH(e.id, cand[0]);
+  });
+  Object.keys(hatchList).forEach(k => {
+    hatchList[k].sort((a, b) => (a.date < b.date ? -1 : 1));
+    hatchOf[k] = hatchList[k][0];
   });
 
   const usedB = new Set(), babiesOf = {};
@@ -1385,19 +1403,20 @@ function clutchRows(individuals, events) {
   Object.values(kidsOfMom).forEach(list => list.sort((a, b) => (a.createdAt || '') < (b.createdAt || '') ? -1 : 1));
   lays.forEach(e => {
     const kids = kidsOfMom[e.individualId] || [];
-    const h = hatchOf[e.id];
-    let day = h ? h.date : null;
-    if (!day) {
+    const hs = hatchList[e.id] || [];
+    let days = hs.map(h => h.date);   // ★ 나눠 나온 날이 여러 날일 수 있습니다
+    if (!days.length) {
       // 부화 기록은 없는데 아기만 등록된 경우 — 예정일 근처에 태어난 아이를 찾아 붙입니다
       const eta = hatchETA(e.date);
       const near = kids.filter(i => !usedB.has(i.id) && i.hatchDate >= e.date
         && Math.abs((new Date(i.hatchDate) - new Date(eta)) / 86400000) <= 45)
         .sort((a, b) => (a.hatchDate < b.hatchDate ? -1 : 1));
-      day = near.length ? near[0].hatchDate : null;
+      days = near.length ? [near[0].hatchDate] : [];
     }
-    if (!day) { babiesOf[e.id] = []; return; }
-    let list = kids.filter(i => !usedB.has(i.id) && i.hatchDate === day);
-    const cap = Number((h && h.data && h.data.count) || 0);
+    if (!days.length) { babiesOf[e.id] = []; return; }
+    let list = kids.filter(i => !usedB.has(i.id) && days.indexOf(i.hatchDate) >= 0)
+      .sort((a, b) => (a.hatchDate < b.hatchDate ? -1 : 1));
+    const cap = hs.reduce((a, h) => a + (parseInt((h.data && h.data.count) || 0, 10) || 0), 0);
     if (cap > 0 && list.length > cap) list = list.slice(0, cap);
     list.forEach(i => usedB.add(i.id));
     babiesOf[e.id] = list;
@@ -1421,9 +1440,10 @@ function clutchRows(individuals, events) {
     const d = daysUntil(etaISO);
     const infertile = /무정/.test(notes);
     const hatched = hatchOf[e.id] || null;
+    const hatches = hatchList[e.id] || [];
     const babies = babiesOf[e.id] || [];
     /* 알 하나하나의 결과도 여기서 한 번만 정합니다 (화면마다 답이 달라지지 않도록) */
-    const units = eggUnitsOf(e, { hatched, infertile });
+    const units = eggUnitsOf(e, { hatched, hatches, infertile });
     const nProblem = units.filter(u => u.status === 'problem').length;
     const nPending = units.filter(u => u.status === 'pending').length;
     const allDone = nPending === 0;
@@ -1438,7 +1458,7 @@ function clutchRows(individuals, events) {
     else if (d === 0) { state = '오늘 예정'; tone = '#B3261E'; }
     const waiting = !infertile && !allDone && d >= -14;
     return { e, mom, momName, dad, dadId, dadName, pairKey, pairName, nth,
-             eggs, notes, etaISO, expISO: etaISO, d, state, tone, infertile, hatched, babies, waiting,
+             eggs, notes, etaISO, expISO: etaISO, d, state, tone, infertile, hatched, hatches, babies, waiting,
              units, nProblem, nPending, allDone };
   });
 }
@@ -5552,6 +5572,8 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
      마릿수를 알아야 베이비가 실제로 등록됩니다(예전엔 0마리로 담겨 해칭 목록이 비었습니다). */
   const askHatchCount = (fact, eggs, rest, target) => {
     if (rest && rest.length) pushPending(rest, target);
+    /* 남은 알보다 많은 숫자는 보여드리지 않습니다 (알 2개짜리에 3마리를 고를 일은 없으니까요).
+       다만 옛 기록처럼 알 개수를 모르는 경우가 있어 최소 2까지는 열어둡니다. */
     const max = Math.max(2, Math.min(4, eggs || 2));
     const chips = [];
     for (let n = 1; n <= max; n++) chips.push({ label: `🐣 ${n}마리`, kind: 'hatch-count', value: { fact, count: n } });
@@ -6241,16 +6263,17 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       if (alive.length > 1) {
         bot(`${target.name}는 지금 품고 있는 알이 ${alive.length}개예요.\n어느 알이 부화했나요? 🐣`,
           alive.map(r => ({
-            label: `${r.nth}차 (${fmtDate(r.e.date)} 산란 · ${r.d >= 0 ? whenWord(r.etaISO) : dayWord(-r.d) + ' 지남'})`,
+            /* 남은 알 개수까지 보여드립니다 — 이미 한 마리 나온 클러치를 구분하시라고 */
+            label: `${r.nth}차 (${fmtDate(r.e.date)} 산란 · ${r.d >= 0 ? whenWord(r.etaISO) : dayWord(-r.d) + ' 지남'}${r.nPending < r.units.length ? ` · 남은 알 ${r.nPending}개` : ''})`,
             kind: 'hatch-clutch',
-            value: { layingId: r.e.id, nth: r.nth, eggs: r.units.length, fact: hatchFact, rest: mapped.filter(f => f !== hatchFact) },
+            value: { layingId: r.e.id, nth: r.nth, eggs: r.nPending || r.units.length, fact: hatchFact, rest: mapped.filter(f => f !== hatchFact) },
           })));
         return;
       }
       if (alive.length === 1) {
         hatchFact.data = { ...hatchFact.data, layingId: alive[0].e.id };
         if (!Number(hatchFact.data.count)) {
-          askHatchCount(hatchFact, alive[0].units.length, mapped.filter(f => f !== hatchFact), target);
+          askHatchCount(hatchFact, alive[0].nPending || alive[0].units.length, mapped.filter(f => f !== hatchFact), target);
           return;
         }
       } else if (!Number(hatchFact.data.count)) {
@@ -6362,7 +6385,15 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       }
       if (f.type === 'hatching') {
         const actual = f.date || todayStr();
-        const cand = clutchRows().filter(c => c.e.individualId === f.targetId && !c.hatched && !c.infertile)
+        const rows = clutchRows();
+        /* ★ 두 가지를 반드시 지킵니다.
+           ① 대표님이 어느 알인지 고르셨으면 그대로 둡니다 — 추측이 사람의 선택을 덮으면 안 됩니다
+              (2026-09-23 사고: 고르신 3차를 덮고 예정일이 한 달이나 먼 4차에 붙었습니다)
+           ② 후보는 "아직 안 끝난 알"입니다. 먼저 한 마리가 나왔다고 그 클러치를 빼면
+              같은 클러치의 둘째가 영영 못 붙습니다. */
+        const chosen = f.data.layingId ? rows.find(c => c.e.id === f.data.layingId) : null;
+        const cand = chosen || rows
+          .filter(c => c.e.individualId === f.targetId && !c.infertile && !c.allDone)
           .sort((a, b) => Math.abs(new Date(a.etaISO) - new Date(actual)) - Math.abs(new Date(b.etaISO) - new Date(actual)))[0];
         if (cand) {
           f.data.layingId = cand.e.id;
