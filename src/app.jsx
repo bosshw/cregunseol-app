@@ -574,7 +574,7 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.7';
+const APP_VERSION = '1.8';
 const APP_PATCHED = '2026-09-23';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -1290,8 +1290,9 @@ function ledgerRows(events, individuals) {
       if (!won2) return;
       const nm2 = (byId[e.individualId] || {}).name || '개체';
       const src = (n0.match(/입양처\s*:\s*([^·]+)/) || [])[1];
+      /* v1.8 — 엑셀 가져오기에서 입양일까지 알려준 메모(dated)는 그 날짜 그대로 달·해 칸에 넣습니다 */
       rows.push({ id: 'B:' + e.id, date: e.date, flow: 'out', category: '개체 구입', amount: won2,
-                  label: nm2 + ' 입양' + (src ? ' · ' + src.trim() : ''), auto: true, opening: true,
+                  label: nm2 + ' 입양' + (src ? ' · ' + src.trim() : ''), auto: true, opening: !(e.data && e.data.dated),
                   indId: e.individualId, ref: e.id });
     } else if (e.type === 'ledger') {
       const d = e.data || {};
@@ -4123,6 +4124,9 @@ function App() {
       {screen.name === 'ledger' && (
         <LedgerScreen individuals={individuals} navigate={navigate} showToast={showToast} refreshIndividuals={refreshIndividuals} />
       )}
+      {screen.name === 'import' && (
+        <ImportHost navigate={navigate} showToast={showToast} refreshIndividuals={refreshIndividuals} />
+      )}
       {screen.name === 'settings' && (
         <SettingsScreen navigate={navigate} showToast={showToast} refreshIndividuals={refreshIndividuals} />
       )}
@@ -4301,6 +4305,11 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
               <div className="empty">
                 <div className="empty-icon">{favOnly ? '⭐' : <DotGecko size={46} />}</div>
                 <p>{favOnly ? '즐겨찾기한 아이가 없어요.\n개체 카드의 ☆ 를 눌러 즐겨찾기에 추가해보세요.' : (individuals.length === 0 ? '아직 등록된 개체가 없어요.\n아래 💬 대화 버튼을 누르고 말씀해보세요.\n예) "크한이 12그램"' : '검색 결과가 없어요.')}</p>
+                {!favOnly && individuals.length === 0 && (
+                  <button className="btn btn-secondary" data-testid="home-import" style={{maxWidth:280}} onClick={() => navigate('import')}>
+                    📥 쓰던 엑셀이 있으면 한 번에 가져오기
+                  </button>
+                )}
               </div>
             )}
             <div className="section-title" style={{display: ownList.length ? 'block' : 'none'}}>{favOnly ? '⭐ 즐겨찾기' : '내 개체'}</div>
@@ -8369,6 +8378,35 @@ function loadXLSX() {
   });
 }
 
+/* ══ 엑셀·표 가져오기 (v1.8) ══
+   무거운 해석기(importer.min.js)는 누를 때만 불러옵니다 — 첫 화면 크기에 안 들어갑니다.
+   화면·엔진 전부 그 파일 안에 있고, 여기는 불러와서 띄우기만 합니다. */
+function loadImporter() {
+  if (window.CREG_IMPORT) return Promise.resolve(window.CREG_IMPORT);
+  return new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = './importer.min.js';
+    s.onload = () => (window.CREG_IMPORT ? res(window.CREG_IMPORT) : rej(new Error('가져오기 도구를 못 불러왔어요')));
+    s.onerror = () => rej(new Error('가져오기 도구를 못 불러왔어요 (인터넷 확인)'));
+    document.head.appendChild(s);
+  });
+}
+function ImportHost(props) {
+  const [mod, setMod] = useState(() => window.CREG_IMPORT || null);
+  const [err, setErr] = useState('');
+  useEffect(() => { if (!mod) loadImporter().then(m => setMod(m)).catch(e => setErr(e.message)); }, []);
+  if (mod) return <mod.Screen {...props} />;
+  return (
+    <div className="screen">
+      <div className="header"><div className="header-row">
+        <button className="back-btn" onClick={() => props.navigate('settings')}>‹ 뒤로</button>
+        <h1 style={{fontSize:16}}>📥 엑셀·표 가져오기</h1>
+      </div></div>
+      <div className="empty"><p>{err || '불러오는 중…'}</p></div>
+    </div>
+  );
+}
+
 // 2025-05-11 → 25.05.11
 const xlDate = (iso) => {
   if (!iso) return '';
@@ -9161,7 +9199,11 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
         <div className="card" style={{margin:0}}>
           <div style={{fontSize:13, fontWeight:700, marginBottom:12, color:'var(--text2)'}}>데이터</div>
           <div style={{display:'flex', flexDirection:'column', gap:8}}>
-            <button className="btn btn-primary" disabled={xlBusy} onClick={exportExcel}>
+            <button className="btn btn-primary" data-testid="open-import" onClick={() => navigate('import')}>📥 쓰던 엑셀·메모 가져오기</button>
+            <div style={{fontSize:11, color:'var(--text3)', margin:'-2px 2px 4px', lineHeight:1.5}}>
+              양식 상관없이 올리면 개체·산란·해칭·분양·무게·가계부로 나눠 읽어요
+            </div>
+            <button className="btn btn-secondary" disabled={xlBusy} onClick={exportExcel}>
               {xlBusy ? '엑셀 만드는 중…' : '📊 엑셀로 내려받기 (원본 양식)'}
             </button>
             <div style={{fontSize:11, color:'var(--text3)', margin:'-2px 2px 4px', lineHeight:1.5}}>
