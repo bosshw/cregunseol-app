@@ -26,7 +26,7 @@ test("keeps storage, synchronization, and core workflows intact", async () => {
     assert.ok(source.includes(contract), `missing contract: ${contract}`);
   }
 
-  assert.match(source, /const APP_VERSION = '1\.6\.1'/);
+  assert.match(source, /const APP_VERSION = '1\.7'/);
   assert.match(source, /Powered by cre_construct · CC/);
   assert.doesNotMatch(source, /Powered by 크레건설/);
   assert.match(source, /addEvents\(events\)/);
@@ -43,10 +43,10 @@ test("keeps service worker and release metadata aligned", async () => {
     readFile(file("version.json"), "utf8").then(JSON.parse),
   ]);
 
-  assert.equal(version.app, "1.6.1");
+  assert.equal(version.app, "1.7");
   assert.equal(version.schema, 1);
   assert.equal(version.minSchema, 1);
-  assert.match(worker, /const CACHE = 'creg-v27'/);
+  assert.match(worker, /const CACHE = 'creg-v28'/);
 
   for (const asset of [
     "./index.html",
@@ -170,7 +170,7 @@ test("keeps the v4.8 kinship, morph and voice contracts", async () => {
   // 설정 미리보기는 고정 견본으로 — 데이터가 없는 날에도 차이가 보여야 합니다
   assert.ok(source.includes("{voiceSample().map("), "settings preview must use voiceSample()");
   // 버전 문자열 4곳
-  assert.ok(source.includes("const APP_VERSION = '1.6.1'"), "APP_VERSION must be 1.6.1");
+  assert.ok(source.includes("const APP_VERSION = '1.7'"), "APP_VERSION must be 1.7");
 });
 
 test("keeps the v5.0 particle, line-break and calendar fixes", async () => {
@@ -197,7 +197,7 @@ test("keeps the v5.0 particle, line-break and calendar fixes", async () => {
   assert.doesNotMatch(source, /'🍽️🥩'/, "fed emoji must be a single icon");
   // 홈 한 줄은 인사만 합니다 (v5.2 — 할 일은 브리핑 카드가 말합니다)
   assert.doesNotMatch(source, /\[greetLine\(\), what\]/, "home line no longer lists jobs");
-  assert.ok(source.includes("APP_VERSION = '1.6.1'"), "APP_VERSION must be 1.6.1");
+  assert.ok(source.includes("APP_VERSION = '1.7'"), "APP_VERSION must be 1.7");
 
   // 캘린더 먹이 줄에 이모지가 두 번 나오면 안 됩니다 (줄 앞에 이미 🦗/🥣 가 붙습니다)
   assert.ok(source.includes("if (e.type === 'feeding') label = label.replace"), "feed label must drop its own emoji");
@@ -234,7 +234,7 @@ test("keeps the v4.9 hatching, morph and wording fixes", async () => {
   assert.ok(source.includes("const dayWord = (n) => `${Math.abs(Math.round(Number(n) || 0))}일`"), "dayWord must be numeric");
   // 탭 이름
   assert.ok(source.includes("브리핑"), "reminders tab is now 브리핑");
-  assert.ok(source.includes("const APP_VERSION = '1.6.1'"), "APP_VERSION must be 1.6.1");
+  assert.ok(source.includes("const APP_VERSION = '1.7'"), "APP_VERSION must be 1.7");
 });
 
 test("keeps the v5.2 nudge contracts", async () => {
@@ -277,7 +277,7 @@ test("keeps the v5.2 nudge contracts", async () => {
   assert.ok(source.includes('data-testid="nudge-go"'), "nudge needs an action button");
   assert.ok(source.includes("recordNudge(nudge)"), "reminders screen must record the nudge");
 
-  assert.ok(source.includes("APP_VERSION = '1.6.1'"), "APP_VERSION must be 1.6.1");
+  assert.ok(source.includes("APP_VERSION = '1.7'"), "APP_VERSION must be 1.7");
 });
 
 test("keeps the v5.3 public-record contracts", async () => {
@@ -330,7 +330,7 @@ test("keeps the v5.3 public-record contracts", async () => {
   // 화면 계약
   assert.ok(source.includes('data-testid="public-card"'), "profile needs the public card");
   assert.ok(source.includes('data-testid="public-toggle"'), "public card needs its toggle");
-  assert.ok(source.includes("APP_VERSION = '1.6.1'"), "APP_VERSION must be 1.6.1");
+  assert.ok(source.includes("APP_VERSION = '1.7'"), "APP_VERSION must be 1.7");
 });
 
 test("keeps the v5.4 away / condition / memory contracts", async () => {
@@ -386,7 +386,7 @@ test("keeps the v5.4 away / condition / memory contracts", async () => {
     assert.ok(source.includes(`data-testid="${id}"`), `missing screen contract: ${id}`);
   }
   assert.ok(source.includes("data-testid={`cond-${c.key}`}"), "condition buttons need per-level testids");
-  assert.ok(source.includes("APP_VERSION = '1.6.1'"), "APP_VERSION must be 1.6.1");
+  assert.ok(source.includes("APP_VERSION = '1.7'"), "APP_VERSION must be 1.7");
 });
 
 test("keeps the v1.0 laying-season contracts", async () => {
@@ -435,7 +435,7 @@ test("keeps the v1.0 laying-season contracts", async () => {
   assert.ok(source.includes("data-testid={`season-${r.key}`}"), "each answer needs its own testid");
 
   // 정식 출시 — 버전은 1.0
-  assert.ok(source.includes("APP_VERSION = '1.6.1'"), "APP_VERSION must be 1.6.1");
+  assert.ok(source.includes("APP_VERSION = '1.7'"), "APP_VERSION must be 1.7");
 });
 
 /* ══════════════════════════════════════════
@@ -900,4 +900,41 @@ test("keeps a way to move a mis-linked hatching", async () => {
   assert.match(source, /\(u\.status === 'pending' && left-- > 0\) \? \{ \.\.\.u, status: 'hatched', date: h\.date \}/,
     "받는 알은 부화로 표시합니다");
   assert.match(source, /expectedDate: eta/, "예정일 대비 며칠이었는지도 다시 적습니다");
+});
+
+test("keeps the anonymous visit counter honest", async () => {
+  const source = await readFile(file("src/app.jsx"), "utf8");
+  const sql = await readFile(file("supabase_visits.sql"), "utf8");
+
+  // 깔때기 네 단계 — 어디서 빠지는지 보려고 나눈 것입니다
+  assert.match(source, /const TRACK = \{/, "방문 집계는 TRACK 한 곳에서만");
+  for (const step of ["'open'", "'record'", "'signup'", "'push'"]) {
+    assert.ok(source.includes(`TRACK.step(${step})`) || source.includes(`this.send(${step}`),
+      `${step} 단계가 있어야 합니다`);
+  }
+
+  /* ★ 개인을 알아볼 수 있는 것은 절대 보내지 않습니다.
+     보내는 몸통에 아래가 끼어들면 시험이 막습니다. */
+  const body = source.match(/body: JSON\.stringify\(\{\s*\n\s*step,[\s\S]*?\}\),/)?.[0] ?? "";
+  assert.ok(body, "보내는 몸통을 찾을 수 있어야 합니다");
+  for (const bad of ["userAgent", "email", "userId", "user_id", "name", "ip"]) {
+    assert.ok(!body.includes(bad), `방문 집계에 ${bad} 를 실으면 안 됩니다`);
+  }
+
+  // 대표님 본인과 끄신 기기는 세지 않습니다
+  assert.match(source, /const OWNER_UID = '[0-9a-f-]{36}';/, "대표님 계정은 집계에서 뺍니다");
+  assert.match(source, /if \(SYNC\.userId\(\) === OWNER_UID\) return true;/);
+  assert.match(source, /localStorage\.getItem\('cg_track_off'\) === '1'/, "기기별로 끌 수 있어야 합니다");
+  assert.match(source, /data-testid="track-card"/, "무엇을 세는지 설정에서 밝힙니다");
+
+  // 집계가 실패해도 앱은 멀쩡해야 합니다
+  assert.match(source, /try \{ TRACK\.open\(\); \} catch \(e\) \{\}/);
+  assert.match(source, /try \{ TRACK\.step\('record'\); \} catch \(e\) \{\}/);
+  assert.match(source, /\}\)\.catch\(\(\) => \{\}\);/, "보내기는 기다리지도, 터뜨리지도 않습니다");
+
+  // 넣기만 되고 아무도 못 읽습니다
+  assert.match(sql, /for insert to anon, authenticated with check \(true\)/);
+  assert.ok(!/for select on public\.cg_visits/.test(sql),
+    "읽기 정책이 생기면 남의 방문 기록이 노출됩니다");
+  assert.match(sql, /alter table public\.cg_visits enable row level security/);
 });
