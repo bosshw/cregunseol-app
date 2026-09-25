@@ -106,6 +106,8 @@ test("the tutorial walks a real path: chat → say → save → calendar → bri
   assert.match(source, /사용법 배우기 \(1분\)/);
   assert.doesNotMatch(source, /예시로 먼저 구경하기/);
   assert.match(welcome, /until: inChat/, "단계는 화면이 나왔는지로 넘어갑니다");
+  const reg = welcome.indexOf("fillChat(NEWBIE"), lay = welcome.indexOf("fillChat('루나 산란 2개')");
+  assert.ok(reg > 0 && lay > reg, "아이 등록을 산란 기록보다 먼저 알려 드립니다");
   assert.match(welcome, /DEMO\.exit\('chat'\)/, "끝나면 연습을 지우고 내 아이 대화로");
   assert.match(built, /CREG_WELCOME=\{[^}]*Tutorial/);
   assert.doesNotMatch(built, /\(\?<[=!]/, "옛 아이폰이 못 읽는 정규식 금지");
