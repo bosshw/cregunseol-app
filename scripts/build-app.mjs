@@ -52,3 +52,22 @@ await build({
 });
 const imp = await stat(importerOut);
 console.log(`importer.min.js ${imp.size} bytes`);
+
+/* v1.9.2 — 처음 온 사람 안내(예시 아이들 · 앱 밖으로/설치 안내)도 따로 묶습니다(welcome.min.js).
+   설치 전 폰이나 예시로 구경할 때만 불러옵니다. */
+const welcomeOut = path.join(root, "welcome.min.js");
+await build({
+  absWorkingDir: root,
+  entryPoints: ["src/welcome.jsx"],
+  outfile: welcomeOut,
+  bundle: false,
+  minify: true,
+  legalComments: "none",
+  charset: "utf8",
+  jsx: "transform",
+  jsxFactory: "BrandElement",
+  jsxFragment: "React.Fragment",
+  target: ["es2018"],
+});
+const wel = await stat(welcomeOut);
+console.log(`welcome.min.js ${wel.size} bytes`);
