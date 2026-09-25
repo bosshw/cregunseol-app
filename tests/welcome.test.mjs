@@ -36,6 +36,7 @@ test("a first visit gets example geckos that never touch real records or the ser
   assert.equal(run("DEMO.fresh()"), true, "빈 기기는 처음 온 기기입니다");
   assert.equal(run("DEMO.start()"), true);
   assert.equal(run("DEMO.on()"), true);
+  assert.equal(store.get("cg_tut"), "0", "연습과 함께 튜토리얼이 처음부터 시작됩니다");
   const names = JSON.parse(run("JSON.stringify(DB.getIndividuals().map(i => i.name))"));
   assert.deepEqual(names, ["루나", "솔", "모카", "도토리", "베리", "쿠키"]);
   assert.equal(store.get("cg_individuals"), undefined, "진짜 기록 칸은 비어 있어야 합니다");
@@ -65,6 +66,7 @@ test("a first visit gets example geckos that never touch real records or the ser
   assert.equal(run("DEMO.on()"), false);
   assert.equal(run("DB.getIndividuals().length"), 0);
   assert.ok(![...store.keys()].some(k => k.startsWith("cg_demo:")), "예시 칸이 남으면 안 됩니다");
+  assert.equal(store.get("cg_tut"), undefined, "튜토리얼 진행 칸도 함께 지웁니다");
   assert.equal(run("DEMO.fresh()"), false, "한 번 보여 드렸으면 다시 저절로 켜지지 않습니다");
 });
 
@@ -93,4 +95,18 @@ test("the name is 브리딩비서 everywhere a visitor sees it, and the welcome 
   assert.match(app, /welcome\.min\.js/);
   assert.match(source, /data-testid="demo-bar"/);
   assert.match(source, /if \(!DEMO\.on\(\)\) \{ try \{ TRACK\.step\('record'\); \} catch \(e\) \{\} \}/);
+});
+
+test("the tutorial walks a real path: chat → say → save → calendar → briefing, on anchors the app keeps", async () => {
+  const [source, welcome, built] = await Promise.all([read("src/app.jsx"), read("src/welcome.jsx"), read("welcome.min.js")]);
+  for (const a of ['data-tut="home"', 'data-tut="calendar"', 'data-tut="chat"', 'data-tut="reminders"', 'data-tut="chat-bar"', 'data-tut="save-final"', 'data-tut="cal"']) {
+    assert.ok(source.includes(a), `튜토리얼이 짚는 자리 ${a} 가 있어야 합니다`);
+  }
+  assert.match(source, /\{DEMO\.on\(\) && <Welcome part="Tutorial" \/>\}/, "연습 중에만 튜토리얼");
+  assert.match(source, /사용법 배우기 \(1분\)/);
+  assert.doesNotMatch(source, /예시로 먼저 구경하기/);
+  assert.match(welcome, /until: inChat/, "단계는 화면이 나왔는지로 넘어갑니다");
+  assert.match(welcome, /DEMO\.exit\('chat'\)/, "끝나면 연습을 지우고 내 아이 대화로");
+  assert.match(built, /CREG_WELCOME=\{[^}]*Tutorial/);
+  assert.doesNotMatch(built, /\(\?<[=!]/, "옛 아이폰이 못 읽는 정규식 금지");
 });
