@@ -483,7 +483,7 @@ const SERVER = {
      signup : 서버 동기화를 연결했다 (기기당 한 번)
      push   : 폰 알림을 켰다 (기기당 한 번)
    ══════════════════════════════════════════ */
-const OWNER_UID = 'fa66ca69-3637-47b9-9cd3-58aac56c91d1';   // 대표님 계정 — 본인 방문은 세지 않습니다
+const OWNER_UID = 'fa66ca69-3637-47b9-9cd3-58eac56c91d1';   // 대표님 계정 — 본인 방문은 세지 않습니다 (v1.9.1: 58aac 로 한 글자 틀려 있던 것을 서버 값과 대조해 고침)
 
 const TRACK = {
   off() {
@@ -574,7 +574,7 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9';
+const APP_VERSION = '1.9.1';
 const APP_PATCHED = '2026-09-23';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -4132,7 +4132,8 @@ function App() {
         </div>
       ) : VER.hasUpdate() ? (
         <div className="updbar">
-          <span>새 버전이 있어요{VER.note() ? ' — ' + VER.note() : ''}</span>
+          {/* 무엇을 바꿨는지는 적지 않습니다(대표님 결정 2026-09-25) — 한 줄로만 알립니다 */}
+          <span>새로운 버전이 올라왔습니다</span>
           <button onClick={() => VER.refresh()}>새로고침</button>
         </div>
       ) : null}
