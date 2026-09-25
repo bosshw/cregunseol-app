@@ -1,6 +1,6 @@
 /* v1.9.2 처음 온 사람 안내 — 필요할 때만 불러오는 조각 (welcome.min.js)
    app.min.js 가 먼저 떠 있어야 합니다. useState·TRACK·STORE·addDaysISO 등은 거기 것을 씁니다.
-   window.CREG_WELCOME = { demoData, OpenHint, DemoGuide } */
+   window.CREG_WELCOME = { demoData, OpenHint, DemoGuide, Tutorial } */
 (function () {
 const INAPP = (() => {
   try {
@@ -50,6 +50,16 @@ function demoData(t) {
   return { inds, events };
 }
 
+// 앱 안 브라우저에서 크롬·사파리로 내보내기 (안내 카드와 튜토리얼 첫 화면이 같이 씁니다)
+function openOutside() {
+  const url = location.origin + location.pathname;
+  try {
+    if (INAPP === '카카오톡') location.href = 'kakaotalk://web/openExternal?url=' + encodeURIComponent(url);
+    else if (TRACK.device() === 'android') location.href = 'intent://' + url.replace(/^https?:\/\//, '') + '#Intent;scheme=https;package=com.android.chrome;end';
+    else location.href = 'x-safari-' + url;
+  } catch (e) {}
+}
+
 function OpenHint() {
   const [, bump] = useState(0);
   const [copied, setCopied] = useState(false);
@@ -73,13 +83,7 @@ function OpenHint() {
     try { navigator.clipboard.writeText(url).then(done, () => { try { window.prompt('주소를 길게 눌러 복사하세요', url); } catch (e) {} }); }
     catch (e) { try { window.prompt('주소를 길게 눌러 복사하세요', url); } catch (x) {} }
   };
-  const openOut = () => {
-    try {
-      if (INAPP === '카카오톡') location.href = 'kakaotalk://web/openExternal?url=' + encodeURIComponent(url);
-      else if (os === 'android') location.href = 'intent://' + url.replace(/^https?:\/\//, '') + '#Intent;scheme=https;package=com.android.chrome;end';
-      else location.href = 'x-safari-' + url;
-    } catch (e) {}
-  };
+  const openOut = openOutside;
   const install = () => {
     const ev = window.CG_INSTALL_EVT;
     if (!ev) return;
@@ -112,24 +116,131 @@ function OpenHint() {
   );
 }
 
-function DemoGuide({ navigate }) {
-  const G = [['calendar', '📅', '캘린더', '부화·산란 예정일이 저절로 잡혀요'],
-    ['reminders', '📋', '브리핑', '오늘 챙길 일을 알려 줘요'],
-    ['chat', '💬', '대화', '"루나 산란 2개"처럼 말하면 적혀요'],
-    ['ledger', '💰', '가계부', '분양·먹이값이 한눈에 보여요']];
+/* 연습 중 홈 맨 위 — 튜토리얼을 다시 볼 수 있는 작은 카드 */
+function DemoGuide() {
+  const again = () => { tutSet(0); try { window.dispatchEvent(new Event('cg-tut')); } catch (e) {} };
   return (
     <div className="card demo-guide" data-testid="demo-guide">
-      <div className="dg-t">🦎 루나·솔 가족으로 보여 드릴게요</div>
-      <div className="dg-s">아래를 눌러 둘러보세요. 다 보셨으면 맨 위 '내 것으로 시작'을 누르면 비워져요.</div>
-      {G.map(([go, ic, t, d]) => (
-        <button key={go} className="dg-b" onClick={() => navigate(go)}>
-          <span className="dg-i">{ic}</span><span><b>{t}</b><small>{d}</small></span><span className="dg-a">›</span>
-        </button>
-      ))}
+      <div className="dg-t">🦎 연습용 예시 아이들이에요</div>
+      <div className="dg-s">마음껏 눌러 보고 적어 보세요. 다 해 보셨으면 맨 위 '내 것으로 시작'을 누르면 깨끗하게 비워져요.</div>
+      <button className="dg-b" onClick={again} data-testid="tut-again">
+        <span className="dg-i">▶</span><span><b>사용법 다시 보기</b><small>대화로 적기 → 저장 → 캘린더 → 브리핑</small></span><span className="dg-a">›</span>
+      </button>
     </div>
   );
 }
 
+/* ══════════════════════════════════════════
+   v1.9.3 게임식 튜토리얼 — 화면을 어둡게 하고 누를 곳만 밝혀, 크한이가 한 단계씩 시킵니다
+   예시 아이 루나로 직접: 대화 열기 → 산란 말하기 → 저장 → 캘린더 → 브리핑 → 내 아이로 시작
+   ★ 단계는 "눌렀는가"가 아니라 "그 화면이 나왔는가(until)"로 넘어갑니다 — 앱 쪽 동작을 건드리지 않고,
+     빨리 누르거나 뒤로가기를 눌러도 꼬이지 않게. 필요한 화면이 사라지면(need) 앞 단계로 되돌아갑니다.
+   ★ 진행 칸(cg_tut)은 연습(DEMO)과 함께 지워집니다.
+   ══════════════════════════════════════════ */
+const tutGet = () => { try { const v = parseInt(localStorage.getItem('cg_tut'), 10); return v >= 0 ? v : -1; } catch (e) { return -1; } };   // 없음·'done' → -1
+const tutSet = (n) => { try { if (n < 0) STORE.set('cg_tut', 'done'); else STORE.set('cg_tut', String(n)); } catch (e) {} };
+const Q = (sel) => { try { return document.querySelector(sel); } catch (e) { return null; } };
+const lastWith = (sel, re) => { try { const l = [...document.querySelectorAll(sel)].filter(el => re.test(el.textContent || '')); return l[l.length - 1] || null; } catch (e) { return null; } };
+const inChat = () => Q('textarea[name=cgChat]');
+const fillChat = (text) => {
+  const ta = inChat(); if (!ta) return;
+  try {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(ta, text);
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+  } catch (e) {}
+};
+const onHome = () => !inChat() && !Q('[data-tut=save-final]') && Q('[data-tut=home].active');
 
-window.CREG_WELCOME = { demoData, OpenHint, DemoGuide };
+const TUT = [
+  { modal: true, title: '안녕하세요, 브리딩비서예요!', text: '예시 아이 루나로 기록하는 법을\n1분 만에 알려 드릴게요.', next: '시작하기' },
+  { at: () => Q('[data-tut=chat]'), text: '기록은 전부 대화로 해요.\n가운데 [대화] 버튼을 눌러 보세요.', until: inChat },
+  { at: () => Q('[data-tut=chat-bar]'), text: '루나가 오늘 알을 2개 낳았다고 해 볼게요.\n아래 버튼으로 글을 채운 뒤\n오른쪽 보내기 버튼을 눌러 주세요.',
+    act: ['"루나 산란 2개" 채우기', () => fillChat('루나 산란 2개')], until: () => Q('.pending-bar'), need: inChat, back: 1 },
+  { at: () => lastWith('.chip-btn', /저장할래/), text: '"산란 · 알 2개"로 알아들었어요!\n[이제 저장할래]를 눌러 주세요.',
+    until: () => Q('[data-tut=save-final]'), need: () => inChat() || Q('[data-tut=save-final]'), back: 1 },
+  { at: () => Q('[data-tut=save-final]'), text: '저장하기 전에 한 번 더 보여 드려요.\n맞으면 눌러 주세요.',
+    until: onHome, need: () => Q('[data-tut=save-final]') || onHome(), back: 1 },
+  { at: () => Q('[data-tut=calendar]'), text: '저장 끝! 🎉\n알을 적으면 부화 예정일이 저절로 잡혀요.\n[캘린더]를 눌러 보세요.', until: () => Q('[data-tut=calendar].active') },
+  { at: () => Q('[data-tut=cal]'), text: '알 모양은 산란, 아기 모양은 부화예요.\n방금 적은 알의 부화 예정일도 저절로 들어갔어요.\n› 로 달을 넘겨 보면 보여요.', next: '다음' },
+  { at: () => Q('[data-tut=reminders]'), text: '매일 챙길 일은 [브리핑]에 모여요.\n눌러 보세요.', until: () => Q('[data-tut=reminders].active') },
+  { text: '산란 예정일, 부화 임박, 밥 줄 날을\n알아서 챙겨 드려요.\n홈 화면에 설치하면 알림으로도 와요.', next: '다음' },
+  { modal: true, title: '이제 끝이에요!', text: '연습으로 적은 건 지우고\n내 아이로 시작해 볼까요?', final: true },
+];
+const PAD = 6;
+
+function Tutorial() {
+  const [n, setN] = useState(tutGet);
+  const [rect, setRect] = useState(null);
+  const miss = useRef(0);
+  const go = (k) => { tutSet(k); setN(k); setRect(null); miss.current = 0; };
+  useEffect(() => {   // '사용법 다시 보기'
+    const f = () => go(0);
+    window.addEventListener('cg-tut', f);
+    return () => window.removeEventListener('cg-tut', f);
+  }, []);
+  useEffect(() => {
+    const s = TUT[n];
+    if (!s) return;
+    const t = setInterval(() => {
+      if (s.until && s.until()) { go(n + 1); return; }
+      if (s.need) { if (s.need()) miss.current = 0; else if (++miss.current > 10) { go(s.back); return; } }
+      const el = s.at && s.at();
+      if (!el) { setRect(null); return; }
+      const r = el.getBoundingClientRect();
+      if (r.bottom < 0 || r.top > innerHeight) { try { el.scrollIntoView({ block: 'center' }); } catch (e) {} }
+      setRect(p => (p && Math.abs(p.x - r.left) < 1 && Math.abs(p.y - r.top) < 1 && Math.abs(p.w - r.width) < 1 && Math.abs(p.h - r.height) < 1)
+        ? p : { x: r.left, y: r.top, w: r.width, h: r.height });
+    }, 150);
+    return () => clearInterval(t);
+  }, [n]);
+
+  const s = TUT[n];
+  if (!s) return null;
+  const hole = !s.modal && rect ? { x: rect.x - PAD, y: rect.y - PAD, w: rect.w + PAD * 2, h: rect.h + PAD * 2 } : null;
+  const H = innerHeight, W = innerWidth;
+  const block = (st) => <div className="tut-block" style={st} />;
+  const low = hole && hole.y + hole.h / 2 > H / 2;
+  const bubblePos = !hole ? { top: '50%', transform: 'translateY(-50%)' }
+    : low ? { bottom: Math.max(12, H - hole.y + 12) } : { top: Math.min(H - 160, hole.y + hole.h + 12) };
+  const total = TUT.length - 1;
+  const end = () => go(-1);
+  return (
+    <div className="tut" data-testid="tutorial" data-step={n}>
+      {hole ? (
+        <>
+          {block({ left: 0, top: 0, width: W, height: Math.max(0, hole.y) })}
+          {block({ left: 0, top: hole.y + hole.h, width: W, height: Math.max(0, H - hole.y - hole.h) })}
+          {block({ left: 0, top: hole.y, width: Math.max(0, hole.x), height: hole.h })}
+          {block({ left: hole.x + hole.w, top: hole.y, width: Math.max(0, W - hole.x - hole.w), height: hole.h })}
+          <div className="tut-hole" style={{ left: hole.x, top: hole.y, width: hole.w, height: hole.h }} />
+        </>
+      ) : <div className="tut-dim" />}
+      <div className={'tut-bubble' + (s.modal ? ' modal' : '')} style={bubblePos}>
+        <img src="./assets/brand/gecko-transparent.webp" alt="" width="52" height="52" />
+        <div className="tut-body">
+          {s.title && <b>{s.title}</b>}
+          <p>{s.text}</p>
+          {n === 0 && INAPP && (
+            <p className="tut-warn">지금 {INAPP} 안에서 열려 있어요. 여기서 적은 건 {TRACK.device() === 'ios' ? '사파리' : '크롬'}에서 안 보이니, 밖으로 열어서 하시는 게 좋아요.</p>
+          )}
+          <div className="tut-row">
+            {n === 0 && INAPP && <button className="ghost" onClick={openOutside}>{TRACK.device() === 'ios' ? '사파리로' : '크롬으로'} 열기</button>}
+            {s.act && <button onClick={s.act[1]} data-testid="tut-act">{s.act[0]}</button>}
+            {s.next && <button onClick={() => go(n + 1)} data-testid="tut-next">{s.next}</button>}
+            {s.final && <button onClick={() => { tutSet(-1); DEMO.exit('chat'); }} data-testid="tut-start">내 아이 등록하기</button>}
+            {s.final && <button className="ghost" onClick={end}>조금 더 둘러볼게요</button>}
+          </div>
+          {!s.final && (
+            <div className="tut-foot">
+              <span>{n > 0 ? n + ' / ' + (total - 1) : ''}</span>
+              <button onClick={end} data-testid="tut-skip">건너뛰기</button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+window.CREG_WELCOME = { demoData, OpenHint, DemoGuide, Tutorial };
 })();

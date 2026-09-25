@@ -463,10 +463,10 @@ const DEMO = {
     const ok = STORE.set('cg_demo:cg_individuals', JSON.stringify(d.inds))
       && STORE.set('cg_demo:cg_events', JSON.stringify(d.events));
     STORE.set('cg_demo_seen', '1');
-    if (ok) STORE.set('cg_demo', '1');
+    if (ok) { STORE.set('cg_demo', '1'); STORE.set('cg_tut', '0'); }   // 연습과 함께 튜토리얼을 처음부터
     return ok;
   },
-  clear() { DEMO_KEYS.forEach(k => STORE.drop('cg_demo:' + k)); STORE.drop('cg_demo'); },
+  clear() { DEMO_KEYS.forEach(k => STORE.drop('cg_demo:' + k)); STORE.drop('cg_demo'); STORE.drop('cg_tut'); },
   // 다시 열기 — go 를 주면 그 화면으로 (예: 가져오기)
   reopen(go) { try { location.replace(location.pathname + (go ? '?go=' + go : '')); } catch (e) {} },
   exit(go) { this.clear(); this.reopen(go); },
@@ -611,7 +611,7 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.2';
+const APP_VERSION = '1.9.3';
 const APP_PATCHED = '2026-09-25';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -4190,10 +4190,11 @@ function App() {
       {/* v1.9.2 예시로 구경하는 중 — 어느 화면에서든 보이게 */}
       {DEMO.on() ? (
         <div className="updbar demobar" data-testid="demo-bar">
-          <span>예시로 둘러보는 중이에요 · 마음껏 눌러 보세요</span>
+          <span>지금은 연습 중이에요</span>
           <button onClick={() => DEMO.exit()}>내 것으로 시작</button>
         </div>
       ) : null}
+      {DEMO.on() && <Welcome part="Tutorial" />}
       {screen.name === 'home' && needsOpenHint() && <Welcome part="OpenHint" />}
 
       {screen.name === 'home' && (
@@ -4230,20 +4231,20 @@ function App() {
       {/* 하단 탭바 */}
       {[...TAB_SCREENS, 'settings'].includes(screen.name) && (
         <div className="tabbar">
-          <button className={`tab-btn ${tab==='home'?'active':''}`} onClick={() => navigate('home')}>
+          <button data-tut="home" className={`tab-btn ${tab==='home'?'active':''}`} onClick={() => navigate('home')}>
             <BrandIcon name="home" size={22}/>
             홈
           </button>
-          <button className={`tab-btn ${tab==='calendar'?'active':''}`} onClick={() => navigate('calendar')}>
+          <button data-tut="calendar" className={`tab-btn ${tab==='calendar'?'active':''}`} onClick={() => navigate('calendar')}>
             <BrandIcon name="calendar" size={22}/>
             캘린더
           </button>
           {/* 가운데 대화 버튼 — 예전 우하단 ＋ 자리를 대신합니다 */}
-          <button className="tab-btn tab-chat" onClick={() => navigate('chat')} aria-label="대화로 기록하기">
+          <button data-tut="chat" className="tab-btn tab-chat" onClick={() => navigate('chat')} aria-label="대화로 기록하기">
             <BrandIcon name="chat" size={25}/>
             대화
           </button>
-          <button className={`tab-btn ${tab==='reminders'?'active':''}`} onClick={() => navigate('reminders')} style={{position:'relative'}}>
+          <button data-tut="reminders" className={`tab-btn ${tab==='reminders'?'active':''}`} onClick={() => navigate('reminders')} style={{position:'relative'}}>
             <BrandIcon name="briefing" size={22}/>
             브리핑
             {badgeCount > 0 && <span className="notif-badge">{badgeCount}</span>}
@@ -4450,7 +4451,7 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
                 )}
                 {!favOnly && individuals.length === 0 && !SYNC.loggedIn() && (
                   <button className="btn btn-secondary" data-testid="home-demo" style={{maxWidth:280, marginTop:8}} onClick={() => DEMO.again()}>
-                    🦎 예시로 먼저 구경하기
+                    🦎 사용법 배우기 (1분)
                   </button>
                 )}
               </div>
@@ -6899,7 +6900,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
             </div>
           )}
 
-          <div style={{padding:'10px 16px', paddingBottom:'calc(12px + var(--safe-bottom))', borderTop:'1px solid var(--border)', background:'var(--bg2)', display:'flex', gap:8}}>
+          <div data-tut="chat-bar" style={{padding:'10px 16px', paddingBottom:'calc(12px + var(--safe-bottom))', borderTop:'1px solid var(--border)', background:'var(--bg2)', display:'flex', gap:8}}>
             <button className="send-btn" style={{background:'var(--card)', color:'var(--text2)', border:'1px solid var(--border)'}} onClick={() => fileRef.current && fileRef.current.click()}>📷</button>
             <textarea
               className="input"
@@ -6990,7 +6991,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
           ))}
 
           <div style={{display:'flex', flexDirection:'column', gap:8}}>
-            <button className="btn btn-primary" onClick={doSave}>✅ 기록마무리하기 ({pending.length}건)</button>
+            <button data-tut="save-final" className="btn btn-primary" onClick={doSave}>✅ 기록마무리하기 ({pending.length}건)</button>
             <button className="btn btn-secondary" onClick={() => setPhase('chat')}>← 더 기록하기</button>
           </div>
         </div>
@@ -7893,7 +7894,7 @@ function CalendarScreen({ navigate, individuals, showToast, onRemindersChanged }
         </div>
       </div>
       <div style={{padding:'12px 16px'}}>
-        <div className="card" style={{margin:0}}>
+        <div className="card" data-tut="cal" style={{margin:0}}>
           <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10}}>
             <button className="chip-btn" style={{padding:'6px 13px'}} onClick={prev}>‹</button>
             <div style={{fontSize:16, fontWeight:800}}>{cur.y}년 {cur.m + 1}월</div>
