@@ -22,8 +22,9 @@ test("ships precompiled application code without runtime Babel", async () => {
   assert.doesNotMatch(app, /(^|;)import\s/);
   assert.match(app, /React\.createElement/);
   /* 원본 크기는 참고용 한도입니다. 실제로 오가는 건 gzip 이라
-     진짜 관문은 아래 "첫 화면 묶음 gzip 150KB" 쪽입니다. */
-  assert.ok(Buffer.byteLength(app) < 300 * 1024, `app.min.js is ${Buffer.byteLength(app)} bytes`);
+     진짜 관문은 아래 "첫 화면 묶음 gzip 150KB" 쪽입니다.
+     2026-09-25 대표님 결정: 300KB → 400KB (v1.9.2 에서 307,013B 로 거의 닿음. gzip 150KB 관문은 그대로) */
+  assert.ok(Buffer.byteLength(app) < 400 * 1024, `app.min.js is ${Buffer.byteLength(app)} bytes`);
 
   const shim = await readFile(file("vendor/preact-shim.min.js"), "utf8");
   assert.match(shim, /window\.React\s*=/, "the shim must define React");
