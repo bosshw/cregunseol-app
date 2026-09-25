@@ -67,7 +67,7 @@ const withoutPhoto = (ev) =>
    ══════════════════════════════════════════ */
 const DB = {
   getAll(key) {
-    try { return JSON.parse(localStorage.getItem(key) || '[]'); } catch { return []; }
+    try { return JSON.parse(localStorage.getItem(DEMO.key(key)) || '[]'); } catch { return []; }
   },
   // 저장 시 변경된 레코드에만 updatedAt 을 찍고, 사라진 레코드는 삭제표식(툼스톤)으로 남김
   // → 모든 호출부를 고치지 않고도 서버 동기화에 필요한 정보가 자동으로 쌓임
@@ -92,6 +92,8 @@ const DB = {
     const gone = [...prevMap.keys()].filter(Boolean);
     /* 칸이 없으면 여기서 false 가 돌아옵니다. 부르는 쪽이 그걸 보고 판단합니다 —
        예전처럼 실패를 못 본 척하면 기록이 조용히 사라집니다. */
+    // 예시로 구경하는 중 — 예시 칸에만 쓰고, 서버·사진 쪽은 아무것도 건드리지 않습니다
+    if (DEMO.key(key) !== key) return STORE.set(DEMO.key(key), JSON.stringify(out));
     const ok = STORE.set(key, JSON.stringify(out));
     if (!ok) return false;
     /* 사라진 기록에 서버 사진이 붙어 있었으면 서버에서도 지웁니다.
@@ -124,14 +126,14 @@ const DB = {
     const list = this.getIndividuals();
     list.push({ ...ind, id: uuid(), createdAt: now() });
     this.saveIndividuals(list);
-    try { TRACK.step('record'); } catch (e) {}   // 이 기기에서 처음 뭔가 적은 순간
+    if (!DEMO.on()) { try { TRACK.step('record'); } catch (e) {} }   // 이 기기에서 처음 뭔가 적은 순간 (예시 구경 중엔 안 셈)
     return list[list.length - 1];
   },
   addEvents(events) {
     const createdAt = now();
     let added = (events || []).map(ev => ({ ...ev, id: uuid(), createdAt }));
     if (!added.length) return [];
-    try { TRACK.step('record'); } catch (e) {}   // 이 기기에서 처음 뭔가 적은 순간
+    if (!DEMO.on()) { try { TRACK.step('record'); } catch (e) {} }   // 이 기기에서 처음 뭔가 적은 순간 (예시 구경 중엔 안 셈)
     /* 칸이 꽉 차서 못 적었으면 — 사진만 떼고 한 번 더 넣어 봅니다.
        사진을 잃는 건 아깝지만, 기록까지 통째로 잃는 것보다는 낫습니다. */
     if (!this.saveEvents([...this.getEvents(), ...added])) {
@@ -276,13 +278,13 @@ const DB = {
     try { return JSON.parse(localStorage.getItem('cg_settings') || '{}'); } catch { return {}; }
   },
   getReadReminderIds() {
-    try { return JSON.parse(localStorage.getItem('cg_read_reminders') || '[]'); } catch { return []; }
+    try { return JSON.parse(localStorage.getItem(DEMO.key('cg_read_reminders')) || '[]'); } catch { return []; }
   },
   markRemindersRead(ids) {
     const merged = [...new Set([...this.getReadReminderIds(), ...ids])];
     // 부화 예정은 저장하지 않고 계산해서 만들므로(id가 'H:'로 시작) 그것도 읽음 목록에 남깁니다
     const valid = new Set(allAlerts().map(r => r.id));
-    STORE.set('cg_read_reminders', JSON.stringify(merged.filter(id => valid.has(id))));
+    STORE.set(DEMO.key('cg_read_reminders'), JSON.stringify(merged.filter(id => valid.has(id))));
   },
   saveSettings(s) {
     let prev = {};
@@ -438,6 +440,41 @@ function applyTheme(key) {
 }
 
 /* ══════════════════════════════════════════
+   v1.9.2 예시로 구경하기 — 처음 온 사람에게 앱이 하는 일을 먼저 보여 줍니다
+
+   ★ 예시는 따로 된 칸(cg_demo:…)에만 삽니다. 진짜 기록 칸·서버와는 절대 섞이지 않습니다.
+     구경하는 동안은 서버 동기화가 꺼지고, 적어 본 것도 예시 칸에만 들어갑니다.
+     "내 것으로 시작"을 누르거나 로그인하면 예시 칸을 통째로 지우고 빈 앱으로 다시 엽니다.
+   ★ 처음 온 기기 = 방문 번호도, 기록도, 로그인도 없는 기기. 한 번 보여 주면 다시 저절로 켜지지 않습니다.
+   ══════════════════════════════════════════ */
+const DEMO_KEYS = ['cg_individuals', 'cg_events', 'cg_reminders', 'cg_read_reminders'];
+const DEMO = {
+  on() { try { return localStorage.getItem('cg_demo') === '1'; } catch (e) { return false; } },
+  key(k) { return DEMO_KEYS.indexOf(k) >= 0 && this.on() ? 'cg_demo:' + k : k; },
+  fresh() {
+    try {
+      if (this.on() || localStorage.getItem('cg_demo_seen') || localStorage.getItem('cg_visit_no')) return false;
+      if (SYNC.loggedIn()) return false;
+      return !DB.getIndividuals().length && !DB.getEvents().length;
+    } catch (e) { return false; }
+  },
+  start() {
+    const d = window.CREG_WELCOME.demoData(todayStr());
+    const ok = STORE.set('cg_demo:cg_individuals', JSON.stringify(d.inds))
+      && STORE.set('cg_demo:cg_events', JSON.stringify(d.events));
+    STORE.set('cg_demo_seen', '1');
+    if (ok) STORE.set('cg_demo', '1');
+    return ok;
+  },
+  clear() { DEMO_KEYS.forEach(k => STORE.drop('cg_demo:' + k)); STORE.drop('cg_demo'); },
+  // 다시 열기 — go 를 주면 그 화면으로 (예: 가져오기)
+  reopen(go) { try { location.replace(location.pathname + (go ? '?go=' + go : '')); } catch (e) {} },
+  exit(go) { this.clear(); this.reopen(go); },
+  again() { loadWelcome().then(() => { if (this.start()) this.reopen(); }).catch(() => {}); },
+};
+
+
+/* ══════════════════════════════════════════
    서버 동기화 (Supabase REST 직접 호출 · 외부 라이브러리 없음)
 
    설계 요약
@@ -574,8 +611,8 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.1';
-const APP_PATCHED = '2026-09-23';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
+const APP_VERSION = '1.9.2';
+const APP_PATCHED = '2026-09-25';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -650,7 +687,7 @@ const SYNC = {
 
   configured() { const c = this.cfg(); return !!(c.url && c.key); },
   loggedIn()   { const s = this.ses(); return !!(s && s.access_token); },
-  active()     { return this.configured() && this.loggedIn(); },
+  active()     { return this.configured() && this.loggedIn() && !DEMO.on(); },
 
   /* ── 상태 변경 알림 (UI 갱신용) ── */
   on(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); },
@@ -718,6 +755,10 @@ const SYNC = {
   /* ── 로그인 / 회원가입 / 비밀번호 재설정 ── */
   _store(d, email) {
     try { TRACK.step('signup'); } catch (e) {}   // 이 기기에서 처음 서버에 연결한 순간
+    /* 예시로 구경하다가 로그인하면 — 예시는 지우고 내 기록으로 다시 엽니다 */
+    const wasDemo = DEMO.on();
+    if (wasDemo) DEMO.clear();
+    if (wasDemo) setTimeout(() => { try { location.reload(); } catch (e) {} }, 700);
     this.saveSes({
       access_token: d.access_token,
       refresh_token: d.refresh_token,
@@ -4030,7 +4071,7 @@ function App() {
   /* 알림을 눌러서 들어온 경우 그 화면으로 보내드립니다.
      앱이 꺼져 있었으면 주소에 ?go=… 가 붙어 오고, 켜져 있었으면 서비스워커가 말을 걸어옵니다. */
   useEffect(() => {
-    const GO_OK = ['reminders', 'feeding', 'calendar', 'home'];
+    const GO_OK = ['reminders', 'feeding', 'calendar', 'home', 'import', 'chat'];
     const go = (name) => { if (GO_OK.includes(name)) navigate(name); };
     try {
       const q = new URLSearchParams(location.search).get('go');
@@ -4146,6 +4187,15 @@ function App() {
         </div>
       ) : null}
 
+      {/* v1.9.2 예시로 구경하는 중 — 어느 화면에서든 보이게 */}
+      {DEMO.on() ? (
+        <div className="updbar demobar" data-testid="demo-bar">
+          <span>예시로 둘러보는 중이에요 · 마음껏 눌러 보세요</span>
+          <button onClick={() => DEMO.exit()}>내 것으로 시작</button>
+        </div>
+      ) : null}
+      {screen.name === 'home' && needsOpenHint() && <Welcome part="OpenHint" />}
+
       {screen.name === 'home' && (
         <HomeScreen key={screen.props.view || 'own'} {...screen.props} individuals={individuals} navigate={navigate} showToast={showToast} refreshIndividuals={refreshIndividuals} />
       )}
@@ -4213,6 +4263,47 @@ function App() {
 /* ══════════════════════════════════════════
    홈 화면
    ══════════════════════════════════════════ */
+/* ══════════════════════════════════════════
+   v1.9.2 처음 온 사람 안내
+
+   OpenHint — 인스타·카톡 같은 앱 안의 브라우저로 열었으면 밖(크롬·사파리)으로 나가라고,
+              밖이지만 설치 전이면 홈 화면에 설치하라고 알려 드립니다.
+     ★ 앱 안의 브라우저는 저장 칸이 따로라, 거기서 적은 기록은 크롬·사파리에서 안 보입니다.
+     ★ 설치 안내는 닫으면 이 기기에선 다시 안 뜹니다. 앱 안 안내는 이번에만 닫힙니다.
+   DemoGuide — 예시로 구경할 때 홈 맨 위에서 어디를 눌러 보면 되는지 짚어 드립니다.
+   ══════════════════════════════════════════ */
+// 안드로이드 크롬이 주는 "설치" 기회(window.CG_INSTALL_EVT) — 안내의 설치 버튼이 씁니다. 일찍 오므로 여기서 받아 둡니다
+try {
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault(); window.CG_INSTALL_EVT = e;
+    try { window.dispatchEvent(new Event('cg-install')); } catch (x) {}
+  });
+} catch (e) {}
+
+/* 안내 화면 두 개는 welcome.min.js 에 따로 있습니다(첫 화면 크기 한도 때문).
+   필요한 사람에게만 불러옵니다 — 설치 전 폰, 또는 예시로 구경하는 중. */
+function loadWelcome() {
+  if (window.CREG_WELCOME) return Promise.resolve(window.CREG_WELCOME);
+  if (loadWelcome.p) return loadWelcome.p;
+  loadWelcome.p = new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = './welcome.min.js';
+    s.onload = () => (window.CREG_WELCOME ? res(window.CREG_WELCOME) : rej(new Error('welcome')));
+    s.onerror = () => { loadWelcome.p = null; rej(new Error('welcome')); };
+    document.head.appendChild(s);
+  });
+  return loadWelcome.p;
+}
+function Welcome({ part, ...props }) {
+  const [mod, setMod] = useState(() => window.CREG_WELCOME || null);
+  useEffect(() => { if (!mod) loadWelcome().then(setMod).catch(() => {}); }, []);
+  const C = mod && mod[part];
+  return C ? <C {...props} /> : null;
+}
+const needsOpenHint = () => {
+  try { return !TRACK.standalone() && TRACK.device() !== 'pc'; } catch (e) { return false; }   // 앱 안 브라우저도 폰에서만 뜹니다
+};
+
 function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view: initialView }) {
   const [search, setSearch] = useState('');
   // 분양은 v3.8부터 가계부 탭으로 옮겼습니다 (옛 링크로 들어오면 축양으로 보냅니다)
@@ -4254,10 +4345,10 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
         <div className="header">
           <div className="header-row">
             <div style={{display:'flex', alignItems:'center', gap:9, minWidth:0}}>
-              <img src="./icon-192.png" alt="크레건설" width="34" height="34"
+              <img src="./icon-192.png" alt="브리딩비서" width="34" height="34"
                 style={{display:'block', flexShrink:0, imageRendering:'auto'}} />
               <div style={{minWidth:0}}>
-                <h1>크레건설 브리딩비서</h1>
+                <h1>브리딩비서</h1>
                 <div className="header-sub" data-testid="home-line" style={{whiteSpace:'pre-line', lineHeight:1.55}}>{homeLine()}</div>
               </div>
             </div>
@@ -4345,6 +4436,7 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
           </div>
         )}
 
+        {view === 'own' && DEMO.on() && <Welcome part="DemoGuide" navigate={navigate} />}
         {view === 'own' && (
           <>
             {ownList.length === 0 && (
@@ -4354,6 +4446,11 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
                 {!favOnly && individuals.length === 0 && (
                   <button className="btn btn-secondary" data-testid="home-import" style={{maxWidth:280}} onClick={() => navigate('import')}>
                     📥 쓰던 엑셀이 있으면 한 번에 가져오기
+                  </button>
+                )}
+                {!favOnly && individuals.length === 0 && !SYNC.loggedIn() && (
+                  <button className="btn btn-secondary" data-testid="home-demo" style={{maxWidth:280, marginTop:8}} onClick={() => DEMO.again()}>
+                    🦎 예시로 먼저 구경하기
                   </button>
                 )}
               </div>
@@ -8442,7 +8539,21 @@ function loadImporter() {
 function ImportHost(props) {
   const [mod, setMod] = useState(() => window.CREG_IMPORT || null);
   const [err, setErr] = useState('');
-  useEffect(() => { if (!mod) loadImporter().then(m => setMod(m)).catch(e => setErr(e.message)); }, []);
+  const demo = DEMO.on();
+  useEffect(() => { if (!mod && !demo) loadImporter().then(m => setMod(m)).catch(e => setErr(e.message)); }, []);
+  // 예시 구경 중에는 가져오지 않습니다 — 예시를 지우고 빈 앱에서 가져오기로 바로 갑니다
+  if (demo) return (
+    <div className="screen">
+      <div className="header"><div className="header-row">
+        <button className="back-btn" onClick={() => props.navigate('settings')}>‹ 뒤로</button>
+        <h1 style={{fontSize:16}}>📥 엑셀·표 가져오기</h1>
+      </div></div>
+      <div className="empty" data-testid="import-demo">
+        <p>지금은 예시 아이들을 보고 계세요.{'\n'}예시를 지우고 내 기록을 가져올까요?</p>
+        <button className="btn btn-primary" style={{maxWidth:280}} onClick={() => DEMO.exit('import')}>예시 지우고 가져오기</button>
+      </div>
+    </div>
+  );
   if (mod) return <mod.Screen {...props} />;
   return (
     <div className="screen">
@@ -9377,7 +9488,7 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
         <div className="card" style={{margin:0}} data-testid="app-info">
           <div style={{fontSize:13, fontWeight:700, marginBottom:6, color:'var(--text2)'}}>앱 정보</div>
           <div style={{display:'flex', justifyContent:'space-between', alignItems:'baseline', gap:10}}>
-            <span style={{fontSize:14, fontWeight:700}}>크레건설 브리딩비서</span>
+            <span style={{fontSize:14, fontWeight:700}}>브리딩비서</span>
             <span style={{fontSize:14, fontWeight:800, color:'var(--accent2)', fontVariantNumeric:'tabular-nums'}}>v{APP_VERSION}</span>
           </div>
           <div style={{fontSize:12, color:'var(--text3)', marginTop:5}}>
@@ -9451,8 +9562,12 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
 // 저장해 둔 색상 테마를 첫 화면이 그려지기 전에 입힙니다 (색이 바뀌며 깜빡이지 않도록)
 applyTheme(currentThemeKey());
 
-const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(<App />);
+// v1.9.2 처음 온 기기면 예시 아이들을 먼저 깔고 그립니다 (예시를 못 받아오면 그냥 빈 앱으로)
+const bootRender = () => ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+let firstVisit = false;
+try { firstVisit = DEMO.fresh(); } catch (e) {}
+if (firstVisit) loadWelcome().then(() => { try { DEMO.start(); } catch (e) {} }, () => {}).then(bootRender);
+else bootRender();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
