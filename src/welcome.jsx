@@ -124,7 +124,7 @@ function DemoGuide() {
       <div className="dg-t">🦎 연습용 예시 아이들이에요</div>
       <div className="dg-s">마음껏 눌러 보고 적어 보세요. 다 해 보셨으면 맨 위 '내 것으로 시작'을 누르면 깨끗하게 비워져요.</div>
       <button className="dg-b" onClick={again} data-testid="tut-again">
-        <span className="dg-i">▶</span><span><b>사용법 다시 보기</b><small>대화로 적기 → 저장 → 캘린더 → 브리핑</small></span><span className="dg-a">›</span>
+        <span className="dg-i">▶</span><span><b>사용법 다시 보기</b><small>아이 등록 → 기록 → 저장 → 캘린더 → 브리핑</small></span><span className="dg-a">›</span>
       </button>
     </div>
   );
@@ -132,7 +132,8 @@ function DemoGuide() {
 
 /* ══════════════════════════════════════════
    v1.9.3 게임식 튜토리얼 — 화면을 어둡게 하고 누를 곳만 밝혀, 크한이가 한 단계씩 시킵니다
-   예시 아이 루나로 직접: 대화 열기 → 산란 말하기 → 저장 → 캘린더 → 브리핑 → 내 아이로 시작
+   예시 아이들로 직접: 대화 열기 → 새 아이 등록(하늘이·성별) → 루나 산란 말하기 → 저장 → 홈 → 캘린더 → 브리핑 → 내 아이로 시작
+   (v1.9.4 대표님: 산란보다 아이 등록이 먼저)
    ★ 단계는 "눌렀는가"가 아니라 "그 화면이 나왔는가(until)"로 넘어갑니다 — 앱 쪽 동작을 건드리지 않고,
      빨리 누르거나 뒤로가기를 눌러도 꼬이지 않게. 필요한 화면이 사라지면(need) 앞 단계로 되돌아갑니다.
    ★ 진행 칸(cg_tut)은 연습(DEMO)과 함께 지워집니다.
@@ -151,16 +152,29 @@ const fillChat = (text) => {
 };
 const onHome = () => !inChat() && !Q('[data-tut=save-final]') && Q('[data-tut=home].active');
 
+const NEWBIE = '하늘이';
+const newbie = () => { try { return DB.getIndividuals().find(i => i.name === NEWBIE) || null; } catch (e) { return null; } };
 const TUT = [
-  { modal: true, title: '안녕하세요, 브리딩비서예요!', text: '예시 아이 루나로 기록하는 법을\n1분 만에 알려 드릴게요.', next: '시작하기' },
-  { at: () => Q('[data-tut=chat]'), text: '기록은 전부 대화로 해요.\n가운데 [대화] 버튼을 눌러 보세요.', until: inChat },
-  { at: () => Q('[data-tut=chat-bar]'), text: '루나가 오늘 알을 2개 낳았다고 해 볼게요.\n아래 버튼으로 글을 채운 뒤\n오른쪽 보내기 버튼을 눌러 주세요.',
+  { modal: true, title: '안녕하세요, 브리딩비서예요!', text: '예시 아이들로 아이 등록부터 기록까지\n1분 만에 알려 드릴게요.', next: '시작하기' },
+  { at: () => Q('[data-tut=chat]'), text: '등록도 기록도 전부 대화로 해요.\n가운데 [대화] 버튼을 눌러 보세요.', until: inChat },
+  // ── 아이 등록 ──
+  { at: () => Q('[data-tut=chat-bar]'), text: '먼저 새 아이를 등록해 볼게요.\n이름과 모프만 말하면 돼요.\n아래 버튼으로 글을 채운 뒤 보내기를 눌러 주세요.',
+    act: ['"하늘이 릴리화이트" 채우기', () => fillChat(NEWBIE + ' 릴리화이트')],
+    until: () => lastWith('.chip-btn', /네, 등록/), skip: newbie, need: inChat, back: 1 },
+  { at: () => lastWith('.chip-btn', /네, 등록/), text: '처음 듣는 이름이면 새 아이인지 물어봐요.\n[네, 등록해주세요]를 눌러 주세요.',
+    until: newbie, need: inChat, back: 1 },
+  { at: () => lastWith('.chip-btn', /암컷/), text: '하늘이가 식구가 됐어요! 🎉\n성별도 버튼으로 바로 고를 수 있어요.\n[암컷]을 눌러 보세요.',
+    until: () => { const i = newbie(); return !!(i && i.gender && i.gender !== 'unknown'); }, need: inChat, back: 1 },
+  // ── 기록 ──
+  { at: () => Q('[data-tut=chat-bar]'), text: '이번엔 기록이에요.\n루나가 오늘 알을 2개 낳았다고 해 볼게요.\n글을 채운 뒤 보내기를 눌러 주세요.',
     act: ['"루나 산란 2개" 채우기', () => fillChat('루나 산란 2개')], until: () => Q('.pending-bar'), need: inChat, back: 1 },
   { at: () => lastWith('.chip-btn', /저장할래/), text: '"산란 · 알 2개"로 알아들었어요!\n[이제 저장할래]를 눌러 주세요.',
     until: () => Q('[data-tut=save-final]'), need: () => inChat() || Q('[data-tut=save-final]'), back: 1 },
   { at: () => Q('[data-tut=save-final]'), text: '저장하기 전에 한 번 더 보여 드려요.\n맞으면 눌러 주세요.',
     until: onHome, need: () => Q('[data-tut=save-final]') || onHome(), back: 1 },
-  { at: () => Q('[data-tut=calendar]'), text: '저장 끝! 🎉\n알을 적으면 부화 예정일이 저절로 잡혀요.\n[캘린더]를 눌러 보세요.', until: () => Q('[data-tut=calendar].active') },
+  { at: () => lastWith('.gecko-card', new RegExp(NEWBIE)), text: '홈에 하늘이가 생겼어요.\n누르면 프로필과 기록이 한곳에 모여 있어요.', next: '다음' },
+  // ── 저절로 챙겨 주는 것 ──
+  { at: () => Q('[data-tut=calendar]'), text: '알을 적으면 부화 예정일이 저절로 잡혀요.\n[캘린더]를 눌러 보세요.', until: () => Q('[data-tut=calendar].active') },
   { at: () => Q('[data-tut=cal]'), text: '알 모양은 산란, 아기 모양은 부화예요.\n방금 적은 알의 부화 예정일도 저절로 들어갔어요.\n› 로 달을 넘겨 보면 보여요.', next: '다음' },
   { at: () => Q('[data-tut=reminders]'), text: '매일 챙길 일은 [브리핑]에 모여요.\n눌러 보세요.', until: () => Q('[data-tut=reminders].active') },
   { text: '산란 예정일, 부화 임박, 밥 줄 날을\n알아서 챙겨 드려요.\n홈 화면에 설치하면 알림으로도 와요.', next: '다음' },
@@ -182,7 +196,7 @@ function Tutorial() {
     const s = TUT[n];
     if (!s) return;
     const t = setInterval(() => {
-      if (s.until && s.until()) { go(n + 1); return; }
+      if ((s.until && s.until()) || (s.skip && s.skip())) { go(n + 1); return; }   // skip: 이미 해 둔 단계(되돌아왔을 때)는 건너뜀
       if (s.need) { if (s.need()) miss.current = 0; else if (++miss.current > 10) { go(s.back); return; } }
       const el = s.at && s.at();
       if (!el) { setRect(null); return; }
