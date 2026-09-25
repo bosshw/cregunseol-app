@@ -574,7 +574,7 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.8';
+const APP_VERSION = '1.9';
 const APP_PATCHED = '2026-09-23';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -1448,8 +1448,40 @@ function incubateTemp() {
   return v >= INCUBATE_MIN && v <= INCUBATE_MAX ? v : INCUBATE_DEFAULT;
 }
 const hatchDaysNow = () => hatchDays(incubateTemp());
-// 산란일 + 부화일수 = 부화 예정일
+// 산란일 + 부화일수 = 부화 예정일 (온도로만 계산한 기본값 — 학습값은 clutchRows 가 씁니다)
 const hatchETA = (layDate) => localISO(new Date(new Date(layDate).getTime() + hatchDaysNow() * 86400000));
+const addDaysISO = (iso, n) => localISO(new Date(new Date(iso).getTime() + n * 86400000));
+
+/* ══ 부화 기간 학습 (v1.9) ══
+   "무조건 75일"이 아니라, 우리 집 인큐에서 실제로 며칠 만에 나왔는지를 보고 예정일을 잡습니다.
+     ① 그 엄마의 알이 실제로 부화한 기록이 2번 이상 → 그 엄마 평균
+     ② 아니면 우리 집 전체 부화 기록이 2번 이상 → 우리 집 평균
+     ③ 그것도 없으면 → 인큐 온도로 계산(24°C 75일)
+   ★ "평균"은 중앙값입니다 — 한 번 늦게 나온 알에 예정일이 끌려가지 않게.
+   ★ 인큐 온도를 바꾸면 그날 뒤에 낳은 알 기록부터 다시 배웁니다(바꾸기 전 기록은 다른 온도라서).
+   ★ 산란→부화 40~130일만 셉니다. 그 밖은 잘못 이어진 기록으로 봅니다.
+   산란 예정일의 layingForecasts 와 같은 방식입니다. */
+const HATCH_LEARN_MIN = 2;
+function hatchLearn(samples) {
+  const since = (DB.getSettings() || {}).incubateTempAt || '';
+  const ok = samples.filter(x => x.days >= 40 && x.days <= 130 && (!since || x.lay >= since));
+  const mid = (arr) => {
+    const a = [...arr].sort((x, y) => x - y), m = Math.floor(a.length / 2);
+    return a.length % 2 ? a[m] : Math.round((a[m - 1] + a[m]) / 2);
+  };
+  const byMom = {};
+  ok.forEach(x => { (byMom[x.mom] = byMom[x.mom] || []).push(x.days); });
+  const all = ok.map(x => x.days);
+  const base = hatchDaysNow();
+  const plan = (momId, momName) => {
+    const own = byMom[momId] || [];
+    if (own.length >= HATCH_LEARN_MIN) return { days: mid(own), basis: `${momName} 실제 부화 ${own.length}회 평균`, learned: 'mom', n: own.length };
+    if (all.length >= HATCH_LEARN_MIN) return { days: mid(all), basis: `우리 집 실제 부화 ${all.length}회 평균`, learned: 'home', n: all.length };
+    return { days: base, basis: `인큐 ${incubateTemp()}°C 기준`, learned: '', n: 0 };
+  };
+  plan.home = all.length >= HATCH_LEARN_MIN ? { days: mid(all), n: all.length } : null;
+  return plan;
+}
 
 /* ── 알(클러치) 목록을 한 곳에서 계산합니다 ──
    산란 기록마다 엄마·아빠·이 짝의 몇 차 산란인지·부화 예정일·상태를 붙여 돌려줍니다.
@@ -1500,6 +1532,7 @@ function clutchRows(individuals, events) {
     (kidsOfMom[i.damId] = kidsOfMom[i.damId] || []).push(i);
   });
   Object.values(kidsOfMom).forEach(list => list.sort((a, b) => (a.createdAt || '') < (b.createdAt || '') ? -1 : 1));
+  const hatchSamples = [];   // v1.9 — 실제로 며칠 만에 나왔는지 (부화 기간 학습)
   lays.forEach(e => {
     const kids = kidsOfMom[e.individualId] || [];
     const hs = hatchList[e.id] || [];
@@ -1513,6 +1546,10 @@ function clutchRows(individuals, events) {
       days = near.length ? [near[0].hatchDate] : [];
     }
     if (!days.length) { babiesOf[e.id] = []; return; }
+    {
+      const first = [...days].sort()[0];
+      hatchSamples.push({ mom: e.individualId, lay: e.date, days: Math.round((new Date(first) - new Date(e.date)) / 86400000) });
+    }
     let list = kids.filter(i => !usedB.has(i.id) && days.indexOf(i.hatchDate) >= 0)
       .sort((a, b) => (a.hatchDate < b.hatchDate ? -1 : 1));
     const cap = hs.reduce((a, h) => a + (parseInt((h.data && h.data.count) || 0, 10) || 0), 0);
@@ -1522,6 +1559,8 @@ function clutchRows(individuals, events) {
   });
 
   const seq = {};
+  const hatchPlan = hatchLearn(hatchSamples);
+  clutchRows.home = hatchPlan.home;   // 설정 화면의 "우리 집 실제 부화 평균" 표시용 (마지막 계산값)
   return lays.map(e => {
     const mom = byId[e.individualId] || null;
     const momName = mom ? mom.name : '(삭제된 개체)';
@@ -1535,7 +1574,8 @@ function clutchRows(individuals, events) {
     const pairName = momName + (dadName ? ' × ' + dadName : '');
     const notes = (e.data && e.data.notes) || '';
     const eggs = (e.data && e.data.eggCount) || 0;
-    const etaISO = hatchETA(e.date);
+    const hp = hatchPlan(e.individualId, momName);
+    const etaISO = addDaysISO(e.date, hp.days);
     const d = daysUntil(etaISO);
     const infertile = /무정/.test(notes);
     const hatched = hatchOf[e.id] || null;
@@ -1557,7 +1597,8 @@ function clutchRows(individuals, events) {
     else if (d === 0) { state = '오늘 예정'; tone = '#B3261E'; }
     const waiting = !infertile && !allDone && d >= -14;
     return { e, mom, momName, dad, dadId, dadName, pairKey, pairName, nth,
-             eggs, notes, etaISO, expISO: etaISO, d, state, tone, infertile, hatched, hatches, babies, waiting,
+             eggs, notes, etaISO, expISO: etaISO, hatchDays: hp.days, hatchBasis: hp.basis, hatchLearned: hp.learned,
+             d, state, tone, infertile, hatched, hatches, babies, waiting,
              units, nProblem, nPending, allDone };
   });
 }
@@ -1699,8 +1740,12 @@ function layingForecasts(individuals, events) {
        이제는 마지막 기록에서 1년이 지날 때까지 들고 있다가, 확인을 받으면 그때 정리합니다. */
     if (-daysUntil(base) > LAY_GIVE_UP) return;
     const lastMate = ms.length ? ms[ms.length - 1] : null;
+    const lastLayD = ls.length ? (ls[ls.length - 1].data || {}) : {};
+    /* v1.9 — 메이팅 기록 없이 산란에만 아빠를 적은 경우(엑셀 가져오기 등)도 같은 짝으로 셉니다.
+       예전엔 여기서 짝을 못 찾아 4번 낳은 아이가 "1차 산란 예정"으로 나왔습니다. */
     const dadName = (lastMate && lastMate.data && lastMate.data.partnerName)
-      || ((byId[(lastMate && lastMate.data && lastMate.data.partnerId)] || {}).name) || null;
+      || ((byId[(lastMate && lastMate.data && lastMate.data.partnerId)] || {}).name)
+      || ((byId[lastLayD.sireId] || {}).name) || lastLayD.sireName || null;
     const pairKey = i.id + '|' + (dadName || '?');
     const nth = rows.filter(r => r.pairKey === pairKey).length + 1;
     const late = -daysUntil(eta);
@@ -3642,7 +3687,7 @@ function answerQuery(target, text) {
     if (!pending.length) return `${target.name}의 알은 부화 예정일이 모두 지났어요.\n산란기록 탭에서 확인해보세요 🐣`;
     const x = pending[0];
     return `${target.name}의 알은 ${fmtDate(x.etaISO)}쯤 부화 예정이에요 🐣 (${inDays(x.etaISO)})\n`
-      + `${fmtDate(x.e.date)} 산란 · 인큐 ${incubateTemp()}°C 기준 ${hatchDaysNow()}일`
+      + `${fmtDate(x.e.date)} 산란 · ${x.hatchBasis} ${x.hatchDays}일`
       + (pending.length > 1 ? `\n부화 대기 중인 알 묶음이 ${pending.length}개 있어요.` : '');
   }
 
@@ -4606,7 +4651,9 @@ function LayingView({ individuals, navigate }) {
         "N차"는 그 엄마 × 아빠 짝의 몇 번째 산란인지예요
       </div>
       <div style={{fontSize:11, color:'var(--text3)', textAlign:'center', padding:'2px 0 2px'}}>
-        부화 예정일은 인큐 {incubateTemp()}°C 기준 산란일 +{hatchDaysNow()}일 · 온도는 설정에서 바꿀 수 있어요
+        {rows.some(r => r.hatchLearned)
+          ? <>부화 예정일은 실제 부화 기록으로 계산해요 · {rows.find(r => r.hatchLearned).hatchBasis} {rows.find(r => r.hatchLearned).hatchDays}일</>
+          : <>부화 예정일은 인큐 {incubateTemp()}°C 기준 산란일 +{hatchDaysNow()}일 · 부화 기록이 2번 쌓이면 우리 집 기록으로 바꿔 계산해요</>}
       </div>
     </div>
   );
@@ -4638,7 +4685,8 @@ function moveHatchTo(hatchId, toLayingId) {
   }
 
   // ② 기록을 새 알둥지로 옮기고, 예정일 대비 며칠이었는지도 다시 적습니다
-  const eta = hatchETA(to.date);
+  const toRow = clutchRows().find(r => r.e.id === toLayingId);
+  const eta = (toRow && toRow.etaISO) || hatchETA(to.date);
   DB.updateEvent(hatchId, { data: { ...(h.data || {}), layingId: toLayingId, expectedDate: eta,
     diffDays: Math.round((new Date(h.date) - new Date(eta)) / 86400000) } });
 
@@ -4694,8 +4742,7 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals }) {
   const eggs = ev.data && ev.data.eggCount;
   const notes = (ev.data && ev.data.notes) || '';
   const photo = ev.data && ev.data.photo;
-  const expDate = new Date(new Date(ev.date).getTime() + hatchDaysNow() * 86400000);
-  const expISO = localISO(expDate);
+  const expISO = (row && row.etaISO) || hatchETA(ev.date);   // v1.9 — 학습한 부화 기간을 그대로
   const d = daysUntil(expISO);
   // 무정 여부도 clutchRows가 정한 것을 씁니다 (판정 사본을 두지 않습니다)
   const infertile = row ? row.infertile : false;
@@ -8349,7 +8396,7 @@ function ReminderCard({ r, onDelete, past }) {
           <div style={{fontSize:15, fontWeight:700}}>{REMINDER_EMOJI[r.type] || '🔔'} {r.geckoName}</div>
           <div style={{fontSize:13, color:'var(--text3)', marginTop:2, whiteSpace:'pre-line', lineHeight:1.5}}>{alertLine(r)}</div>
           <div style={{fontSize:12, color: past ? 'var(--text3)' : daysLeft <= 7 ? 'var(--warning)' : 'var(--accent2)', marginTop:4}}>
-            {past ? `${agoWord(r.date)} (지났어요)` : daysLeft === 0 ? '오늘이에요' : `${whenWord(r.date)} · ${fmtDate(r.date)}`}
+            {past ? `${agoWord(r.date)} (지났어요)` : daysLeft === 0 ? '오늘이에요' : (/\d월/.test(whenWord(r.date)) ? `${whenWord(r.date)} · D-${daysLeft}` : `${whenWord(r.date)} · ${fmtDate(r.date)}`)}
           </div>
         </div>
         {/* 계산으로 만든 부화 예정은 지울 대상이 아니라 산란기록 자체가 원본입니다 */}
@@ -9009,7 +9056,8 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
     showToast('설정 저장 완료');
   };
   const setTemp = (v) => {
-    const s = { ...settings, incubateTemp: Number(v) };
+    // v1.9 — 온도를 바꾼 날을 적어둡니다. 이날 뒤에 낳은 알 기록부터 부화 기간을 다시 배웁니다
+    const s = { ...settings, incubateTemp: Number(v), incubateTempAt: todayStr() };
     DB.saveSettings(s);
     setSettings(s);
   };
@@ -9235,6 +9283,14 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
             알을 몇 도로 품고 계신가요? 이 온도로 <b>부화 예정일</b>을 계산해요.<br/>
             낮을수록 오래 걸립니다 (22°C 90일 · 24°C 75일 · 26°C 60일)
           </div>
+          {(() => { try { clutchRows(); } catch (e) {} const h = clutchRows.home; return h ? (
+            <div style={{fontSize:12, color:'var(--accent2)', margin:'-4px 0 10px', lineHeight:1.6}} data-testid="hatch-learned">
+              📊 우리 집 실제 부화 {h.n}회 평균 <b>{h.days}일</b> — 부화 예정일은 이 기록을 먼저 써요<br/>
+              <span style={{color:'var(--text3)'}}>한 엄마가 2번 이상 부화하면 그 아이 평균으로 · 온도를 바꾸면 그 뒤 기록부터 다시 배워요</span>
+            </div>) : (
+            <div style={{fontSize:12, color:'var(--text3)', margin:'-4px 0 10px', lineHeight:1.6}} data-testid="hatch-learned">
+              부화 기록이 2번 쌓이면 이 온도 대신 우리 집 실제 부화 기간으로 계산해요
+            </div>); })()}
           <div style={{display:'flex', alignItems:'center', gap:10}}>
             <input type="range" min={INCUBATE_MIN} max={INCUBATE_MAX} step="0.5"
               value={settings.incubateTemp || INCUBATE_DEFAULT}
@@ -9242,7 +9298,7 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
               style={{flex:1, accentColor:'var(--accent)'}} />
             <div style={{minWidth:96, textAlign:'right'}}>
               <div style={{fontSize:18, fontWeight:800, color:'var(--accent2)'}}>{settings.incubateTemp || INCUBATE_DEFAULT}°C</div>
-              <div style={{fontSize:11, color:'var(--text3)'}}>부화 {hatchDays(settings.incubateTemp || INCUBATE_DEFAULT)}일</div>
+              <div style={{fontSize:11, color:'var(--text3)'}}>온도 기준 {hatchDays(settings.incubateTemp || INCUBATE_DEFAULT)}일</div>
             </div>
           </div>
           {(settings.incubateTemp || INCUBATE_DEFAULT) >= 27 && (
