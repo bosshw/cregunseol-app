@@ -253,6 +253,34 @@
     .tut-row button { background: var(--accent); color: var(--on-accent); border: none; border-radius: 18px; padding: 9px 15px; font-size: 14px; font-weight: 700; cursor: pointer; }
     .tut-row button.ghost { background: transparent; color: var(--accent2); border: 1px solid var(--accent-edge); font-weight: 600; }
     .tut-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; font-size: 12px; color: var(--text3); }
+    /* v1.9.5 앱 먼저 받기 — 튜토리얼(1000)보다 위 */
+    .gate { position: fixed; inset: 0; z-index: 1100; background: var(--bg); display: flex; align-items: center; justify-content: center; padding: 20px 20px calc(20px + var(--safe-bottom)); }
+    .gate-card { width: 100%; max-width: 420px; text-align: center; display: flex; flex-direction: column; align-items: center; }
+    .gate-mascot { animation: gateBob 2.4s ease-in-out infinite; }
+    @keyframes gateBob { 50% { transform: translateY(-8px); } }
+    .gate-brand { font-size: 34px; font-weight: 900; color: var(--accent2); letter-spacing: -1px; margin-top: 8px; }
+    .gate-sub { font-size: 17px; color: var(--text2); line-height: 1.55; margin: 8px 0 26px; }
+    .gate-big { width: 100%; background: var(--accent); color: var(--on-accent); border: none; border-radius: 22px; padding: 20px 16px; font-size: 21px; font-weight: 900; letter-spacing: -.5px; cursor: pointer; box-shadow: 0 6px 0 #6E2B34, 0 12px 26px var(--accent-shadow); animation: gatePulse 1.8s ease-in-out infinite; }
+    @keyframes gatePulse { 50% { transform: scale(1.03); } }
+    .gate-note { font-size: 13.5px; color: var(--text3); line-height: 1.6; margin-top: 16px; }
+    .gate-link { background: none; border: none; color: var(--accent2); font-size: 13.5px; font-weight: 700; text-decoration: underline; cursor: pointer; margin-top: 4px; }
+    .gate-web { background: none; border: none; color: var(--text3); font-size: 13.5px; text-decoration: underline; cursor: pointer; margin-top: 22px; padding: 8px; }
+    .gate-okmsg { width: 100%; background: var(--card); border: 1.5px solid var(--accent-edge); border-radius: 18px; padding: 18px; font-size: 16px; line-height: 1.6; color: var(--text); }
+    .gate-card.guide { background: var(--card); border-radius: 24px; padding: 22px 20px 12px; box-shadow: 0 10px 34px rgba(0,0,0,.14); }
+    .gate-step { font-size: 12.5px; font-weight: 800; color: var(--accent2); background: var(--accent-soft); border-radius: 12px; padding: 3px 10px; margin-top: 6px; }
+    .gate-t { font-size: 21px; font-weight: 900; color: var(--text); margin-top: 10px; letter-spacing: -.5px; }
+    .gate-d { font-size: 14.5px; color: var(--text2); line-height: 1.6; margin-top: 6px; white-space: pre-line; }
+    .gate-mock { display: flex; justify-content: space-between; align-items: center; width: 100%; margin-top: 14px; background: var(--bg3); border: 2px solid var(--accent); border-radius: 14px; padding: 13px 16px; font-size: 16px; font-weight: 700; color: var(--text); }
+    .gate-mock i { font-style: normal; font-size: 19px; color: var(--accent2); }
+    .gate-row { display: flex; gap: 8px; width: 100%; margin-top: 16px; }
+    .gate-row button { flex: 1; background: var(--accent); color: var(--on-accent); border: none; border-radius: 16px; padding: 13px; font-size: 16px; font-weight: 800; cursor: pointer; }
+    .gate-row button.ghost { background: transparent; color: var(--accent2); border: 1.5px solid var(--accent-edge); }
+    .gate-arrow { position: fixed; font-size: 34px; color: var(--accent); animation: gateArrow 1s ease-in-out infinite; text-shadow: 0 2px 6px rgba(0,0,0,.2); }
+    .gate-arrow.bottom { bottom: calc(6px + var(--safe-bottom)); left: 50%; margin-left: -14px; }
+    .gate-arrow.bottom-right { bottom: calc(6px + var(--safe-bottom)); right: 22px; }
+    .gate-arrow.top-right { top: calc(6px + var(--safe-top)); right: 18px; animation-name: gateArrowUp; }
+    @keyframes gateArrow { 50% { transform: translateY(8px); } }
+    @keyframes gateArrowUp { 50% { transform: translateY(-8px); } }
     .tut-foot button { background: none; border: none; color: var(--text3); font-size: 12.5px; text-decoration: underline; cursor: pointer; padding: 4px 0; }
   </style>
 </head>
