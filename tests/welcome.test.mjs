@@ -112,3 +112,16 @@ test("the tutorial walks a real path: chat → say → save → calendar → bri
   assert.match(built, /CREG_WELCOME=\{[^}]*Tutorial/);
   assert.doesNotMatch(built, /\(\?<[=!]/, "옛 아이폰이 못 읽는 정규식 금지");
 });
+
+test("app-first gate: phones that haven't installed see a big 'get the app' screen before anything else", async () => {
+  const [source, welcome, built, html] = await Promise.all([read("src/app.jsx"), read("src/welcome.jsx"), read("welcome.min.js"), read("index.html")]);
+  assert.match(source, /\{needsOpenHint\(\) && <Welcome part="InstallGate" \/>\}/, "설치 안 한 폰에만");
+  assert.match(built, /CREG_WELCOME=\{[^}]*InstallGate/);
+  assert.match(welcome, /📲 브리딩비서 앱 받기/);
+  assert.match(welcome, /ev\.prompt\(\)/, "안드로이드는 크롬 설치 창을 바로 띄웁니다");
+  assert.match(welcome, /v >= 27/, "아이폰은 사파리 버전별로 공유 버튼 자리를 안내합니다");
+  assert.match(welcome, /v >= 26/);
+  assert.match(welcome, /localStorage\.getItem\('cg_individuals'\)/, "이미 기록이 있는 브라우저에는 띄우지 않습니다(아이폰 저장 칸이 달라 놀랄 수 있음)");
+  assert.match(welcome, /sessionStorage\.setItem\('cg_gate_off', '1'\)/, "'그냥 웹으로'는 이번 방문 동안만");
+  assert.match(html, /\.gate \{ position: fixed; inset: 0; z-index: 1100;/, "튜토리얼(1000)보다 위");
+});
