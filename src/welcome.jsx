@@ -1,6 +1,6 @@
 /* v1.9.2 처음 온 사람 안내 — 필요할 때만 불러오는 조각 (welcome.min.js)
    app.min.js 가 먼저 떠 있어야 합니다. useState·TRACK·STORE·addDaysISO 등은 거기 것을 씁니다.
-   window.CREG_WELCOME = { demoData, OpenHint, DemoGuide, Tutorial } */
+   window.CREG_WELCOME = { demoData, OpenHint, DemoGuide, Tutorial, InstallGate } */
 (function () {
 const INAPP = (() => {
   try {
@@ -256,5 +256,118 @@ function Tutorial() {
   );
 }
 
-window.CREG_WELCOME = { demoData, OpenHint, DemoGuide, Tutorial };
+/* ══════════════════════════════════════════
+   v1.9.5 앱 먼저 받기 (InstallGate) — 대표님: "요새 누가 웹으로 해. 앱을 먼저 다운받게"
+   설치하지 않은 폰으로 처음 들어오면, 앱보다 먼저 가운데 크한이 + 큰 [앱 받기] 화면을 보여 드립니다.
+   · 안드로이드 크롬: 버튼 한 번 → 크롬의 설치 창(beforeinstallprompt) → 앱 목록·홈 화면에 아이콘
+   · 아이폰: 웹이 대신 설치할 방법이 없어(애플 정책) 튜토리얼처럼 단계별로 짚어 드립니다.
+     Safari 버전마다 공유 버튼 자리가 달라 버전별 안내(18↓ 아래 공유, 26 ⋯→공유, 27↑ 주소창 길게 누르기)
+   · 인스타·카톡 안: 설치가 안 되니 먼저 크롬·사파리로 내보냅니다
+   · "그냥 웹으로 둘러볼게요" → 이번 방문 동안은 안 뜸(sessionStorage). 튜토리얼이 이어집니다
+   ★ 이미 이 브라우저에 기록이 있는 분께는 띄우지 않습니다 — 아이폰은 홈 화면 앱과 사파리의 저장 칸이 달라서,
+     로그인 안 한 채 설치하면 기록이 없는 것처럼 보여 놀랄 수 있습니다.
+   ══════════════════════════════════════════ */
+const safariMajor = () => { try { const m = (navigator.userAgent || '').match(/Version\/(\d+)/); return m ? parseInt(m[1], 10) : 0; } catch (e) { return 0; } };
+const IOS_STEPS = () => {
+  const ua = (typeof navigator !== 'undefined' && navigator.userAgent) || '';
+  const other = /CriOS|FxiOS|EdgiOS|Whale|NAVER/.test(ua);   // 아이폰의 다른 브라우저
+  const v = safariMajor();
+  const add = { t: "'홈 화면에 추가'를 눌러요", d: "메뉴를 아래로 조금 내리면 있어요.", mock: '홈 화면에 추가', ic: '⊞' };
+  const done = { t: "오른쪽 위 '추가'를 누르면 끝!", d: "홈 화면에 생긴 브리딩비서 아이콘으로 열어 주세요.\n그때부터 앱으로 열려요.", mock: '추가', ic: '✓' };
+  if (other) return [{ t: '주소창 오른쪽 공유 버튼을 눌러요', d: '네모에 화살표(□↑) 모양이에요.', arrow: 'top-right' }, add, done];
+  if (v >= 27) return [{ t: '아래 주소창을 길게 눌러요', d: "뜨는 메뉴에서 '공유'를 눌러요.\n(공유 버튼 □↑ 이 보이면 그걸 눌러도 돼요)", arrow: 'bottom' }, add, done];
+  if (v >= 26) return [{ t: '주소창 옆 ⋯ 버튼을 눌러요', d: "뜨는 메뉴에서 '공유'를 눌러요.\n(공유 버튼 □↑ 이 바로 보이면 그걸 눌러도 돼요)", arrow: 'bottom-right' },
+    add, { ...done, d: "'웹 앱으로 열기'는 켜 둔 채로요.\n" + done.d }];
+  return [{ t: '화면 아래 공유 버튼을 눌러요', d: '네모에 화살표(□↑) 모양이에요.', arrow: 'bottom' }, add, done];
+};
+
+function InstallGate() {
+  const os = TRACK.device();
+  const [hide, setHide] = useState(() => {
+    try {
+      if (sessionStorage.getItem('cg_gate_off')) return true;
+      const real = JSON.parse(localStorage.getItem('cg_individuals') || '[]');   // 진짜 칸 (예시 칸 말고)
+      return Array.isArray(real) && real.length > 0;
+    } catch (e) { return false; }
+  });
+  const [phase, setPhase] = useState('main');   // main | guide | installing | done
+  const [k, setK] = useState(0);
+  const [copied, setCopied] = useState(false);
+  const [, bump] = useState(0);
+  useEffect(() => {
+    const f = () => bump(v => v + 1);
+    const ok = () => setPhase('done');
+    window.addEventListener('cg-install', f);
+    window.addEventListener('appinstalled', ok);
+    return () => { window.removeEventListener('cg-install', f); window.removeEventListener('appinstalled', ok); };
+  }, []);
+  if (hide || TRACK.standalone() || os === 'pc') return null;
+  const web = () => { try { sessionStorage.setItem('cg_gate_off', '1'); } catch (e) {} setHide(true); };
+  const url = location.origin + location.pathname;
+  const copy = () => { try { navigator.clipboard.writeText(url).then(() => setCopied(true), () => {}); } catch (e) {} };
+  const browser = os === 'ios' ? '사파리' : '크롬';
+  const get = () => {
+    if (INAPP) { openOutside(); return; }
+    const ev = window.CG_INSTALL_EVT;
+    if (os === 'android' && ev) {
+      try {
+        ev.prompt();
+        ev.userChoice.then((c) => { window.CG_INSTALL_EVT = null; setPhase(c && c.outcome === 'accepted' ? 'installing' : 'main'); }, () => {});
+      } catch (e) { setPhase('guide'); }
+      return;
+    }
+    setK(0); setPhase('guide');
+  };
+  const steps = os === 'ios' ? IOS_STEPS() : [
+    { t: "오른쪽 위 ⋮ 를 눌러요", d: "삼성 인터넷이면 아래 ≡ 를 눌러요.", arrow: 'top-right' },
+    { t: "'앱 설치' 또는 '홈 화면에 추가'", d: "둘 중 보이는 걸 누르면 돼요.", mock: '앱 설치', ic: '⊕' },
+    { t: "'설치'를 누르면 끝!", d: "앱 목록·홈 화면에 생긴 브리딩비서로 열어 주세요.", mock: '설치', ic: '✓' },
+  ];
+  const st = steps[k] || steps[0];
+  return (
+    <div className="gate" data-testid="install-gate" data-phase={phase}>
+      {phase === 'guide' ? (
+        <>
+          {st.arrow && <div className={'gate-arrow ' + st.arrow} aria-hidden="true">{st.arrow.indexOf('top') === 0 ? '▲' : '▼'}</div>}
+          <div className="gate-card guide">
+            <img src="./assets/brand/gecko-transparent.webp" alt="" width="84" height="84" />
+            <div className="gate-step">{k + 1} / {steps.length}</div>
+            <b className="gate-t">{st.t}</b>
+            <p className="gate-d">{st.d}</p>
+            {st.mock && <div className="gate-mock"><span>{st.mock}</span><i>{st.ic}</i></div>}
+            <div className="gate-row">
+              {k > 0 && <button className="ghost" onClick={() => setK(k - 1)}>이전</button>}
+              {k < steps.length - 1
+                ? <button onClick={() => setK(k + 1)} data-testid="gate-next">다음</button>
+                : <button onClick={() => setPhase('main')} data-testid="gate-again">처음으로</button>}
+            </div>
+            <button className="gate-web" onClick={web} data-testid="gate-web">그냥 웹으로 둘러볼게요</button>
+          </div>
+        </>
+      ) : (
+        <div className="gate-card">
+          <img src="./assets/brand/gecko-transparent.webp" alt="크한이" width="170" height="170" className="gate-mascot" />
+          <div className="gate-brand">브리딩비서</div>
+          <p className="gate-sub">크레스티드 게코 기록,<br />이제 앱으로 편하게</p>
+          {phase === 'installing' || phase === 'done' ? (
+            <div className="gate-okmsg" data-testid="gate-installed">설치됐어요! 🎉<br />홈 화면(앱 목록)의 <b>브리딩비서</b> 아이콘으로 열어 주세요.</div>
+          ) : (
+            <>
+              <button className="gate-big" onClick={get} data-testid="gate-get">📲 브리딩비서 앱 받기</button>
+              {INAPP ? (
+                <p className="gate-note">{INAPP} 안에서는 설치가 안 돼요.<br />{browser}에서 열리면 바로 받을 수 있어요.<br />
+                  <button className="gate-link" onClick={copy}>{copied ? '주소 복사됐어요 ✓' : '주소 복사하기'}</button></p>
+              ) : (
+                <p className="gate-note">무료 · 가입 없이 바로 시작<br />{os === 'ios' ? '아이폰은 3단계로 홈 화면에 추가해요' : '버튼 한 번이면 설치돼요'}</p>
+              )}
+            </>
+          )}
+          <button className="gate-web" onClick={web} data-testid="gate-web">그냥 웹으로 둘러볼게요</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+window.CREG_WELCOME = { demoData, OpenHint, DemoGuide, Tutorial, InstallGate };
 })();

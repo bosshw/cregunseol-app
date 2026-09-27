@@ -611,8 +611,8 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.4';
-const APP_PATCHED = '2026-09-25';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
+const APP_VERSION = '1.9.5';
+const APP_PATCHED = '2026-09-27';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -4196,6 +4196,7 @@ function App() {
       ) : null}
       {DEMO.on() && <Welcome part="Tutorial" />}
       {screen.name === 'home' && needsOpenHint() && <Welcome part="OpenHint" />}
+      {needsOpenHint() && <Welcome part="InstallGate" />}
 
       {screen.name === 'home' && (
         <HomeScreen key={screen.props.view || 'own'} {...screen.props} individuals={individuals} navigate={navigate} showToast={showToast} refreshIndividuals={refreshIndividuals} />
