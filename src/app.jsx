@@ -611,7 +611,7 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.8';
+const APP_VERSION = '1.9.9';
 const APP_PATCHED = '2026-09-28';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -3453,13 +3453,59 @@ function detectProfileClaim(text) {
     const dv = explicitDate(text);
     if (dv) return { field: 'hatchDate', value: dv };
   }
-  if (!/메이팅|짝짓기|붙였|합사/.test(text)) {
-    const gm = text.match(/(수컷|암컷)(?:이야|이에요|입니다|임|이래|같아|이다|이었|였|으로|이었어)/);
-    if (gm) return { field: 'gender', value: gm[1] === '수컷' ? 'male' : 'female' };
-  }
+  const gc = genderClaim(text);
+  if (gc) return { field: 'gender', value: gc.value, change: gc.change };
   const nm = detectNameClaim(text);
   if (nm) return { field: 'name', value: nm };
   return null;
+}
+
+/* ── 성별 말 알아듣기 (v1.9.9) ──
+   예전엔 "크범이 암컷이야"처럼 끝맺는 말만 알아듣고,
+   "크범이 암컷" · "크범이 암컷으로 바꿔줘" · "하늘이 암컷 릴리화이트"는 메모로 흘려보냈습니다.
+   이제 성별 낱말이 따로 서 있으면 알아듣습니다. 다만 아래는 성별 선언이 아닙니다.
+   - 메이팅·합사 문장("수컷이랑 합사"), 짝 추천
+   - 묻는 말("암컷이야?", "암컷인지 모르겠어", "암컷 몇 마리")
+   - 마릿수("암컷 2마리"), 부정("암컷 아니야")
+   돌려주는 값: { value: 'male'|'female', phrase: 지울 말 조각, change: "바꿔줘"처럼 고치라는 말이 있었는지 } */
+const GENDER_WORD = { 암컷: 'female', 암놈: 'female', 수컷: 'male', 숫컷: 'male', 수놈: 'male', 숫놈: 'male' };
+const GENDER_CHANGE_RE = /(?:으로|로)?\s*(?:바꿔|바꾸|변경|고쳐|고치|수정|정정|해\s*줘|해줘|등록|기록|적어|저장|설정|체크|표시)[가-힣]*/;
+function genderClaim(text) {
+  const s = String(text || '').trim();
+  if (!s) return null;
+  if (RE_MATE.test(s) || /짝|페어|추천/.test(s)) return null;
+  if (/[?？]\s*$/.test(s) || /인지|이니|이냐|일까|맞나|맞니|몇|어떻게\s*알|구분\s*법|구별/.test(s)) return null;
+  const hits = [];
+  // ① 성별 낱말이 따로 서 있거나, 끝맺는 말·"으로"가 붙은 경우
+  const re = /(^|[\s,.(·/])(암컷|암놈|수컷|숫컷|수놈|숫놈)(이야|이에요|예요|입니다|이래|이다|이었어|이었|였어|였|이네|이고|인데|이라서|이라|임|맞아|맞음|맞습니다|확정|판정|판별|같아|같음|인\s*것\s*같[가-힣]*|인\s*듯[가-힣]*|으로|로)?(?=$|[\s,.!~)·/ㅎㅋ]|[가-힣])/g;
+  let m;
+  while ((m = re.exec(s))) {
+    const word = m[2], tail = m[3] || '';
+    const after = s.slice(m.index + m[0].length);
+    // 낱말 뒤에 조사가 이어지면(암컷이랑·암컷한테·암컷들) 성별 선언이 아닙니다 — 끝맺는 말이 붙은 경우만 인정
+    if (!tail && /^[가-힣]/.test(after)) continue;
+    if (/^\s*(?:이|가)?\s*아니/.test(after)) continue;                         // "암컷 아니야"
+    if (/^\s*(?:\d|한\s*마리|두\s*마리|세\s*마리|네\s*마리|마리)/.test(after)) continue;   // "암컷 2마리"
+    let phrase = m[0].replace(/^[\s,.(·/]/, '') ;
+    let change = false;
+    if (tail === '으로' || tail === '로' || !tail) {
+      const cm = after.match(new RegExp('^\\s*' + GENDER_CHANGE_RE.source));
+      if (cm) { phrase += cm[0]; change = /바꿔|바꾸|변경|고쳐|고치|수정|정정/.test(cm[0]); }
+    }
+    hits.push({ value: GENDER_WORD[word], phrase, change });
+  }
+  // ② "성별 암" · "성별은 수컷" · "성별: 암"
+  const sm = s.match(/성별\s*(?:은|는|이|:)?\s*(암|수|숫)(컷|놈)?(?![가-힣])/);
+  if (sm) hits.push({ value: sm[1] === '암' ? 'female' : 'male', phrase: sm[0], change: false });
+  if (!hits.length) return null;
+  const vals = [...new Set(hits.map(h => h.value))];
+  if (vals.length > 1) return null;                                          // 암컷·수컷이 섞이면 어느 쪽인지 모릅니다
+  // "수컷 아니고 암컷이야" — 반대 성별을 부정하며 고쳐 말하는 것도 '고쳐 달라'는 뜻입니다
+  const neg = [...s.matchAll(/(암컷|암놈|수컷|숫컷|수놈|숫놈)\s*(?:이|가)?\s*아니(?:고|라|라고|야|에요|예요|요)?/g)]
+    .filter(n => GENDER_WORD[n[1]] !== vals[0]).map(n => n[0]);
+  const change = hits.some(h => h.change) || neg.length > 0 || /바꿔|바꾸|변경|고쳐|수정|정정/.test(s);
+  const extra = [...neg, ...(s.match(/성별\s*(?:은|는|이|을|를|:)?/g) || [])];
+  return { value: vals[0], phrase: hits[0].phrase, phrases: [...hits.map(h => h.phrase), ...extra], change };
 }
 
 /* 이름을 바꾸겠다는 말 알아듣기
@@ -3518,6 +3564,8 @@ function planProfileFix(cur, text, individuals, morph) {
   const from = (claim.field === 'gender' && cur.gender === 'unknown') ? '' : (cur[claim.field] || '');
   if (from === claim.value) return null;
   if (!from) return claim.field === 'hatchDate' ? { kind: 'apply', field: 'hatchDate', from: '', to: claim.value } : null;
+  /* v1.9.9 — "암컷으로 바꿔줘"처럼 고쳐 달라고 분명히 말씀하시면 되묻지 않고 바로 고칩니다 */
+  if (claim.field === 'gender' && claim.change) return { kind: 'apply', field: 'gender', from, to: claim.value };
   const sibs = claim.field === 'hatchDate' && cur.damId
     ? (individuals || []).filter(x => x.damId === cur.damId && x.hatchDate === from).length : 1;
   return { kind: 'ask', field: claim.field, from, to: claim.value, sibs };
@@ -6057,7 +6105,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       bot(`${t.name} 부화일을 ${fmtDate(to)}로 ${from ? '바꿨' : '적어뒀'}어요 🎂` +
         (moved > 1 ? `\n같이 나온 ${moved}마리와 부화 기록도 함께 옮겼어요.` : ''));
     } else {
-      bot(`${t.name} ${eulreul(PROFILE_LABEL[field])} ${profileText(field, to)}로 바꿨어요 ✅`);
+      bot(`${t.name} ${eulreul(PROFILE_LABEL[field])} ${euroWord(profileText(field, to))} ${from ? '바꿨' : '적어뒀'}어요 ✅`);
     }
   };
 
@@ -6409,7 +6457,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       newSubject = decl;
     } else if (!names.length && !looksLikeQuestion) {
       const singleWord = text.trim().split(/\s+/).length === 1;
-      const genderAssert = /(수컷|암컷)(?:이야|이에요|입니다|임|이래|같아|이다)/.test(text);
+      const genderAssert = !!genderClaim(text);
       const c = guessNewName(text, inds);
       if (c && isBadName(c) && (singleWord || facts.length || morph || genderAssert)) {
         bot(BAD_NAME_MSG);
@@ -6429,8 +6477,8 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       if (morph) heldMorphRef.current = morph;
       // 성별 미리 캡처 (메이팅 문장 제외)
       if (!mating) {
-        const gm = text.match(/(수컷|암컷)(?:이야|이에요|입니다|임|이래|같아|이다)/);
-        if (gm) heldGenderRef.current = gm[1] === '수컷' ? 'male' : 'female';
+        const gc = genderClaim(text);
+        if (gc) heldGenderRef.current = gc.value;
       }
       // 외부 개체 캡처: "마인이 외부 개체야"
       if (/외부/.test(text)) heldExternalRef.current = true;
@@ -6506,10 +6554,10 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       if (plan && plan.kind === 'apply') { applyFix(cur, plan.field, plan.from, plan.to); return; }
       if (plan && plan.kind === 'ask') {
         bot(`잠깐만요 — 지금 ${cur.name}의 ${eunneun(PROFILE_LABEL[plan.field])} ` +
-          `${profileText(plan.field, plan.from)}로 적혀 있어요.\n` +
-          `${profileText(plan.field, plan.to)}로 고칠까요?` +
+          `${euroWord(profileText(plan.field, plan.from))} 적혀 있어요.\n` +
+          `${euroWord(profileText(plan.field, plan.to))} 고칠까요?` +
           (plan.sibs > 1 ? `\n(고치면 같이 나온 ${plan.sibs}마리와 부화 기록도 함께 옮겨져요)` : ''), [
-            { label: `✅ ${profileText(plan.field, plan.to)}가 맞아요`, kind: 'fix',
+            { label: `✅ 네, ${profileText(plan.field, plan.to)}`, kind: 'fix',
               value: { field: plan.field, from: plan.from, to: plan.to, targetId: cur.id } },
             { label: `아니요, ${profileText(plan.field, plan.from)} 그대로`, kind: 'fix-no',
               value: { field: plan.field, from: plan.from } },
@@ -6615,16 +6663,20 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     if (morph) morphLine = applyMorph(target, morph);
 
     // 7) 성별 언급 → 프로필 반영 ("수컷이야" 등 단정 표현만, 메이팅 문장 제외)
-    let genderPhrase = null;
+    let genderPhrases = [];
     if (!mating) {
-      const gm = text.match(/(수컷|암컷)(?:이야|이에요|입니다|임|이래|같아|이다)/);
-      if (gm) {
-        genderPhrase = gm[0];
-        const gv = gm[1] === '수컷' ? 'male' : 'female';
+      const gc = genderClaim(text);
+      if (gc) {
+        genderPhrases = gc.phrases;
+        const gv = gc.value;
+        const was = (DB.getIndividuals().find(i => i.id === target.id) || target).gender;
         DB.updateIndividual(target.id, { gender: gv });
         refreshIndividuals();
         geckoRef.current = { ...geckoRef.current, gender: gv };
-        morphLine = (morphLine ? morphLine + '\n' : '') + `${target.name}, ${genderLabel(gv)}으로 기억할게요.`;
+        missRef.current = 0;
+        morphLine = (morphLine ? morphLine + '\n' : '') + (was === gv
+          ? `${target.name}는 이미 ${euroWord(genderLabel(gv))} 적혀 있어요 ✅`
+          : `${target.name}, ${euroWord(genderLabel(gv))} 적어뒀어요 ✅`);
       }
     }
 
@@ -6633,7 +6685,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       const leftover = text
         .replace(new RegExp(escapeReg(target.name), 'g'), '')
         .replace(morph ? new RegExp('모프(는|가)?\\s*' + escapeReg(morph) + '(야|이야|이에요|예요|입니다|임)?', 'g') : /$^/, '')
-        .replace(genderPhrase ? new RegExp(escapeReg(genderPhrase), 'g') : /$^/, '')
+        .replace(genderPhrases.length ? new RegExp(genderPhrases.map(escapeReg).join('|'), 'g') : /$^/, '')
         .replace(/[\s,.!?~은는이가도야]/g, '');
 
       if (leftover.length < 2) {
@@ -7206,6 +7258,7 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
   const [events, setEvents] = useState(() => DB.getEventsFor(initialGecko.id).filter(e => e.type !== 'ledger'));
   const [showShare, setShowShare] = useState(false);
   const [pubBusy, setPubBusy] = useState(false);       // 공개 기록 올리는 중
+  const [shareOpen, setShareOpen] = useState(false);   // v1.9.9 기록 공유하기 펼침
   const [seasonAsk, setSeasonAsk] = useState(false);   // 산란 시즌 확인 열기
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -7492,106 +7545,54 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
         );
       })()}
 
-      {/* ── 오늘 컨디션 ──
-          좋을 때도 눌러둬야 나중에 "언제부터 처졌는지"를 볼 수 있습니다. */}
-      {isHere(gecko) && (
-        <div style={{padding:'0 16px 10px'}}>
-          <div className="card" style={{margin:0}} data-testid="condition-card">
-            <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', gap:10, marginBottom:9}}>
-              <div style={{fontSize:13.5, fontWeight:800}}>🌤️ 오늘 컨디션</div>
-              {(() => {
-                const dip = conditionDip(gecko.id, events);
-                const last = conditionLog(gecko.id, events)[0];
-                if (dip) return <span style={{fontSize:11, color:'var(--danger)', fontWeight:700}}>{dip.count}번째 처짐</span>;
-                if (!last) return <span style={{fontSize:11, color:'var(--text3)'}}>아직 기록 없음</span>;
-                return <span style={{fontSize:11, color:'var(--text3)'}}>최근 {agoWord(last.date)}</span>;
-              })()}
-            </div>
-            <div style={{display:'flex', gap:5}}>
-              {CONDITIONS.map(c => {
-                const cur = conditionToday(gecko.id, events);
-                const on = cur && Number(cur.data.level) === c.level;
-                return (
-                  <button key={c.key} className="chip-btn brand-condition-choice" data-testid={`cond-${c.key}`}
-                    style={{flex:1, padding:'9px 4px', fontSize:12.5,
-                      ...(on ? {background:'var(--accent-soft)', fontWeight:800, borderColor:'var(--accent-edge)'} : {})}}
-                    onClick={() => {
-                      setConditionToday(gecko.id, c.level);
-                      refreshLocal();
-                    }}>
-                    {c.emoji} {c.label}
-                  </button>
-                );
-              })}
-            </div>
-            {(() => {
-              const log = conditionLog(gecko.id, events).slice(0, 14).reverse();
-              if (log.length < 2) return null;
-              return (
-                <div style={{display:'flex', gap:3, marginTop:10, alignItems:'flex-end', height:22}}>
-                  {log.map(e => {
-                    const c = conditionOf(e.data.level);
-                    return <div key={e.id} title={`${e.date} ${c ? c.label : ''}`}
-                      style={{flex:1, height: c ? 6 + c.level * 5 : 6, borderRadius:2,
-                              background: c ? c.color : 'var(--border)', opacity:.75}} />;
-                  })}
-                </div>
-              );
-            })()}
-          </div>
-        </div>
-      )}
-
-      {/* ── 기록 공유 ──
-          앱 안에서 거래하지 않습니다. 대신 이 아이를 어떻게 키웠는지를 링크 하나로 보여드립니다.
-          담기는 내용은 publicSnapshot() 한 곳에서만 정합니다(분양가·가계부는 나가지 않습니다). */}
-      <div style={{padding:'0 16px 10px'}}>
-        <div className="card" style={{margin:0}} data-testid="public-card">
-          <div style={{display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:10}}>
-            <div style={{minWidth:0, flex:1}}>
-              <div style={{fontSize:13.5, fontWeight:800}}>🔗 기록 공유</div>
-              <div style={{fontSize:11.5, color:'var(--text3)', marginTop:4, lineHeight:1.6, whiteSpace:'pre-line'}}>
-                {gecko.publicOn
-                  ? '링크를 아는 분은 누구나 볼 수 있어요.\n분양가와 가계부는 나가지 않습니다.'
-                  : '이 아이를 어떻게 키웠는지 공유할 수 있어요.\n분양 글에 붙여 두시면 돼요.'}
-              </div>
-            </div>
-            <button className="btn btn-secondary btn-sm" data-testid="public-toggle"
-              style={{width:'auto', whiteSpace:'nowrap'}} disabled={pubBusy} onClick={togglePublic}>
-              {pubBusy ? '잠깐만요…' : gecko.publicOn ? '공유 끄기' : '공유하기'}
-            </button>
-          </div>
-
-          {gecko.publicOn && (
-            <div style={{marginTop:10}}>
-              <div className="share-code" data-testid="public-url"
-                style={{fontSize:11.5, wordBreak:'break-all', lineHeight:1.55, textAlign:'left', padding:'9px 11px', letterSpacing:0, fontWeight:600}}>
-                {publicUrl(gecko.shareCode)}
-              </div>
-              <div style={{display:'flex', gap:6, marginTop:8}}>
-                <button className="btn btn-secondary btn-sm" style={{flex:1}} onClick={() => {
-                  navigator.clipboard?.writeText(publicUrl(gecko.shareCode));
-                  showToast('링크를 복사했어요 📋');
-                }}>📋 링크 복사</button>
-                <button className="btn btn-ghost btn-sm" style={{flex:1}} disabled={pubBusy} onClick={rotatePublic}>
-                  🔄 새 주소로
-                </button>
-              </div>
-              {gecko.publicAt && (
-                <div style={{fontSize:11, color:'var(--text3)', marginTop:7}}>
-                  마지막으로 올린 날 {agoWord(gecko.publicAt)} · 프로필을 열면 하루 한 번 최신으로 올라갑니다
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-
       {/* 기록 추가 → 동일한 대화형 화면으로 */}
       <div style={{padding:'0 16px 10px'}}>
         <button className="btn btn-primary" onClick={() => navigate('chat', { presetGecko: gecko })}>
           💬 {gecko.name} 기록하기
         </button>
+      </div>
+
+      {/* ── 기록 공유하기 (v1.9.9) ──
+          위아래 버튼과 같은 모양의 버튼 하나. 누르면 링크를 만들고(처음이면) 바로 아래에 펼칩니다.
+          앱 안에서 거래하지 않습니다. 담기는 내용은 publicSnapshot() 한 곳에서만 정합니다(분양가·가계부는 나가지 않습니다). */}
+      <div style={{padding:'0 16px 10px'}} data-testid="public-card">
+        {shareOpen ? (
+          <div className="card" style={{margin:0}}>
+            <div style={{fontSize:13, fontWeight:800, marginBottom:8}}>🔗 기록 공유하기</div>
+            {gecko.publicOn ? (
+              <>
+                <div className="share-code" data-testid="public-url"
+                  style={{fontSize:11.5, wordBreak:'break-all', lineHeight:1.55, textAlign:'left', padding:'9px 11px', letterSpacing:0, fontWeight:600}}>
+                  {publicUrl(gecko.shareCode)}
+                </div>
+                <div style={{display:'flex', gap:6, marginTop:8}}>
+                  <button className="btn btn-primary btn-sm" style={{flex:1}} data-testid="public-copy" onClick={() => {
+                    navigator.clipboard?.writeText(publicUrl(gecko.shareCode));
+                    showToast('링크를 복사했어요 📋');
+                  }}>📋 링크 복사</button>
+                  <button className="btn btn-secondary btn-sm" style={{flex:1}} disabled={pubBusy} onClick={rotatePublic}>
+                    🔄 새 주소로
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div style={{fontSize:12, color:'var(--text3)', padding:'4px 0'}}>{pubBusy ? '링크를 만드는 중이에요…' : '링크가 아직 없어요'}</div>
+            )}
+            <div style={{display:'flex', gap:6, marginTop:8}}>
+              <button className="btn btn-ghost btn-sm" style={{flex:1}} data-testid="public-toggle" disabled={pubBusy} onClick={togglePublic}>
+                {pubBusy ? '잠깐만요…' : gecko.publicOn ? '공유 끄기' : '링크 만들기'}
+              </button>
+              <button className="btn btn-secondary btn-sm" style={{flex:1}} onClick={() => setShareOpen(false)}>닫기</button>
+            </div>
+          </div>
+        ) : (
+          <button className="btn btn-secondary" data-testid="public-open" onClick={() => {
+            setShareOpen(true);
+            if (!gecko.publicOn) togglePublic();
+          }}>
+            🔗 기록 공유하기
+          </button>
+        )}
       </div>
 
       {/* ── 이상이 있어요 ──
