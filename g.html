@@ -74,6 +74,18 @@
     padding:9px 18px; border-radius:22px}
   .sign a:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
 
+  /* v1.9.12 한눈에 · 브리딩 */
+  .stats{display:grid; grid-template-columns:repeat(3,1fr); gap:8px}
+  .stat{background:var(--bg2); border:1px solid var(--line); border-radius:11px; padding:10px 8px; text-align:center}
+  .stat .n{font-size:19px; font-weight:800; color:var(--accent2); line-height:1.25}
+  .stat .l{font-size:11px; color:var(--text3); margin-top:2px}
+  .facts{margin-top:10px}
+  .kids{display:flex; flex-wrap:wrap; gap:6px}
+  .kid{font-size:12.5px; padding:5px 10px; border-radius:18px; background:var(--bg2); border:1px solid var(--line); color:var(--text)}
+  .kid small{color:var(--text3); margin-left:4px}
+  .preview{position:sticky; top:0; z-index:5; margin:0 -16px; padding:8px 16px; text-align:center; font-size:12px;
+    background:var(--accent-soft); color:var(--accent2); border-bottom:1px solid var(--accent-edge)}
+
   .state{text-align:center; padding:80px 20px; color:var(--text3); font-size:14px; line-height:1.9}
   .state b{display:block; color:var(--text); font-size:16px; margin-bottom:8px}
 </style>
@@ -103,6 +115,15 @@
 
   var GENDER = { female: '♀ 암컷', male: '♂ 수컷', unknown: '? 미구분' };
   var TYPE = { growth: '몸무게', shed: '탈피', feeding: '먹이', health: '이상' };
+  var PREVIEW = new URLSearchParams(location.search).get('preview') === '1';
+  var daysAgo = function (iso) {
+    if (!iso) return '';
+    var d = Math.round((new Date(new Date().toISOString().slice(0, 10)) - new Date(iso)) / 86400000);
+    if (isNaN(d) || d < 0) return '';
+    return d === 0 ? '오늘' : d === 1 ? '어제' : d + '일 전';
+  };
+  var stat = function (n, l) { return '<div class="stat"><div class="n">' + esc(n) + '</div><div class="l">' + esc(l) + '</div></div>'; };
+  var row = function (k, v) { return '<div class="row"><span class="k">' + esc(k) + '</span><span class="v">' + esc(v) + '</span></div>'; };
 
   var fmt = function (iso) {
     if (!iso) return '';
@@ -175,15 +196,33 @@
       (monthsSince(d.hatchDate) ? ' · ' + esc(monthsSince(d.hatchDate)) : '') + '</span>';
     if (d.fromUs) h += '<span class="chip plain">우리 집에서 태어난 아이</span>';
     h += '</div></div></div>';
+    if (PREVIEW) h = '<div class="preview">미리 보기 — 링크를 받은 분에게 이렇게 보여요</div>' + h;
 
-    /* 혈통 */
-    if (d.sire || d.dam || (d.litter && d.litter.length)) {
-      h += '<div class="card"><div class="sec">🌳 혈통</div>';
-      if (d.sire) h += '<div class="row"><span class="k">아빠</span><span class="v">' + esc(d.sire) + '</span></div>';
-      if (d.dam)  h += '<div class="row"><span class="k">엄마</span><span class="v">' + esc(d.dam) + '</span></div>';
-      if (d.litter && d.litter.length)
-        h += '<div class="row"><span class="k">같은 클러치</span><span class="v">' + esc(d.litter.join(' · ')) + '</span></div>';
-      h += '</div>';
+    /* v1.9.12 한눈에 — 옛 한 장(v1)은 먹이 줄에서 직접 셉니다 */
+    var logs = d.logs || [];
+    var sm = d.summary;
+    if (!sm) {
+      var fl = logs.filter(function (l) { return l.type === 'feeding'; });
+      var cut = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+      sm = { feeds: fl.length, feed30: fl.filter(function (l) { return l.date >= cut; }).length,
+             lastFeed: fl.length ? fl[0].date : '', sheds: logs.filter(function (l) { return l.type === 'shed'; }).length, food: [] };
+    }
+    logs = logs.filter(function (l) { return l.type !== 'feeding'; });
+    var ws = d.weights || [];
+    var lastW = ws.length ? ws[ws.length - 1] : null;
+    if (sm.feeds || lastW || sm.sheds) {
+      h += '<div class="card"><div class="sec">✨ 한눈에</div><div class="stats">';
+      /* 나이는 이름 밑 칩에 이미 있으니 숫자 칸은 먹이·몸무게·탈피 */
+      h += stat((sm.feed30 || 0) + '번', '30일 먹이');
+      h += stat(lastW ? lastW.g + 'g' : '—', '최근 몸무게');
+      h += stat((sm.sheds || 0) + '번', '탈피');
+      h += '</div><div class="facts">';
+      if (sm.lastFeed) h += row('마지막 먹이', fmt(sm.lastFeed) + (daysAgo(sm.lastFeed) ? ' (' + daysAgo(sm.lastFeed) + ')' : ''));
+      if (sm.food && sm.food.length) h += row('주로 먹는 것', sm.food.join(' · '));
+      if (sm.feed30) h += row('최근 30일 거식', sm.refused30 ? sm.refused30 + '번' : '없음');
+      if (sm.lastShed) h += row('마지막 탈피', fmt(sm.lastShed));
+      if (sm.since) h += row('기록한 지', fmt(sm.since) + '부터');
+      h += '</div></div>';
     }
 
     /* 몸무게 */
@@ -193,14 +232,48 @@
       h += '<div class="card"><div class="sec">📏 몸무게</div><div class="row"><span class="k">' +
            esc(fmt(d.weights[0].date)) + '</span><span class="v">' + esc(d.weights[0].g) + 'g</span></div></div>';
 
-    /* 기록 */
-    if (d.logs && d.logs.length) {
+    /* v1.9.12 브리딩 이력 */
+    var br = d.breeding;
+    if (br && (br.clutches || br.matings || (br.kids && br.kids.length))) {
+      h += '<div class="card"><div class="sec">🥚 브리딩 이력</div><div class="stats">';
+      h += stat(br.clutches + '번', '산란');
+      h += stat(br.eggs + '개', '알');
+      h += stat(br.hatched + '마리', '부화');
+      h += '</div><div class="facts">';
+      if (br.mates && br.mates.length) h += row('짝', br.mates.join(' · '));
+      if (br.first) h += row('첫 산란', fmt(br.first));
+      (br.recent || []).forEach(function (c) {
+        h += '<div class="log"><span class="d">' + esc(fmt(c.date)) + '</span><span class="t">' +
+             (c.mate ? esc(c.mate) + ' · ' : '') + '알 ' + esc(c.eggs) + '개 · ' + esc(c.result) + '</span></div>';
+      });
+      h += '</div></div>';
+    }
+
+    /* 혈통 — 자식까지 */
+    var kids = (br && br.kids) || [];
+    if (d.sire || d.dam || (d.litter && d.litter.length) || kids.length) {
+      h += '<div class="card"><div class="sec">🌳 혈통</div>';
+      if (d.sire) h += row('아빠', d.sire);
+      if (d.dam)  h += row('엄마', d.dam);
+      if (d.litter && d.litter.length) h += row('같은 클러치', d.litter.join(' · '));
+      if (kids.length) {
+        h += '<div style="font-size:12px;color:var(--text3);margin:10px 0 6px">자식 ' + kids.length + '마리</div><div class="kids">';
+        kids.forEach(function (k) {
+          h += '<span class="kid">' + esc(k.name) + (k.morph ? '<small>' + esc(k.morph) + '</small>' : '') + '</span>';
+        });
+        h += '</div>';
+      }
+      h += '</div>';
+    }
+
+    /* 기록 — 먹이는 위 '한눈에'로 묶었습니다 */
+    if (logs.length) {
       h += '<div class="card"><div class="sec">📖 지내온 기록</div>';
-      d.logs.slice(0, 20).forEach(function (l) {
+      logs.slice(0, 20).forEach(function (l) {
         h += '<div class="log"><span class="d">' + esc(fmt(l.date)) + '</span><span class="t">' +
              esc(TYPE[l.type] || l.type) + (l.note ? ' · ' + esc(l.note) : '') + '</span></div>';
       });
-      if (d.logs.length > 20) h += '<div class="more">그 밖에 ' + (d.logs.length - 20) + '건이 더 있어요</div>';
+      if (logs.length > 20) h += '<div class="more">그 밖에 ' + (logs.length - 20) + '건이 더 있어요</div>';
       h += '</div>';
     }
 
@@ -217,6 +290,16 @@
     app.innerHTML = h;
     window.CREG_ART.decorate(app);
     if (d.name) document.title = d.name + ' · 사육 기록';
+  }
+
+  /* v1.9.12 앱 안 미리 보기 — 서버 대신 앱이 건네준 지금 기록으로 그립니다 */
+  if (PREVIEW) {
+    window.addEventListener('message', function (e) {
+      if (e.origin !== location.origin || !e.data || !e.data.cgPreview) return;
+      try { render(e.data.cgPreview); } catch (err) { state('미리 보기를 그리지 못했어요', ''); }
+    });
+    try { parent.postMessage({ cgPreviewReady: 1 }, location.origin); } catch (err) {}
+    return;
   }
 
   var code = (new URLSearchParams(location.search).get('c') || '').trim();
