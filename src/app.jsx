@@ -611,7 +611,7 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.10';
+const APP_VERSION = '1.9.11';
 const APP_PATCHED = '2026-09-28';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -5940,10 +5940,22 @@ function GeckoCard({ gecko, onClick, onToggleFav }) {
   );
 }
 
-function WeightChart({ events }) {
+function WeightChart({ events, name }) {
   const gs = events.filter(e => e.type === 'growth' && e.data && e.data.weight)
     .sort((a, b) => (a.date + (a.createdAt || '')) > (b.date + (b.createdAt || '')) ? 1 : -1);
-  if (gs.length < 2) return null;
+  /* v1.9.11 — 그래프가 있다는 걸 모르셨습니다. 몸무게가 두 번 미만이면 자리만 보여 드리고 적는 법을 알려 드립니다 */
+  if (gs.length < 2) return (
+    <div style={{padding:'0 16px 10px'}}>
+      <div className="card" style={{margin:0, padding:'11px 14px'}} data-testid="weight-empty">
+        <div style={{fontSize:13, fontWeight:700, color:'var(--text2)'}}>📈 몸무게 그래프</div>
+        <div style={{fontSize:11.5, color:'var(--text3)', marginTop:4, lineHeight:1.6}}>
+          {gs.length ? `지금 ${gs[0].data.weight}g 한 번 적혀 있어요. 한 번 더 재서 적으면 그래프가 그려져요.`
+                     : `몸무게를 두 번 이상 적으면 여기에 그래프가 그려져요.`}
+          <br/>예) "{name || '크한이'} 45g"
+        </div>
+      </div>
+    </div>
+  );
   const W = 340, H = 150, P = 30;
   const ws = gs.map(g => parseFloat(g.data.weight));
   const min = Math.min(...ws), max = Math.max(...ws);
@@ -7669,8 +7681,128 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
         );
       })()}
 
+      <WeightChart events={events} name={gecko.name} />
+
+      {/* ── 활동 기록 ──
+          v1.9.11 — 대표님 요청으로 [기록하기] 버튼 위로 올렸습니다(아래에 있으니 찾기·보기 어렵다).
+          몸무게 그래프도 함께 올립니다.
+          밥 기록이 하루에도 여러 줄씩 쌓여 나머지 기록이 저 아래로 밀려났습니다(v1.7).
+          그래서 🍽️ 피딩 / 📋 활동 두 칸으로 나누고, 누른 칸만 펼칩니다.
+          ★ 나누는 기준은 아래 LOG_TABS 한 곳에서만 정합니다. */}
+      <div className="section-title">활동 기록 {events.length > 0 ? `(${events.length})` : ''}</div>
+
+      {events.length === 0 ? (
+        <div className="empty" style={{padding:'30px 20px'}}>
+          <div className="empty-icon" style={{fontSize:36}}>📋</div>
+          <p>아직 기록이 없어요. 아래 버튼으로 첫 기록을 남겨보세요.</p>
+        </div>
+      ) : (
+        LOG_TABS.map(([tabKey, tabLabel, mine]) => {
+          const list = sortedEvents.filter(e => mine(e));
+          const open = logOpen === tabKey;
+          return (
+        <div key={tabKey} style={{padding:'0 16px 8px'}}>
+          <button data-testid={'log-tab-' + tabKey} aria-expanded={open}
+            onClick={() => setLogOpen(open ? '' : tabKey)}
+            style={{width:'100%', display:'flex', alignItems:'center', justifyContent:'space-between', gap:8,
+                    background:'var(--bg3)', border:'1px solid var(--border)', borderRadius:12,
+                    padding:'12px 14px', cursor:'pointer', color:'var(--text)', fontSize:13.5, fontWeight:800}}>
+            <span>{tabLabel} <span style={{color:'var(--text3)', fontWeight:600}}>({list.length})</span></span>
+            <BrandIcon name="next" size={14} style={{transform:open?'rotate(-90deg)':'rotate(90deg)',transition:'transform .15s'}}/>
+          </button>
+
+          {open && (list.length === 0 ? (
+            <div style={{fontSize:12.5, color:'var(--text3)', padding:'12px 4px'}}>아직 기록이 없어요.</div>
+          ) : (
+            <div className="timeline" style={{padding:0}}>
+          {list.map(ev => {
+            const t = EVENT_TYPES.find(e => e.key === ev.type);
+            const isEditing = editingId === ev.id;
+            return (
+              <div key={ev.id} className="timeline-item">
+                <div className="timeline-dot" style={{background: t?.color || 'var(--text3)'}} />
+                <div className="timeline-content">
+                  <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+                    <div className="timeline-type">{t?.emoji} {t?.label}</div>
+                    <div style={{display:'flex', gap:12}}>
+                      <button onClick={() => {
+                        setConfirmDelEvent(null);
+                        if (isEditing) { setEditingId(null); return; }
+                        setEditVals({ date: ev.date, main: mainValOf(ev), notes: (ev.data && ev.data.notes) || '', photo: (ev.data && ev.data.photo) || '' });
+                        setEditingId(ev.id);
+                      }} style={{background:'none', border:'none', cursor:'pointer', fontSize:13, color:'var(--text3)'}}>✏️</button>
+                      <button onClick={() => { setEditingId(null); setConfirmDelEvent(ev.id); }} style={{background:'none', border:'none', cursor:'pointer', fontSize:13, color:'var(--text3)'}}>🗑️</button>
+                    </div>
+                  </div>
+
+                  {confirmDelEvent === ev.id ? (
+                    <div style={{marginTop:6}}>
+                      <div style={{fontSize:12, color:'var(--danger)', marginBottom:6}}>이 기록을 삭제할까요?</div>
+                      <div style={{display:'flex', gap:6}}>
+                        <button className="btn btn-danger btn-sm" style={{flex:1}} onClick={() => { DB.deleteEvent(ev.id); setConfirmDelEvent(null); refreshLocal(); showToast('기록 삭제 완료'); }}>삭제</button>
+                        <button className="btn btn-secondary btn-sm" style={{flex:1}} onClick={() => setConfirmDelEvent(null)}>취소</button>
+                      </div>
+                    </div>
+                  ) : isEditing ? (
+                    <div style={{marginTop:6, display:'flex', flexDirection:'column', gap:6}}>
+                      <input type="date" className="input" style={{padding:'8px 10px', fontSize:13}} value={editVals.date || ''} onChange={e => setEditVals(v => ({ ...v, date: e.target.value }))} />
+                      {mainKeyOf(ev) && (
+                        <input className="input" style={{padding:'8px 10px', fontSize:13}} placeholder={mainLabelOf(ev)} value={editVals.main} onChange={e => setEditVals(v => ({ ...v, main: e.target.value }))} />
+                      )}
+                      <input className="input" style={{padding:'8px 10px', fontSize:13}} placeholder="메모" value={editVals.notes} onChange={e => setEditVals(v => ({ ...v, notes: e.target.value }))} />
+                      <div style={{display:'flex', alignItems:'center', gap:8, flexWrap:'wrap'}}>
+                        {editVals.photo ? (
+                          <>
+                            <img src={editVals.photo} alt="첨부" style={{width:52, height:52, borderRadius:8, objectFit:'cover', border:'1px solid var(--border)'}} />
+                            <button className="btn btn-secondary btn-sm" style={{width:'auto'}} onClick={() => eventPhotoRef.current && eventPhotoRef.current.click()}>사진 변경</button>
+                            <button className="btn btn-secondary btn-sm" style={{width:'auto'}} onClick={() => setEditVals(v => ({ ...v, photo: '' }))}>제거</button>
+                          </>
+                        ) : (
+                          <button className="btn btn-secondary btn-sm" style={{width:'auto'}} onClick={() => eventPhotoRef.current && eventPhotoRef.current.click()}>📷 사진 첨부</button>
+                        )}
+                      </div>
+                      <div style={{display:'flex', gap:6}}>
+                        <button className="btn btn-primary btn-sm" style={{flex:1}} onClick={() => {
+                          const data = { ...(ev.data || {}), notes: editVals.notes };
+                          const mk = mainKeyOf(ev);
+                          if (mk) data[mk] = editVals.main;
+                          if (editVals.photo) data.photo = editVals.photo; else delete data.photo;
+                          DB.updateEvent(ev.id, { date: editVals.date || ev.date, data });
+                          setEditingId(null); refreshLocal(); showToast('수정 완료');
+                        }}>저장</button>
+                        <button className="btn btn-secondary btn-sm" style={{flex:1}} onClick={() => setEditingId(null)}>취소</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      {/* v1.9.6 산란 기록을 누르면 알 화면으로 — 알마다 부화·무정·문제를 고릅니다 */}
+                      <div className="timeline-detail" onClick={ev.type === 'laying' ? () => navigate('clutch', { layingId: ev.id, back: { name: 'profile', props: { gecko } } }) : undefined}
+                        style={ev.type === 'laying' ? { cursor: 'pointer' } : undefined} data-testid={ev.type === 'laying' ? 'tl-laying' : undefined}>
+                        {formatEventDetail(ev)}{ev.type === 'laying' && <span className="tl-egg"> · 알 보기 ›</span>}
+                      </div>
+                      {ev.data?.photo && (
+                        <img src={ev.data.photo} alt="기록 사진" style={{maxWidth:150, borderRadius:8, marginTop:6, display:'block', border:'1px solid var(--border)', cursor:'pointer'}}
+                          onClick={() => setPhotoView({ src: ev.data.photo, date: ev.date, id: ev.id })} />
+                      )}
+                      {ev.data?.notes && ev.type !== 'feeding' && ev.type !== 'memo' && (
+                        <div style={{fontSize:12, color:'var(--text3)', marginTop:2}}>{ev.data.notes}</div>
+                      )}
+                      <div className="timeline-date">{fmtDate(ev.date)}</div>
+                    </>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+            </div>
+          ))}
+        </div>
+          );
+        })
+      )}
+
       {/* 기록 추가 → 동일한 대화형 화면으로 */}
-      <div style={{padding:'0 16px 10px'}}>
+      <div style={{padding:'8px 16px 10px'}}>
         <button className="btn btn-primary" onClick={() => navigate('chat', { presetGecko: gecko })}>
           💬 {gecko.name} 기록하기
         </button>
@@ -7816,125 +7948,7 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
         )}
       </div>
 
-      <WeightChart events={events} />
-
       <PedigreeCard gecko={gecko} navigate={navigate} />
-
-      {/* ── 활동 기록 ──
-          밥 기록이 하루에도 여러 줄씩 쌓여 나머지 기록이 저 아래로 밀려났습니다(v1.7).
-          그래서 🍽️ 피딩 / 📋 활동 두 칸으로 나누고, 누른 칸만 펼칩니다.
-          ★ 나누는 기준은 아래 LOG_TABS 한 곳에서만 정합니다. */}
-      <div className="section-title">활동 기록 {events.length > 0 ? `(${events.length})` : ''}</div>
-
-      {events.length === 0 ? (
-        <div className="empty" style={{padding:'30px 20px'}}>
-          <div className="empty-icon" style={{fontSize:36}}>📋</div>
-          <p>아직 기록이 없어요. 위 버튼으로 첫 기록을 남겨보세요.</p>
-        </div>
-      ) : (
-        LOG_TABS.map(([tabKey, tabLabel, mine]) => {
-          const list = sortedEvents.filter(e => mine(e));
-          const open = logOpen === tabKey;
-          return (
-        <div key={tabKey} style={{padding:'0 16px 8px'}}>
-          <button data-testid={'log-tab-' + tabKey} aria-expanded={open}
-            onClick={() => setLogOpen(open ? '' : tabKey)}
-            style={{width:'100%', display:'flex', alignItems:'center', justifyContent:'space-between', gap:8,
-                    background:'var(--bg3)', border:'1px solid var(--border)', borderRadius:12,
-                    padding:'12px 14px', cursor:'pointer', color:'var(--text)', fontSize:13.5, fontWeight:800}}>
-            <span>{tabLabel} <span style={{color:'var(--text3)', fontWeight:600}}>({list.length})</span></span>
-            <BrandIcon name="next" size={14} style={{transform:open?'rotate(-90deg)':'rotate(90deg)',transition:'transform .15s'}}/>
-          </button>
-
-          {open && (list.length === 0 ? (
-            <div style={{fontSize:12.5, color:'var(--text3)', padding:'12px 4px'}}>아직 기록이 없어요.</div>
-          ) : (
-            <div className="timeline" style={{padding:0}}>
-          {list.map(ev => {
-            const t = EVENT_TYPES.find(e => e.key === ev.type);
-            const isEditing = editingId === ev.id;
-            return (
-              <div key={ev.id} className="timeline-item">
-                <div className="timeline-dot" style={{background: t?.color || 'var(--text3)'}} />
-                <div className="timeline-content">
-                  <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
-                    <div className="timeline-type">{t?.emoji} {t?.label}</div>
-                    <div style={{display:'flex', gap:12}}>
-                      <button onClick={() => {
-                        setConfirmDelEvent(null);
-                        if (isEditing) { setEditingId(null); return; }
-                        setEditVals({ date: ev.date, main: mainValOf(ev), notes: (ev.data && ev.data.notes) || '', photo: (ev.data && ev.data.photo) || '' });
-                        setEditingId(ev.id);
-                      }} style={{background:'none', border:'none', cursor:'pointer', fontSize:13, color:'var(--text3)'}}>✏️</button>
-                      <button onClick={() => { setEditingId(null); setConfirmDelEvent(ev.id); }} style={{background:'none', border:'none', cursor:'pointer', fontSize:13, color:'var(--text3)'}}>🗑️</button>
-                    </div>
-                  </div>
-
-                  {confirmDelEvent === ev.id ? (
-                    <div style={{marginTop:6}}>
-                      <div style={{fontSize:12, color:'var(--danger)', marginBottom:6}}>이 기록을 삭제할까요?</div>
-                      <div style={{display:'flex', gap:6}}>
-                        <button className="btn btn-danger btn-sm" style={{flex:1}} onClick={() => { DB.deleteEvent(ev.id); setConfirmDelEvent(null); refreshLocal(); showToast('기록 삭제 완료'); }}>삭제</button>
-                        <button className="btn btn-secondary btn-sm" style={{flex:1}} onClick={() => setConfirmDelEvent(null)}>취소</button>
-                      </div>
-                    </div>
-                  ) : isEditing ? (
-                    <div style={{marginTop:6, display:'flex', flexDirection:'column', gap:6}}>
-                      <input type="date" className="input" style={{padding:'8px 10px', fontSize:13}} value={editVals.date || ''} onChange={e => setEditVals(v => ({ ...v, date: e.target.value }))} />
-                      {mainKeyOf(ev) && (
-                        <input className="input" style={{padding:'8px 10px', fontSize:13}} placeholder={mainLabelOf(ev)} value={editVals.main} onChange={e => setEditVals(v => ({ ...v, main: e.target.value }))} />
-                      )}
-                      <input className="input" style={{padding:'8px 10px', fontSize:13}} placeholder="메모" value={editVals.notes} onChange={e => setEditVals(v => ({ ...v, notes: e.target.value }))} />
-                      <div style={{display:'flex', alignItems:'center', gap:8, flexWrap:'wrap'}}>
-                        {editVals.photo ? (
-                          <>
-                            <img src={editVals.photo} alt="첨부" style={{width:52, height:52, borderRadius:8, objectFit:'cover', border:'1px solid var(--border)'}} />
-                            <button className="btn btn-secondary btn-sm" style={{width:'auto'}} onClick={() => eventPhotoRef.current && eventPhotoRef.current.click()}>사진 변경</button>
-                            <button className="btn btn-secondary btn-sm" style={{width:'auto'}} onClick={() => setEditVals(v => ({ ...v, photo: '' }))}>제거</button>
-                          </>
-                        ) : (
-                          <button className="btn btn-secondary btn-sm" style={{width:'auto'}} onClick={() => eventPhotoRef.current && eventPhotoRef.current.click()}>📷 사진 첨부</button>
-                        )}
-                      </div>
-                      <div style={{display:'flex', gap:6}}>
-                        <button className="btn btn-primary btn-sm" style={{flex:1}} onClick={() => {
-                          const data = { ...(ev.data || {}), notes: editVals.notes };
-                          const mk = mainKeyOf(ev);
-                          if (mk) data[mk] = editVals.main;
-                          if (editVals.photo) data.photo = editVals.photo; else delete data.photo;
-                          DB.updateEvent(ev.id, { date: editVals.date || ev.date, data });
-                          setEditingId(null); refreshLocal(); showToast('수정 완료');
-                        }}>저장</button>
-                        <button className="btn btn-secondary btn-sm" style={{flex:1}} onClick={() => setEditingId(null)}>취소</button>
-                      </div>
-                    </div>
-                  ) : (
-                    <>
-                      {/* v1.9.6 산란 기록을 누르면 알 화면으로 — 알마다 부화·무정·문제를 고릅니다 */}
-                      <div className="timeline-detail" onClick={ev.type === 'laying' ? () => navigate('clutch', { layingId: ev.id, back: { name: 'profile', props: { gecko } } }) : undefined}
-                        style={ev.type === 'laying' ? { cursor: 'pointer' } : undefined} data-testid={ev.type === 'laying' ? 'tl-laying' : undefined}>
-                        {formatEventDetail(ev)}{ev.type === 'laying' && <span className="tl-egg"> · 알 보기 ›</span>}
-                      </div>
-                      {ev.data?.photo && (
-                        <img src={ev.data.photo} alt="기록 사진" style={{maxWidth:150, borderRadius:8, marginTop:6, display:'block', border:'1px solid var(--border)', cursor:'pointer'}}
-                          onClick={() => setPhotoView({ src: ev.data.photo, date: ev.date, id: ev.id })} />
-                      )}
-                      {ev.data?.notes && ev.type !== 'feeding' && ev.type !== 'memo' && (
-                        <div style={{fontSize:12, color:'var(--text3)', marginTop:2}}>{ev.data.notes}</div>
-                      )}
-                      <div className="timeline-date">{fmtDate(ev.date)}</div>
-                    </>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-            </div>
-          ))}
-        </div>
-          );
-        })
-      )}
 
       {/* 삭제 */}
       <div style={{padding:'20px 16px 16px'}}>
