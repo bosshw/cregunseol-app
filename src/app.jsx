@@ -611,8 +611,8 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.5';
-const APP_PATCHED = '2026-09-27';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
+const APP_VERSION = '1.9.6';
+const APP_PATCHED = '2026-09-28';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -3201,14 +3201,55 @@ function relDate(text) {
   for (const [re, n] of REL_DAY) if (re.test(text)) return shiftDays(n);
   return null;
 }
-// 날짜 해석: "7월 10일", "2026-07-10", 어제/내일/3일 전…, 기본 오늘
-function parseKDate(text) {
-  let m = text.match(/(\d{4})[-./](\d{1,2})[-./](\d{1,2})/);
-  if (m) return `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
-  m = text.match(/(\d{1,2})월\s*(\d{1,2})일/);
-  if (m) return `${new Date().getFullYear()}-${String(m[1]).padStart(2,'0')}-${String(m[2]).padStart(2,'0')}`;
-  return relDate(text) || todayStr();
+/* ── 날짜 읽기 (v1.9.6 — 연도까지) ──
+   제보(2026-09-28): "마시 해칭일 25년 12월 11일"을 2026-12-11 로 읽고 "아직 오지 않은 날짜"만 되풀이했습니다.
+   예전엔 "12월 11일"만 보고 무조건 올해를 붙였습니다. 이제 알아듣는 것:
+     2025-12-11 · 2025.12.11 · 25.12.11 · 20251211 · 251211 · 25년 12월 11일 · 2025년 12월 11일
+     작년·재작년·올해·내년 12월 11일 · 24년·23년… 지난 해 전부
+   ★ 연도를 말하지 않은 "12월 11일"이 한 달 넘게 앞날이면 작년으로 봅니다 —
+     생일·지난 기록은 과거 일이라서요. 가까운 앞날(한 달 안)은 그대로 둡니다(예정일일 수 있음). */
+const YEAR_REL = [[/재작년|지지난\s*해/, -2], [/작년|지난\s*해|전년/, -1], [/올해|금년|이번\s*해/, 0], [/내년|다음\s*해|명년/, 1]];
+function ymdISO(y, mo, d) {
+  y = parseInt(y, 10); mo = parseInt(mo, 10); d = parseInt(d, 10);
+  if (!(y >= 1990 && y <= 2100 && mo >= 1 && mo <= 12 && d >= 1 && d <= 31)) return null;
+  const t = new Date(y, mo - 1, d);
+  if (t.getMonth() !== mo - 1) return null;   // 2월 30일 같은 없는 날
+  return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 }
+const fullYear = (y) => { const n = parseInt(y, 10); return n < 100 ? 2000 + n : n; };
+function absDate(text) {
+  const s = String(text || '');
+  const nowY = new Date().getFullYear();
+  let m;
+  // 2025-12-11 · 2025.12.11 · 2025/12/11
+  if ((m = s.match(/(\d{4})\s*[-./]\s*(\d{1,2})\s*[-./]\s*(\d{1,2})/))) return ymdISO(m[1], m[2], m[3]);
+  // 25년 12월 11일 · 2025년 12월 11일 · '25년 12월 11일
+  if ((m = s.match(/(\d{4}|\d{2})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일?/))) return ymdISO(fullYear(m[1]), m[2], m[3]);
+  // 25.12.11 · 25-12-11 · 25/12/11 (몸무게 12.5 같은 두 토막은 건드리지 않습니다)
+  if ((m = s.match(/(?:^|[^\d.])(\d{2})\s*[./-]\s*(\d{1,2})\s*[./-]\s*(\d{1,2})(?![\d.])/))) return ymdISO(fullYear(m[1]), m[2], m[3]);
+  // 20251211
+  if ((m = s.match(/(?:^|\D)((?:19|20)\d{2})(\d{2})(\d{2})(?!\d)/))) return ymdISO(m[1], m[2], m[3]);
+  // 251211 — 돈·무게·개수가 아닌 여섯 자리이고, 올해보다 앞선 해일 때만
+  if ((m = s.match(/(?:^|\D)(\d{2})(\d{2})(\d{2})(?!\d|\s*(?:원|만|천|g\b|그램|개|마리|알|%))/))) {
+    const y = 2000 + parseInt(m[1], 10);
+    if (y <= nowY) { const iso = ymdISO(y, m[2], m[3]); if (iso) return iso; }
+  }
+  // 12월 11일 — 작년·재작년 같은 말이 있으면 그 해로, 없으면 올해(한 달 넘게 앞이면 작년)
+  if ((m = s.match(/(\d{1,2})\s*월\s*(\d{1,2})\s*일/))) {
+    const rel = YEAR_REL.find(([re]) => re.test(s));
+    if (rel) return ymdISO(nowY + rel[1], m[1], m[2]);
+    const iso = ymdISO(nowY, m[1], m[2]);
+    if (iso && iso > shiftDays(31)) return ymdISO(nowY - 1, m[1], m[2]);
+    return iso;
+  }
+  return null;
+}
+// 날짜 해석: 위 absDate → 어제/내일/3일 전… → 기본 오늘
+function parseKDate(text) {
+  return absDate(text) || relDate(text) || todayStr();
+}
+// 날짜를 "말했는지" — 말하지 않았으면 null (오늘로 채우지 않음)
+const prevYearISO = (iso) => { const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})$/); return m ? ymdISO(+m[1] - 1, m[2], m[3]) : null; };
 
 /* ── 한글로 쓴 개수 ──
    "두 마리"·"세 개"도 숫자로 알아듣습니다. */
@@ -3401,12 +3442,10 @@ function profileText(field, v) {
 // 문장에 '날짜가 분명히 적혀 있을 때만' 돌려줍니다.
 // (parseKDate는 없으면 오늘을 주기 때문에, 그대로 쓰면 엉뚱한 날로 고쳐질 수 있습니다)
 function explicitDate(text) {
-  if (/\d{4}[-./]\d{1,2}[-./]\d{1,2}/.test(text)) return parseKDate(text);
-  if (/\d{1,2}월\s*\d{1,2}일/.test(text)) return parseKDate(text);
-  return relDate(text);
+  return absDate(text) || relDate(text);
 }
 function detectProfileClaim(text) {
-  const birthWord = /(부화일|해칭일|생일|출생일|태어난\s*날)/.test(text);
+  const birthWord = /(부화일|해칭일|생일|출생일|태어난\s*날|\d\s*일생|\d\s*년생)/.test(text);
   const bornVerb = /태어(났|나)/.test(text);
   // "어제 3마리 태어났어"는 그 아이의 생일이 아니라 부화 기록입니다
   const hasCount = !!countIn(text, '마리');
@@ -4802,9 +4841,12 @@ function moveHatchTo(hatchId, toLayingId) {
 
 /* ── 클러치(알) 상세 — 알 묶음을 개체처럼 들여다보는 화면 ──
    알 사진 · 부/모 · 산란일 · 해칭 예정일, 그리고 [해칭했어요] 한 번으로 베이비 등록까지. ── */
-function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals }) {
+function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals, back }) {
+  // v1.9.6 프로필의 산란 기록에서 왔으면 그 프로필로 돌아갑니다
+  const goBack = () => back ? navigate(back.name, back.props || {}) : navigate('home', { view: 'laying' });
   const [ver, setVer] = useState(0);
   const [hatchOpen, setHatchOpen] = useState(false);
+  const [hatchEgg, setHatchEgg] = useState(null);   // v1.9.6 알마다 [부화] — 어느 알에서 나왔는지
   const [count, setCount] = useState('');
   const [hDate, setHDate] = useState(todayStr());   // 부화한 날 — 오늘 확인했다고 오늘로 잡지 않습니다
   const [dateEdit, setDateEdit] = useState(false);  // 이미 적은 부화일 고치기
@@ -4821,7 +4863,7 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals }) {
 
   const ev = DB.getEvents().find(e => e.id === layingId);
   if (!ev) return (
-    <div className="screen"><div className="header"><button className="back-btn" onClick={() => navigate('home', { view: 'laying' })}>‹ 산란기록</button></div>
+    <div className="screen"><div className="header"><button className="back-btn" onClick={goBack}>‹ {back ? '뒤로' : '산란기록'}</button></div>
       <div className="empty"><div className="empty-icon">🥚</div><p>기록을 찾을 수 없어요.</p></div></div>
   );
 
@@ -4900,7 +4942,11 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals }) {
     DB.addEvent({ individualId: ev.individualId, type: 'hatching', date, data: { count: n, layingId: ev.id, morph: mo } });
     // 부화한 만큼 알을 '부화'로 표시합니다 (남은 알은 그대로 대기)
     let left = n;
-    DB.setEggUnits(ev.id, units.map(u => (u.status === 'pending' && left-- > 0) ? { ...u, status: 'hatched', date } : u));
+    // 알마다 [부화]로 고른 알이 있으면 그 알부터 부화로 적습니다
+    const first = (hatchEgg != null && units[hatchEgg] && units[hatchEgg].status === 'pending') ? hatchEgg : -1;
+    if (first >= 0) left--;
+    DB.setEggUnits(ev.id, units.map((u, k) => (k === first) ? { ...u, status: 'hatched', date }
+      : (u.status === 'pending' && k !== first && left-- > 0) ? { ...u, status: 'hatched', date } : u));
     // 이 클러치는 부화 완료로 표시
     // (부화 예정 알림은 저장하지 않고 계산으로 만들기 때문에 따로 지울 게 없습니다)
     bump();
@@ -4924,7 +4970,7 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals }) {
     <div className="screen">
       <div className="header">
         <div className="header-row">
-          <button className="back-btn" onClick={() => navigate('home', { view: 'laying' })}>‹ 산란기록</button>
+          <button className="back-btn" onClick={goBack}>‹ {back ? '뒤로' : '산란기록'}</button>
           <span style={{fontSize:13, fontWeight:700, color:tone}}>{state}</span>
         </div>
       </div>
@@ -5020,6 +5066,13 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals }) {
                       </div>
                     ) : u.status === 'pending' ? (
                       <div style={{display:'flex', gap:6, marginTop:9}}>
+                        {!hatched && (
+                          <button className="btn btn-primary btn-sm" style={{flex:1}} data-testid={'egg-hatch-' + i}
+                            onClick={() => {
+                              setHatchEgg(i); setCount('1'); setHDate(todayStr()); setMorph(''); setMorphUnknown(false); setHatchOpen(true);
+                              setTimeout(() => { try { const el = document.querySelector('[data-testid=hatch-form]'); el && el.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {} }, 60);
+                            }}>🐣 부화</button>
+                        )}
                         <button className="btn btn-secondary btn-sm" style={{flex:1}}
                           onClick={() => setUnit(i, { status: 'infertile' }, `알 ${i + 1}은 무정란으로 적었어요`)}>무정란</button>
                         <button className="btn btn-secondary btn-sm" style={{flex:1}} onClick={() => setProbFor(i)}>⚠️ 문제</button>
@@ -5088,8 +5141,8 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals }) {
             <button className="btn btn-secondary btn-sm" style={{marginTop:4}} onClick={() => navigate('home', { view: 'hatch' })}>해칭기록으로 이동</button>
           </div>
         ) : hatchOpen ? (
-          <div className="card" style={{margin:'0 0 12px'}}>
-            <div style={{fontSize:13, fontWeight:700, marginBottom:8}}><HatchIcon size={14}/> 언제, 몇 마리 나왔나요?</div>
+          <div className="card" style={{margin:'0 0 12px'}} data-testid="hatch-form">
+            <div style={{fontSize:13, fontWeight:700, marginBottom:8}}><HatchIcon size={14}/> {hatchEgg != null ? `알 ${hatchEgg + 1}에서 나왔군요! 언제 나왔나요?` : '언제, 몇 마리 나왔나요?'}</div>
             <div style={{fontSize:11, color:'var(--text3)', margin:'0 2px 4px'}}>부화한 날</div>
             <input className="input" type="date" value={hDate} min={ev.date} max={todayStr()}
               onChange={e => setHDate(e.target.value)} />
@@ -5131,7 +5184,7 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals }) {
           </div>
         ) : (
           <div style={{display:'flex', flexDirection:'column', gap:8}}>
-            <button className="btn btn-primary" onClick={() => { setCount(eggs ? String(eggs) : ''); setHDate(todayStr()); setMorph(''); setMorphUnknown(false); setHatchOpen(true); }}><HatchIcon size={16}/> 해칭했어요</button>
+            <button className="btn btn-primary" onClick={() => { setHatchEgg(null); setCount(eggs ? String(eggs) : ''); setHDate(todayStr()); setMorph(''); setMorphUnknown(false); setHatchOpen(true); }}><HatchIcon size={16}/> 해칭했어요</button>
             {nPending > 0 && (
               <button className="btn btn-secondary"
                 onClick={() => setUnits(units.map(u => u.status === 'pending' ? { ...u, status: 'infertile' } : u), '무정란으로 표시했어요')}>
@@ -5902,6 +5955,16 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
 
   const addMsg = (m) => setMessages(ms => [...ms, m]);
   const bot = (text, chips) => addMsg({ role: 'bot', text, chips });
+  /* v1.9.6 — 못 알아들은 답은 missBot 으로. 두 번 연속이면 "직접 고칠게요" 탈출구를 붙입니다
+     (제보: 대화로만 고치다 보니 같은 오류가 되풀이되면 빠져나갈 길이 없었음). 알아들으면 0 으로 되돌립니다. */
+  const missRef = useRef(0);
+  const missBot = (text, chips, who) => {
+    missRef.current += 1;
+    const t = who || geckoRef.current;
+    const esc = missRef.current >= 2 && t && t.id;
+    bot(esc ? text + '\n\n말로 잘 안 되면 직접 고치실 수도 있어요.' : text,
+      [...(chips || []), ...(esc ? [{ label: '✏️ 직접 고칠게요', kind: 'go-edit', value: { id: t.id } }] : [])]);
+  };
   const updatePending = (fn) => { pendingRef.current = fn(pendingRef.current); setPending(pendingRef.current); };
 
   const setTarget = (ind) => { geckoRef.current = ind; setGeckoName(ind ? ind.name : null); };
@@ -5909,6 +5972,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
   /* ── 담기 + 요약 응답 ── */
   const pushPending = (fs, target, extraLine) => {
     if (!fs.length) return;
+    missRef.current = 0;
     updatePending(p => [...p, ...fs]);
     const lines = fs.map(f => '· ' + factLabel(f)).join('\n');
     const head = extraLine ? extraLine + '\n\n' : '';
@@ -5933,7 +5997,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
   /* ── 알별 결과 적용 ── 한 곳에서만 고칩니다(직접 말했을 때·어느 산란인지 고르셨을 때 공용) */
   const applyEggFix = (layingId, ef) => {
     const row = clutchRows().find(r => r.e.id === layingId);
-    if (!row) { bot('그 산란 기록을 못 찾았어요 🥚'); return; }
+    if (!row) { missBot('그 산란 기록을 못 찾았어요 🥚'); return; }
     const units = row.units.slice();
     const touched = [];
     const mark = (i) => {
@@ -5985,6 +6049,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
 
   /* ── 프로필 값 고치기 (부화일·성별·모프) ── */
   const applyFix = (t, field, from, to) => {
+    missRef.current = 0;
     const { moved } = commitProfileFix(t, field, from, to);
     refreshIndividuals();
     geckoRef.current = DB.getIndividuals().find(i => i.id === t.id) || { ...(geckoRef.current || t), [field]: to };
@@ -6095,6 +6160,20 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     } else if (kind === 'fix' && value) {
       const t = DB.getIndividuals().find(i => i.id === value.targetId);
       if (t) applyFix(t, value.field, value.from, value.to);
+    } else if (kind === 'date-retry') {
+      bot('네, 연도까지 넣어서 다시 알려주세요 🙂\n예) "2025년 12월 11일" · "25.12.11" · "작년 12월 11일"');
+    } else if (kind === 'go-edit' && value) {
+      const t = DB.getIndividuals().find(i => i.id === value.id);
+      if (!t) return;
+      const n = pendingRef.current.length;
+      if (n && !value.force) {
+        bot(`담아둔 기록 ${n}건이 아직 저장 전이에요. 어떻게 할까요?`, [
+          { label: '💾 저장하고 갈게요', kind: 'save' },
+          { label: '저장 안 하고 갈게요', kind: 'go-edit', value: { id: t.id, force: true } },
+        ]);
+        return;
+      }
+      navigate('profile', { gecko: t, openEdit: true });
     } else if (kind === 'fix-no' && value) {
       bot(`네, ${eunneun(PROFILE_LABEL[value.field])} ${profileText(value.field, value.from)} 그대로 둘게요 🙂`);
     } else if (kind === 'egg-fix' && value) {
@@ -6410,7 +6489,14 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       const cur = DB.getIndividuals().find(i => i.id === target.id) || target;
       const plan = planProfileFix(cur, text, DB.getIndividuals(), morph);
       if (plan && plan.kind === 'future') {
-        bot(`${fmtDate(plan.value)}은 아직 오지 않은 날짜예요 🙂\n다시 알려주시겠어요?`);
+        /* v1.9.6 — 막다른 답 대신 "혹시 작년인가요?"를 여쭤보고 버튼으로 바로 고칩니다 */
+        const prev = prevYearISO(plan.value);
+        const fromNow = (cur && cur.hatchDate) || '';
+        missBot(`${fmtDate(plan.value)}은 아직 오지 않은 날짜예요 🙂` + (prev ? `\n혹시 ${fmtDate(prev)}인가요?` : '\n연도까지 넣어서 다시 알려주시겠어요?\n예) "2025년 12월 11일"'),
+          prev ? [
+            { label: `✅ 네, ${fmtDate(prev)}`, kind: 'fix', value: { field: 'hatchDate', from: fromNow, to: prev, targetId: cur.id } },
+            { label: '다시 쓸게요', kind: 'date-retry' },
+          ] : [], cur);
         return;
       }
       if (plan && plan.kind === 'nameBad') {
@@ -6564,10 +6650,10 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       // 질문형 문장 → 먼저 기록에서 답을 찾아 읽어주고, 그래도 모르면 메모 여부를 여쭤봅니다
       if (QUESTION_RE.test(text) && !HEALTH_RE.test(text)) {
         const fresh = DB.getIndividuals().find(i => i.id === target.id) || target;
-        bot(`${recordSummary(fresh)}\n\n혹시 찾으시던 내용이 아니면, 이 질문을 메모로 남겨둘까요?`, [
+        missBot(`${recordSummary(fresh)}\n\n혹시 찾으시던 내용이 아니면, 이 질문을 메모로 남겨둘까요?`, [
           { label: '📝 메모로 남기기', kind: 'memo-save', value: { text, date, targetId: target.id, targetName: target.name } },
           { label: '괜찮아요', kind: 'memo-skip' },
-        ]);
+        ], target);
         return;
       }
 
@@ -6579,9 +6665,10 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
           { label: '💾 이제 저장할래', kind: 'save' },
         ]);
       } else {
-        bot(`${morphLine ? morphLine + '\n' : ''}${target.name} ${pickOpener()}\n· ${factLabel({ type: 'memo', data: { notes: text } })}\n\n계속 말씀하셔도 되고, 끝나면 저장을 눌러주세요.`, [
+        // 기록으로 못 알아듣고 메모로 담은 경우 — '못 알아들음'으로 셉니다
+        missBot(`${morphLine ? morphLine + '\n' : ''}${target.name} ${pickOpener()}\n· ${factLabel({ type: 'memo', data: { notes: text } })}\n\n계속 말씀하셔도 되고, 끝나면 저장을 눌러주세요.`, [
           { label: '💾 이제 저장할래', kind: 'save' },
-        ]);
+        ], target);
       }
       return;
     }
@@ -7011,7 +7098,110 @@ const LOG_TABS = [
   ['etc',  '📋 활동', (e) => e.type !== 'feeding'],
 ];
 
-function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndividuals, individuals }) {
+/* ══════════════════════════════════════════
+   v1.9.6 기본 정보 한 번에 고치기 — 이름 옆 연필(✏️)을 누르면 뜹니다
+   제보(2026-09-28): "이름만 직접 수정이 되고, 해칭일 등은 대화로만 고쳐야 해서 오류가 반복되면 막힌다"
+   이름·성별·모프·해칭일·점·부/모·입양처·입양가를 한 창에서.
+   ★ 해칭일을 옮기면 같이 나온 형제·부화 기록도 함께 옮길지 고릅니다(대화의 고치기와 같은 commitProfileFix).
+   ★ 입양처·입양가는 메모 글 속 한 조각("입양처: OO · 입양가 30만원")으로 둡니다 — 가계부·엑셀 내보내기가 그 글을 읽습니다.
+   ══════════════════════════════════════════ */
+function setAdoptMemo(indId, source, price) {
+  const isAdopt = (p) => /^입양처\s*:/.test(p) || /^입양가/.test(p);
+  const rest = (n) => String(n || '').split('·').map(x => x.trim()).filter(p => p && !isAdopt(p)).join(' · ');
+  const parts = [];
+  if (source) parts.push('입양처: ' + source);
+  if (price !== '') parts.push(Number(price) === 0 ? '입양가 0 (무상/선물)' : `입양가 ${price}만원`);
+  let host = null;
+  DB.getEventsFor(indId).filter(e => e.type === 'memo' && /입양처\s*:|입양가/.test((e.data && e.data.notes) || '')).forEach(e => {
+    if (!host) { host = e; return; }
+    const r = rest(e.data.notes);
+    if (r) DB.updateEvent(e.id, { data: { ...e.data, notes: r } }); else DB.deleteEvent(e.id);
+  });
+  if (host) {
+    const notes = [...parts, rest(host.data.notes)].filter(Boolean).join(' · ');
+    if (notes) DB.updateEvent(host.id, { data: { ...host.data, notes } }); else DB.deleteEvent(host.id);
+  } else if (parts.length) {
+    DB.addEvent({ individualId: indId, type: 'memo', date: todayStr(), data: { notes: parts.join(' · ') } });
+  }
+}
+
+function ProfileEditSheet({ gecko, onClose, onSaved, showToast }) {
+  const all = DB.getIndividuals();
+  const memo = splitMemo(gecko.id);
+  const [v, setV] = useState({
+    name: gecko.name || '', gender: gecko.gender || 'unknown', morph: gecko.morph || '', hatchDate: gecko.hatchDate || '',
+    spots: gecko.spots || '', sireId: gecko.sireId || '', damId: gecko.damId || '', source: memo.source || '', price: memo.price || '',
+  });
+  const [moveSibs, setMoveSibs] = useState(true);
+  const put = (k, val) => setV(x => ({ ...x, [k]: val }));
+  const others = all.filter(i => i.id !== gecko.id).sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ko'));
+  const sibs = gecko.damId && gecko.hatchDate ? all.filter(x => x.damId === gecko.damId && x.hatchDate === gecko.hatchDate).length : 1;
+  const dateMoved = (v.hatchDate || '') !== (gecko.hatchDate || '');
+  const save = () => {
+    const nm = v.name.trim();
+    if (nm !== gecko.name) { const chk = renameCheck(gecko.id, nm, all); if (!chk.ok) return showToast('⚠️ ' + chk.reason); }
+    if (v.hatchDate && v.hatchDate > todayStr()) return showToast('⚠️ 아직 오지 않은 날짜예요');
+    if (v.sireId && v.sireId === v.damId) return showToast('⚠️ 아빠와 엄마를 같은 아이로 고를 수 없어요');
+    const price = String(v.price || '').replace(/,/g, '').trim();
+    if (price && !/^\d+(\.\d+)?$/.test(price)) return showToast('⚠️ 입양가는 숫자(만원)로 적어 주세요');
+    const up = {};
+    if (nm !== gecko.name) up.name = nm;
+    if (v.gender !== (gecko.gender || 'unknown')) up.gender = v.gender;
+    if (v.morph.trim() !== (gecko.morph || '')) up.morph = v.morph.trim();
+    if (v.spots.trim() !== (gecko.spots || '')) up.spots = v.spots.trim();
+    if ((v.sireId || null) !== (gecko.sireId || null)) up.sireId = v.sireId || null;
+    if ((v.damId || null) !== (gecko.damId || null)) up.damId = v.damId || null;
+    if (Object.keys(up).length) DB.updateIndividual(gecko.id, up);
+    if (dateMoved) {
+      const cur = DB.getIndividuals().find(i => i.id === gecko.id) || gecko;
+      if (v.hatchDate && gecko.hatchDate && moveSibs) commitProfileFix(cur, 'hatchDate', gecko.hatchDate, v.hatchDate);
+      else DB.updateIndividual(gecko.id, { hatchDate: v.hatchDate || '' });
+    }
+    if (v.source.trim() !== (memo.source || '') || price !== String(memo.price || '')) setAdoptMemo(gecko.id, v.source.trim(), price);
+    onSaved && onSaved();
+    showToast('✅ 기본 정보를 고쳤어요');
+    onClose();
+  };
+  const G = [['female', '암컷'], ['male', '수컷'], ['unknown', '미구분']];
+  const pick = (k, label, list) => (
+    <label className="pe-row"><span>{label}</span>
+      <select className="input" value={v[k]} onChange={e => put(k, e.target.value)}>
+        <option value="">모름 / 없음</option>
+        {list.map(i => <option key={i.id} value={i.id}>{i.name}{i.gender === 'female' ? ' (암)' : i.gender === 'male' ? ' (수)' : ''}</option>)}
+      </select>
+    </label>
+  );
+  return (
+    <div className="pe-bg" onClick={onClose} data-testid="profile-edit">
+      <div className="pe-sheet" onClick={e => e.stopPropagation()}>
+        <div className="pe-head"><b>기본 정보 수정</b><button onClick={onClose} aria-label="닫기">×</button></div>
+        <div className="pe-body">
+          <label className="pe-row"><span>이름</span><input className="input" value={v.name} maxLength={20} onChange={e => put('name', e.target.value)} data-testid="pe-name" /></label>
+          <div className="pe-row"><span>성별</span>
+            <div className="pe-seg">{G.map(([k, l]) => <button key={k} className={v.gender === k ? 'on' : ''} onClick={() => put('gender', k)} data-testid={'pe-g-' + k}>{l}</button>)}</div>
+          </div>
+          <label className="pe-row"><span>모프</span><input className="input" value={v.morph} placeholder="예: 릴리화이트" onChange={e => put('morph', e.target.value)} /></label>
+          <label className="pe-row"><span>해칭일</span><input className="input" type="date" value={v.hatchDate} max={todayStr()} onChange={e => put('hatchDate', e.target.value)} data-testid="pe-hatch" /></label>
+          {dateMoved && gecko.hatchDate && v.hatchDate && sibs > 1 && (
+            <label className="pe-check"><input type="checkbox" checked={moveSibs} onChange={e => setMoveSibs(e.target.checked)} />
+              같이 나온 {sibs}마리와 부화 기록도 함께 옮기기</label>
+          )}
+          <label className="pe-row"><span>점</span><input className="input" value={v.spots} placeholder="예: 꼬리점 2개 / 무점" onChange={e => put('spots', e.target.value)} /></label>
+          {pick('sireId', '아빠', others)}
+          {pick('damId', '엄마', others)}
+          <label className="pe-row"><span>입양처</span><input className="input" value={v.source} placeholder="데려온 곳" onChange={e => put('source', e.target.value)} /></label>
+          <label className="pe-row"><span>입양가</span><div className="pe-unit"><input className="input" inputMode="decimal" value={v.price} placeholder="예: 30" onChange={e => put('price', e.target.value)} data-testid="pe-price" /><em>만원</em></div></label>
+        </div>
+        <div className="pe-foot">
+          <button className="btn btn-secondary" onClick={onClose}>취소</button>
+          <button className="btn btn-primary" onClick={save} data-testid="pe-save">저장</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndividuals, individuals, openEdit }) {
   const [gecko, setGecko] = useState(() => DB.getIndividuals().find(i => i.id === initialGecko.id) || initialGecko);
   const [events, setEvents] = useState(() => DB.getEventsFor(initialGecko.id).filter(e => e.type !== 'ledger'));
   const [showShare, setShowShare] = useState(false);
@@ -7024,7 +7214,8 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
   const [photoView, setPhotoView] = useState(null); // {src, date}
   const [salePrompt, setSalePrompt] = useState(false);   // 분양가 물어보기
   const [keepAsk, setKeepAsk] = useState(null);          // KEEP인데 분양 상태로 바꾸려 할 때
-  const [nameEdit, setNameEdit] = useState(false);       // 이름 수정
+  const [nameEdit, setNameEdit] = useState(false);       // 이름 수정 (v1.9.6부터 연필은 기본 정보 수정 창을 엽니다)
+  const [infoEdit, setInfoEdit] = useState(!!openEdit);  // 기본 정보 수정 창 — 대화의 "직접 고칠게요"로 오면 바로 열림
   const [nameVal, setNameVal] = useState('');
   const [healthOpen, setHealthOpen] = useState(false);   // 이상 기록
   const [logOpen, setLogOpen] = useState('');            // 활동 기록 — 열려 있는 칸('feed' 또는 'etc')
@@ -7131,6 +7322,8 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
 
   return (
     <div className="screen">
+      {infoEdit && <ProfileEditSheet gecko={gecko} showToast={showToast} onClose={() => setInfoEdit(false)}
+        onSaved={() => { refreshLocal(); refreshIndividuals && refreshIndividuals(); }} />}
       <div className="header">
         <div className="header-row">
           <button className="back-btn" onClick={() => { refreshIndividuals(); navigate('home'); }}>
@@ -7178,7 +7371,7 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
                 ) : (
                   <>
                     <div style={{fontSize:22, fontWeight:800}}>{gecko.name} <GenderTag g={gecko.gender} size={20} /></div>
-                    <button onClick={() => { setNameVal(gecko.name); setNameEdit(true); }} aria-label="이름 수정"
+                    <button onClick={() => setInfoEdit(true)} aria-label="기본 정보 수정" data-testid="profile-pencil"
                       style={{background:'none', border:'none', cursor:'pointer', fontSize:15, lineHeight:1, padding:0, color:'var(--text3)'}}>✏️</button>
                   </>
                 )}
@@ -7592,7 +7785,11 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
                     </div>
                   ) : (
                     <>
-                      <div className="timeline-detail">{formatEventDetail(ev)}</div>
+                      {/* v1.9.6 산란 기록을 누르면 알 화면으로 — 알마다 부화·무정·문제를 고릅니다 */}
+                      <div className="timeline-detail" onClick={ev.type === 'laying' ? () => navigate('clutch', { layingId: ev.id, back: { name: 'profile', props: { gecko } } }) : undefined}
+                        style={ev.type === 'laying' ? { cursor: 'pointer' } : undefined} data-testid={ev.type === 'laying' ? 'tl-laying' : undefined}>
+                        {formatEventDetail(ev)}{ev.type === 'laying' && <span className="tl-egg"> · 알 보기 ›</span>}
+                      </div>
                       {ev.data?.photo && (
                         <img src={ev.data.photo} alt="기록 사진" style={{maxWidth:150, borderRadius:8, marginTop:6, display:'block', border:'1px solid var(--border)', cursor:'pointer'}}
                           onClick={() => setPhotoView({ src: ev.data.photo, date: ev.date, id: ev.id })} />
