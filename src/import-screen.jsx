@@ -17,8 +17,13 @@ const GENDER_WORD = { female: '♀', male: '♂' };
 const STATUS_WORD = { sold: '분양완료', available: '분양가능', reserved: '예약중', gone: '떠남' };
 
 /* 파일 → 격자 */
+/* v1.9.8 아이폰 — 파일 고르기 창에서 엑셀이 흐리게(못 고르게) 보이거나 원하는 곳이 안 보이는 일이 있어,
+   아이폰에서는 종류 제한(accept)을 걸지 않고 고른 뒤에 확인합니다. */
+const IS_IOS = (() => { try { return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); } catch (e) { return false; } })();
 async function readFileGrids(file) {
   const name = file.name || '';
+  if (/\.numbers$/i.test(name)) throw new Error('Numbers 파일은 바로 못 읽어요. Numbers 앱에서 공유 → 사본 보내기 → Excel 로 바꿔서 올려 주세요');
+  if (/\.(jpe?g|png|heic|heif|gif|webp|pdf|mov|mp4)$/i.test(name)) throw new Error('사진·PDF 말고 엑셀(.xlsx) · CSV · 메모장(.txt) 파일을 골라 주세요');
   const buf = await file.arrayBuffer();
   if (/\.(csv|tsv|txt)$/i.test(name)) {
     let text;
@@ -137,9 +142,18 @@ function ImportScreen({ navigate, showToast, refreshIndividuals }) {
             <button className="btn btn-primary" style={{ marginTop: 12 }} disabled={busy} onClick={() => fileRef.current && fileRef.current.click()}>
               {busy ? '읽는 중…' : '📂 파일 고르기 (엑셀 · CSV · 메모장)'}
             </button>
-            <input ref={fileRef} type="file" style={{ display: 'none' }} onChange={onFile}
-              accept=".xlsx,.xls,.xlsm,.xlsb,.ods,.csv,.tsv,.txt,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,text/plain" />
+            <input ref={fileRef} type="file" style={{ display: 'none' }} onChange={onFile} data-testid="import-file"
+              accept={IS_IOS ? undefined : '.xlsx,.xls,.xlsm,.xlsb,.ods,.csv,.tsv,.txt,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,text/plain'} />
             <div style={{ ...small, marginTop: 8 }}>구글 시트는 <b>파일 · 다운로드 · Microsoft Excel</b> 순서로 받아서 올리시면 돼요.</div>
+            {IS_IOS && (
+              <div className="card" data-testid="ios-file-help" style={{ margin: '10px 0 0', background: 'var(--bg3)', fontSize: 12.5, lineHeight: 1.65, color: 'var(--text2)' }}>
+                <b style={{ color: 'var(--text)' }}>📱 아이폰에서 엑셀이 안 보이면</b><br />
+                · 파일 창 아래 <b>'둘러보기'</b>를 눌러 위치를 바꿔 보세요 (iCloud Drive · 나의 iPhone · 다운로드)<br />
+                · <b>원드라이브·구글 드라이브</b>에 있으면: 둘러보기 → 오른쪽 위 <b>⋯ → 편집</b>에서 그 앱을 켜 주세요 (폰에 그 앱이 깔려 있어야 보여요)<br />
+                · <b>카카오톡</b>으로 받은 파일은: 카톡에서 파일 열기 → 공유 → <b>'파일에 저장'</b> 한 뒤 여기서 고르세요<br />
+                · 그래도 어려우면 아래 <b>복사해서 붙여넣기</b>로 칸을 긁어 넣어도 돼요
+              </div>
+            )}
           </div>
           <div className="card" style={{ margin: 0 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text2)', marginBottom: 6 }}>📋 복사해서 붙여넣기</div>
