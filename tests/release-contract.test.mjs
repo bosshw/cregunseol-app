@@ -26,7 +26,7 @@ test("keeps storage, synchronization, and core workflows intact", async () => {
     assert.ok(source.includes(contract), `missing contract: ${contract}`);
   }
 
-  assert.match(source, /const APP_VERSION = '1\.9\.10'/);
+  assert.match(source, /const APP_VERSION = '1\.9\.11'/);
   assert.match(source, /Powered by cre_construct · CC/);
   assert.doesNotMatch(source, /Powered by 크레건설/);
   assert.match(source, /addEvents\(events\)/);
@@ -43,10 +43,10 @@ test("keeps service worker and release metadata aligned", async () => {
     readFile(file("version.json"), "utf8").then(JSON.parse),
   ]);
 
-  assert.equal(version.app, "1.9.10");
+  assert.equal(version.app, "1.9.11");
   assert.equal(version.schema, 1);
   assert.equal(version.minSchema, 1);
-  assert.match(worker, /const CACHE = 'creg-v40'/);
+  assert.match(worker, /const CACHE = 'creg-v41'/);
 
   for (const asset of [
     "./index.html",
@@ -170,7 +170,7 @@ test("keeps the v4.8 kinship, morph and voice contracts", async () => {
   // 설정 미리보기는 고정 견본으로 — 데이터가 없는 날에도 차이가 보여야 합니다
   assert.ok(source.includes("{voiceSample().map("), "settings preview must use voiceSample()");
   // 버전 문자열 4곳
-  assert.ok(source.includes("const APP_VERSION = '1.9.10'"), "APP_VERSION must be 1.9.10");
+  assert.ok(source.includes("const APP_VERSION = '1.9.11'"), "APP_VERSION must be 1.9.11");
 });
 
 test("keeps the v5.0 particle, line-break and calendar fixes", async () => {
@@ -197,7 +197,7 @@ test("keeps the v5.0 particle, line-break and calendar fixes", async () => {
   assert.doesNotMatch(source, /'🍽️🥩'/, "fed emoji must be a single icon");
   // 홈 한 줄은 인사만 합니다 (v5.2 — 할 일은 브리핑 카드가 말합니다)
   assert.doesNotMatch(source, /\[greetLine\(\), what\]/, "home line no longer lists jobs");
-  assert.ok(source.includes("APP_VERSION = '1.9.10'"), "APP_VERSION must be 1.9.10");
+  assert.ok(source.includes("APP_VERSION = '1.9.11'"), "APP_VERSION must be 1.9.11");
 
   // 캘린더 먹이 줄에 이모지가 두 번 나오면 안 됩니다 (줄 앞에 이미 🦗/🥣 가 붙습니다)
   assert.ok(source.includes("if (e.type === 'feeding') label = label.replace"), "feed label must drop its own emoji");
@@ -234,7 +234,7 @@ test("keeps the v4.9 hatching, morph and wording fixes", async () => {
   assert.ok(source.includes("const dayWord = (n) => `${Math.abs(Math.round(Number(n) || 0))}일`"), "dayWord must be numeric");
   // 탭 이름
   assert.ok(source.includes("브리핑"), "reminders tab is now 브리핑");
-  assert.ok(source.includes("const APP_VERSION = '1.9.10'"), "APP_VERSION must be 1.9.10");
+  assert.ok(source.includes("const APP_VERSION = '1.9.11'"), "APP_VERSION must be 1.9.11");
 });
 
 test("keeps the v5.2 nudge contracts", async () => {
@@ -277,7 +277,7 @@ test("keeps the v5.2 nudge contracts", async () => {
   assert.ok(source.includes('data-testid="nudge-go"'), "nudge needs an action button");
   assert.ok(source.includes("recordNudge(nudge)"), "reminders screen must record the nudge");
 
-  assert.ok(source.includes("APP_VERSION = '1.9.10'"), "APP_VERSION must be 1.9.10");
+  assert.ok(source.includes("APP_VERSION = '1.9.11'"), "APP_VERSION must be 1.9.11");
 });
 
 test("keeps the v5.3 public-record contracts", async () => {
@@ -330,7 +330,7 @@ test("keeps the v5.3 public-record contracts", async () => {
   // 화면 계약
   assert.ok(source.includes('data-testid="public-card"'), "profile needs the public card");
   assert.ok(source.includes('data-testid="public-toggle"'), "public card needs its toggle");
-  assert.ok(source.includes("APP_VERSION = '1.9.10'"), "APP_VERSION must be 1.9.10");
+  assert.ok(source.includes("APP_VERSION = '1.9.11'"), "APP_VERSION must be 1.9.11");
 });
 
 test("keeps the v5.4 away / condition / memory contracts", async () => {
@@ -387,7 +387,7 @@ test("keeps the v5.4 away / condition / memory contracts", async () => {
   }
   // v1.9.9 — 프로필의 '오늘 컨디션' 카드는 뺐습니다(대표님 결정). 쌓인 컨디션 기록과 계산은 그대로 둡니다.
   assert.ok(!source.includes('data-testid="condition-card"'), "오늘 컨디션 카드는 프로필에서 빠졌습니다");
-  assert.ok(source.includes("APP_VERSION = '1.9.10'"), "APP_VERSION must be 1.9.10");
+  assert.ok(source.includes("APP_VERSION = '1.9.11'"), "APP_VERSION must be 1.9.11");
 });
 
 test("keeps the v1.0 laying-season contracts", async () => {
@@ -436,7 +436,7 @@ test("keeps the v1.0 laying-season contracts", async () => {
   assert.ok(source.includes("data-testid={`season-${r.key}`}"), "each answer needs its own testid");
 
   // 정식 출시 — 버전은 1.0
-  assert.ok(source.includes("APP_VERSION = '1.9.10'"), "APP_VERSION must be 1.9.10");
+  assert.ok(source.includes("APP_VERSION = '1.9.11'"), "APP_VERSION must be 1.9.11");
 });
 
 /* ══════════════════════════════════════════
@@ -699,6 +699,13 @@ test("keeps the screen-tidying contracts", async () => {
   const ped = source.slice(source.indexOf("function PedigreeCard({ gecko, navigate })"), source.indexOf("function awayTag(i)"));
   assert.doesNotMatch(ped, /genderEmoji/, "혈통 칩은 성별을 그리지 않습니다");
 
+  // ④-1 v1.9.11 — 활동 기록과 몸무게 그래프는 [기록하기] 버튼 위에 둡니다(아래에 있으니 찾기 어렵다는 대표님 말씀)
+  {
+    const prof = source.slice(source.indexOf("function ProfileScreen("));
+    const w = prof.indexOf("<WeightChart"), l = prof.indexOf('className="section-title">활동 기록'), r = prof.indexOf("{gecko.name} 기록하기");
+    assert.ok(w > 0 && w < l && l < r, "몸무게 그래프 → 활동 기록 → 기록하기 순서");
+    assert.ok(source.includes('data-testid="weight-empty"'), "몸무게가 두 번 미만이어도 그래프 자리와 적는 법을 보여 줍니다");
+  }
   // ④ 활동 기록은 피딩 / 활동 두 칸, 나누는 기준은 한 곳
   assert.ok(source.includes("const LOG_TABS = ["), "나누는 기준은 LOG_TABS 한 곳");
   assert.match(source, /\['feed', '🍽️ 피딩', \(e\) => e\.type === 'feeding'\]/, "피딩 칸은 밥 기록만");
