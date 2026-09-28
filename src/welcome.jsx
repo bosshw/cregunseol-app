@@ -156,7 +156,7 @@ const NEWBIE = '하늘이';
 const newbie = () => { try { return DB.getIndividuals().find(i => i.name === NEWBIE) || null; } catch (e) { return null; } };
 const TUT = [
   { modal: true, title: '안녕하세요, 브리딩비서예요!', text: '예시 아이들로 아이 등록부터 기록까지\n1분 만에 알려 드릴게요.', next: '시작하기' },
-  { at: () => Q('[data-tut=chat]'), text: '등록도 기록도 전부 대화로 해요.\n가운데 [대화] 버튼을 눌러 보세요.', until: inChat },
+  { at: () => Q('[data-tut=chat]'), text: '등록도 기록도 전부 대화로 해요.\n가운데 [대화] 버튼을 눌러 보세요.', until: inChat, tap: '대화 열기' },
   // ── 아이 등록 ──
   { at: () => Q('[data-tut=chat-bar]'), text: '먼저 새 아이를 등록해 볼게요.\n이름과 모프만 말하면 돼요.\n아래 버튼으로 글을 채운 뒤 보내기를 눌러 주세요.',
     act: ['"하늘이 릴리화이트" 채우기', () => fillChat(NEWBIE + ' 릴리화이트')],
@@ -174,9 +174,9 @@ const TUT = [
     until: onHome, need: () => Q('[data-tut=save-final]') || onHome(), back: 1 },
   { at: () => lastWith('.gecko-card', new RegExp(NEWBIE)), text: '홈에 하늘이가 생겼어요.\n누르면 프로필과 기록이 한곳에 모여 있어요.', next: '다음' },
   // ── 저절로 챙겨 주는 것 ──
-  { at: () => Q('[data-tut=calendar]'), text: '알을 적으면 부화 예정일이 저절로 잡혀요.\n[캘린더]를 눌러 보세요.', until: () => Q('[data-tut=calendar].active') },
+  { at: () => Q('[data-tut=calendar]'), text: '알을 적으면 부화 예정일이 저절로 잡혀요.\n아래 [캘린더]를 눌러 보세요.', until: () => Q('[data-tut=calendar].active'), tap: '캘린더 열기' },
   { at: () => Q('[data-tut=cal]'), text: '알 모양은 산란, 아기 모양은 부화예요.\n방금 적은 알의 부화 예정일도 저절로 들어갔어요.\n› 로 달을 넘겨 보면 보여요.', next: '다음' },
-  { at: () => Q('[data-tut=reminders]'), text: '매일 챙길 일은 [브리핑]에 모여요.\n눌러 보세요.', until: () => Q('[data-tut=reminders].active') },
+  { at: () => Q('[data-tut=reminders]'), text: '매일 챙길 일은 [브리핑]에 모여요.\n아래 [브리핑]을 눌러 보세요.', until: () => Q('[data-tut=reminders].active'), tap: '브리핑 열기' },
   { text: '산란 예정일, 부화 임박, 밥 줄 날을\n알아서 챙겨 드려요.\n홈 화면에 설치하면 알림으로도 와요.', next: '다음' },
   { modal: true, title: '이제 끝이에요!', text: '연습으로 적은 건 지우고\n내 아이로 시작해 볼까요?', final: true },
 ];
@@ -200,8 +200,17 @@ function Tutorial() {
       if (s.need) { if (s.need()) miss.current = 0; else if (++miss.current > 10) { go(s.back); return; } }
       const el = s.at && s.at();
       if (!el) { setRect(null); return; }
-      const r = el.getBoundingClientRect();
-      if (r.bottom < 0 || r.top > innerHeight) { try { el.scrollIntoView({ block: 'center' }); } catch (e) {} }
+      /* v1.9.7 아이폰: 키보드를 쓰고 나면 창 전체가 밀려 올라가 아래 탭바(캘린더·브리핑)가 화면 밖으로 사라질 수 있습니다.
+         → 창은 늘 맨 위로, 스크롤은 그 아이가 든 칸(.screen)만. 그래도 안 보이면 구멍 대신 [열기] 버튼으로 이어 갑니다. */
+      const vh = (window.visualViewport && window.visualViewport.height) || innerHeight;
+      const typing = /INPUT|TEXTAREA|SELECT/.test((document.activeElement && document.activeElement.tagName) || '');
+      if (window.scrollY && !typing) window.scrollTo(0, 0);
+      let r = el.getBoundingClientRect();
+      if (r.bottom < 0 || r.top > vh || r.bottom > vh + 2) {
+        const sc = el.closest && !el.closest('.tabbar') && el.closest('.screen');
+        if (sc) { sc.scrollTop += r.top - vh / 2; r = el.getBoundingClientRect(); }
+      }
+      if (!(r.width > 0 && r.top >= -2 && r.bottom <= vh + 2)) { setRect(null); return; }
       setRect(p => (p && Math.abs(p.x - r.left) < 1 && Math.abs(p.y - r.top) < 1 && Math.abs(p.w - r.width) < 1 && Math.abs(p.h - r.height) < 1)
         ? p : { x: r.left, y: r.top, w: r.width, h: r.height });
     }, 150);
@@ -211,7 +220,7 @@ function Tutorial() {
   const s = TUT[n];
   if (!s) return null;
   const hole = !s.modal && rect ? { x: rect.x - PAD, y: rect.y - PAD, w: rect.w + PAD * 2, h: rect.h + PAD * 2 } : null;
-  const H = innerHeight, W = innerWidth;
+  const H = (window.visualViewport && window.visualViewport.height) || innerHeight, W = innerWidth;
   const block = (st) => <div className="tut-block" style={st} />;
   const low = hole && hole.y + hole.h / 2 > H / 2;
   const bubblePos = !hole ? { top: '50%', transform: 'translateY(-50%)' }
@@ -240,6 +249,7 @@ function Tutorial() {
           <div className="tut-row">
             {n === 0 && INAPP && <button className="ghost" onClick={openOutside}>{TRACK.device() === 'ios' ? '사파리로' : '크롬으로'} 열기</button>}
             {s.act && <button onClick={s.act[1]} data-testid="tut-act">{s.act[0]}</button>}
+            {s.tap && <button className={rect ? 'ghost' : ''} onClick={() => { const el = s.at && s.at(); if (el) el.click(); }} data-testid="tut-tap">{s.tap} ›</button>}
             {s.next && <button onClick={() => go(n + 1)} data-testid="tut-next">{s.next}</button>}
             {s.final && <button onClick={() => { tutSet(-1); DEMO.exit('chat'); }} data-testid="tut-start">내 아이 등록하기</button>}
             {s.final && <button className="ghost" onClick={end}>조금 더 둘러볼게요</button>}

@@ -611,7 +611,7 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.6';
+const APP_VERSION = '1.9.7';
 const APP_PATCHED = '2026-09-28';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -9748,7 +9748,12 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
   const apply = () => {
     const h = vv ? vv.height : window.innerHeight;
     document.documentElement.style.setProperty('--vh', h + 'px');
+    /* v1.9.7 아이폰은 키보드가 내려간 뒤에도 창이 밀린 채로 남아, 아래 탭바가 화면 밖으로 사라지곤 합니다.
+       이 앱은 창이 아니라 .screen 칸만 스크롤하므로, 입력 중이 아니면 창을 늘 맨 위로 되돌립니다. */
+    const typing = /INPUT|TEXTAREA|SELECT/.test((document.activeElement && document.activeElement.tagName) || '');
+    if (!typing && window.scrollY) window.scrollTo(0, 0);
   };
+  document.addEventListener('focusout', () => setTimeout(apply, 120));
   apply();
   if (vv) {
     vv.addEventListener('resize', apply);
