@@ -611,7 +611,7 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.11';
+const APP_VERSION = '1.9.12';
 const APP_PATCHED = '2026-09-28';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -1999,7 +1999,72 @@ const PUBLIC_PHOTOS = 6;                // 사진은 최근 이만큼만 (한 �
 /* 내보내는 기록 — 이 목록에 없는 종류는 나가지 않습니다 */
 const PUBLIC_KINDS = ['growth', 'shed', 'feeding', 'health', 'photo'];
 /* 절대 나가지 않는 기록 — 실수로 위에 추가되면 테스트가 잡습니다 */
-const PUBLIC_NEVER = ['ledger', 'distribution', 'memo', 'mating', 'laying'];
+const PUBLIC_NEVER = ['ledger', 'distribution', 'memo'];
+/* v1.9.12 — 브리딩 이력은 기록을 통째로 내보내지 않고 '숫자·날짜·짝 이름·자식 이름'만 추려서 냅니다.
+   (산란·메이팅 기록의 메모 글은 나가지 않습니다) 대표님 결정: 기본으로 보이게. */
+const PUBLIC_BREEDING = ['laying', 'mating', 'hatching'];
+const PUBLIC_V = 2;                      // 공유 한 장의 모양 — 바뀌면 열려 있는 링크도 새로 올립니다
+
+/* 브리딩 이력 — 암컷은 낳은 것, 수컷은 아빠로 이어진 것 */
+function publicBreeding(gecko, list, evs) {
+  const rows = clutchRows(list, evs);
+  const male = gecko.gender === 'male';
+  const mineRows = rows.filter(r => male ? r.dadId === gecko.id : r.e.individualId === gecko.id);
+  const matingEvs = evs.filter(e => e.type === 'mating' && (e.individualId === gecko.id || (e.data && e.data.partnerId === gecko.id)));
+  const byId = {}; list.forEach(i => { byId[i.id] = i; });
+  const mates = [];
+  const addMate = (n) => { n = String(n || '').trim(); if (n && n !== gecko.name && mates.indexOf(n) < 0) mates.push(n); };
+  mineRows.forEach(r => addMate(male ? r.momName : r.dadName));
+  matingEvs.forEach(e => addMate(e.individualId === gecko.id
+    ? ((byId[e.data && e.data.partnerId] || {}).name || (e.data && e.data.partnerName))
+    : (byId[e.individualId] || {}).name));
+  const hatchedOf = (r) => Math.max(r.units.filter(u => u.status === 'hatched').length, r.babies.length);
+  const kids = list.filter(i => i.id !== gecko.id && (i.damId === gecko.id || i.sireId === gecko.id))
+    .sort((a, b) => ((a.hatchDate || a.createdAt || '') < (b.hatchDate || b.createdAt || '') ? -1 : 1))
+    .slice(0, 40)
+    .map(i => ({ name: i.name || '', morph: String(i.morph || '').trim(), gender: i.gender || 'unknown', hatchDate: i.hatchDate || '' }));
+  const clutches = mineRows.length;
+  if (!clutches && !matingEvs.length && !kids.length) return null;
+  const word = (r) => r.infertile ? '무정'
+    : r.waiting ? '품는 중'
+    : hatchedOf(r) ? `${hatchedOf(r)}마리 부화` : '종료';
+  return {
+    clutches,
+    eggs: mineRows.reduce((a, r) => a + (parseInt(r.eggs, 10) || 0), 0),
+    hatched: mineRows.reduce((a, r) => a + hatchedOf(r), 0),
+    matings: matingEvs.length,
+    mates: mates.slice(0, 8),
+    first: mineRows.length ? mineRows[0].e.date : '',
+    recent: mineRows.slice(-6).reverse().map(r => ({
+      date: r.e.date, mate: (male ? r.momName : r.dadName) || '', eggs: parseInt(r.eggs, 10) || 0, result: word(r),
+    })),
+    kids,
+  };
+}
+
+/* 한눈에 — 먹이는 줄줄이 늘어놓지 않고 요약 한 줄로 */
+function publicSummary(mine, allDates) {
+  const t = todayStr();
+  const d30 = addDaysISO(t, -30);
+  const feeds = mine.filter(e => e.type === 'feeding');
+  const f30 = feeds.filter(e => e.date >= d30);
+  const foods = {};
+  f30.forEach(e => { const f = String((e.data && e.data.foodType) || '').trim(); if (f) foods[f] = (foods[f] || 0) + 1; });
+  const food = Object.keys(foods).sort((a, b) => foods[b] - foods[a]).slice(0, 2);
+  const sheds = mine.filter(e => e.type === 'shed').sort((a, b) => (a.date < b.date ? 1 : -1));
+  const lastFeed = feeds.map(e => e.date).sort().pop() || '';
+  const all = (allDates || mine.map(e => e.date)).filter(Boolean).sort();   // 날짜만 봅니다(내용은 안 나감)
+  return {
+    feed30: f30.length,
+    refused30: f30.filter(e => e.data && e.data.ate === false).length,
+    food,
+    lastFeed,
+    feeds: feeds.length,
+    sheds: sheds.length,
+    lastShed: sheds.length ? sheds[0].date : '',
+    since: all[0] || '',
+  };
+}
 
 function publicUrl(code) {
   const path = String(location.pathname || '/').replace(/[^/]*$/, '');
@@ -2019,7 +2084,8 @@ function publicSnapshot(gecko, allInds, allEvs) {
   const weights = mine.filter(e => e.type === 'growth' && e.data && e.data.weight)
     .sort(asc).map(e => ({ date: e.date, g: Number(e.data.weight) }));
 
-  const logs = mine.filter(e => e.type !== 'growth' && e.type !== 'photo')
+  /* v1.9.12 — 먹이는 요약(summary)으로만 냅니다. 16줄씩 '먹이 · 슈푸'가 늘어서 정작 볼 게 없었습니다 */
+  const logs = mine.filter(e => e.type !== 'growth' && e.type !== 'photo' && e.type !== 'feeding')
     .sort((a, b) => -asc(a, b))
     .slice(0, 40)
     .map(e => ({
@@ -2036,7 +2102,7 @@ function publicSnapshot(gecko, allInds, allEvs) {
   const sibs = littermatesOf(gecko, list).map(x => x.name).filter(Boolean);
 
   return {
-    v: 1,
+    v: PUBLIC_V,
     name: gecko.name || '',
     gender: gecko.gender || 'unknown',
     morph: String(gecko.morph || '').trim(),
@@ -2046,12 +2112,22 @@ function publicSnapshot(gecko, allInds, allEvs) {
     dam: nameOf(gecko.damId),
     litter: sibs,
     fromUs: !!gecko.isFromCreGunseol,
+    summary: publicSummary(mine, evs.filter(e => e.individualId === gecko.id).map(e => e.date)),
+    breeding: publicBreeding(gecko, list, evs),
     weights,
     logs,
     photos,
     breeder: String(((DB.getSettings() || {}).breederName) || '').trim(),
     sharedAt: todayStr(),
   };
+}
+
+/* v1.9.12 — 올린 한 장과 지금 기록이 다른지 (다르면 프로필을 열 때 바로 새로 올립니다) */
+function publicSig(gecko) {
+  const txt = JSON.stringify({ ...publicSnapshot(gecko), sharedAt: '' });
+  let h = 5381;
+  for (let i = 0; i < txt.length; i++) h = ((h << 5) + h + txt.charCodeAt(i)) | 0;
+  return PUBLIC_V + ':' + (h >>> 0).toString(36) + ':' + txt.length;
 }
 
 /* 서버에 올리고 내리는 자리 — 실패하면 사람 말로 돌려줍니다 */
@@ -7313,6 +7389,29 @@ function setAdoptMemo(indId, source, price) {
   }
 }
 
+/* v1.9.12 공유 한 장 미리 보기 — 받는 사람이 여는 g.html 을 그대로 띄우고, 서버 대신 지금 기록을 건네줍니다.
+   (로그인 전이라도, 링크를 만들기 전이라도 볼 수 있습니다) */
+function PublicPreview({ gecko, onClose }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const onMsg = (e) => {
+      if (e.origin !== location.origin || !e.data || !e.data.cgPreviewReady) return;
+      try { ref.current && ref.current.contentWindow.postMessage({ cgPreview: publicSnapshot(gecko) }, location.origin); } catch (err) {}
+    };
+    window.addEventListener('message', onMsg);
+    return () => window.removeEventListener('message', onMsg);
+  }, [gecko.id]);
+  return (
+    <div data-testid="public-preview-sheet" style={{position:'fixed', inset:0, zIndex:300, background:'var(--bg)', display:'flex', flexDirection:'column'}}>
+      <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', padding:'calc(env(safe-area-inset-top) + 10px) 14px 10px', borderBottom:'1px solid var(--border)'}}>
+        <div style={{fontSize:14, fontWeight:800}}>👀 받는 사람에게 보이는 화면</div>
+        <button className="btn btn-secondary btn-sm" style={{width:'auto'}} onClick={onClose}>닫기</button>
+      </div>
+      <iframe ref={ref} title="공유 미리 보기" src={PUBLIC_PAGE + '?preview=1'} style={{flex:1, width:'100%', border:0, background:'var(--bg)'}} />
+    </div>
+  );
+}
+
 function ProfileEditSheet({ gecko, onClose, onSaved, showToast }) {
   const all = DB.getIndividuals();
   const memo = splitMemo(gecko.id);
@@ -7395,6 +7494,7 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
   const [showShare, setShowShare] = useState(false);
   const [pubBusy, setPubBusy] = useState(false);       // 공개 기록 올리는 중
   const [shareOpen, setShareOpen] = useState(false);   // v1.9.9 기록 공유하기 펼침
+  const [pubPreview, setPubPreview] = useState(false); // v1.9.12 공유 한 장 미리 보기
   const [seasonAsk, setSeasonAsk] = useState(false);   // 산란 시즌 확인 열기
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -7446,13 +7546,15 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
   };
 
   /* ── 기록 공개 ──
-     공개 중이면 하루 한 번 최신 기록으로 다시 올립니다.
-     링크를 연 사람이 몇 달 전 기록을 보고 있으면 안 되니까요. */
+     공개 중이면 최신 기록으로 다시 올립니다.
+     링크를 연 사람이 몇 달 전 기록을 보고 있으면 안 되니까요.
+     v1.9.12 — 하루 한 번이 아니라 '올린 것과 지금 기록이 다르면' 올립니다(방금 적은 것도 바로 반영). */
   useEffect(() => {
     if (!gecko.publicOn || !PUB.ready()) return;
-    if (gecko.publicAt === todayStr()) return;
+    const sig = publicSig(gecko);
+    if (gecko.publicSig === sig) return;
     PUB.put(gecko)
-      .then(() => { DB.updateIndividual(gecko.id, { publicAt: todayStr() }); refreshLocal(); })
+      .then(() => { DB.updateIndividual(gecko.id, { publicAt: todayStr(), publicSig: sig }); refreshLocal(); })
       .catch(() => {});                                  // 조용히 실패 — 다음에 열 때 다시 해봅니다
   }, [gecko.id]);
 
@@ -7467,7 +7569,7 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
       } else {
         const code = gecko.shareCode || newShareCode();
         await PUB.put({ ...gecko, shareCode: code });
-        DB.updateIndividual(gecko.id, { shareCode: code, publicOn: true, publicAt: todayStr() });
+        DB.updateIndividual(gecko.id, { shareCode: code, publicOn: true, publicAt: todayStr(), publicSig: publicSig(gecko) });
         showToast('링크가 만들어졌어요 🔗');
       }
       refreshLocal();
@@ -7815,6 +7917,30 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
         {shareOpen ? (
           <div className="card" style={{margin:0}}>
             <div style={{fontSize:13, fontWeight:800, marginBottom:8}}>🔗 기록 공유하기</div>
+            {/* v1.9.12 — 무엇이 담기는지, 무엇을 채우면 좋은지 한눈에. 올리기 전에도 미리 볼 수 있습니다 */}
+            {(() => {
+              const snap = publicSnapshot(gecko);
+              const br = snap.breeding;
+              const has = [
+                snap.summary && snap.summary.feeds ? '먹이 요약' : '',
+                snap.weights.length >= 2 ? `몸무게 그래프(${snap.weights.length}번)` : '',
+                br ? `브리딩 이력${br.clutches ? ` · 산란 ${br.clutches}번` : ''}${br.kids.length ? ` · 자식 ${br.kids.length}마리` : ''}` : '',
+                (snap.sire || snap.dam || snap.litter.length) ? '혈통' : '',
+                snap.photos.length ? `사진 ${snap.photos.length}장` : '',
+              ].filter(Boolean);
+              const want = [
+                !snap.photos.length ? '사진' : '',
+                snap.weights.length < 2 ? '몸무게(두 번 이상)' : '',
+              ].filter(Boolean);
+              return (
+                <div data-testid="public-contents" style={{fontSize:12, color:'var(--text2)', lineHeight:1.7, marginBottom:9}}>
+                  <div>담기는 것: {has.length ? has.join(' · ') : '아직 기본 정보뿐이에요'}</div>
+                  {want.length > 0 && <div style={{color:'var(--text3)'}}>더 채우면 좋아요: {want.join(' · ')}</div>}
+                </div>
+              );
+            })()}
+            <button className="btn btn-secondary btn-sm" data-testid="public-preview" style={{width:'100%', marginBottom:8}}
+              onClick={() => setPubPreview(true)}>👀 받는 사람 화면 미리 보기</button>
             {gecko.publicOn ? (
               <>
                 <div className="share-code" data-testid="public-url"
@@ -7850,6 +7976,8 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
           </button>
         )}
       </div>
+
+      {pubPreview && <PublicPreview gecko={gecko} onClose={() => setPubPreview(false)} />}
 
       {/* ── 이상이 있어요 ──
           거식·탈피부전 같은 것을 눌러서 바로 남깁니다. 대화로 말해도 같은 기록이 됩니다. */}
