@@ -611,7 +611,7 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.9';
+const APP_VERSION = '1.9.10';
 const APP_PATCHED = '2026-09-28';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -3508,6 +3508,77 @@ function genderClaim(text) {
   return { value: vals[0], phrase: hits[0].phrase, phrases: [...hits.map(h => h.phrase), ...extra], change };
 }
 
+/* ── 입양처·입양가 말 알아듣기 (v1.9.10) ──
+   "크한이 새벽피딩에서 데려왔어" · "30만원에 데려왔어" · "입양처는 리키마루" · "선물로 데려왔어"
+   예전엔 가게 이름 속 '피딩'을 먹이로 읽고, 금액은 가계부에만 따로 적어서 연필 창의 입양가 칸이 비었습니다.
+   이제 연필 창과 같은 자리(메모 속 "입양처: OO · 입양가 30만원")에 적습니다 — 가계부 '개체 구입'도 이 한 줄로만 셉니다.
+   · strong: 데려왔다·입양했다처럼 아이를 들인 말 → 지금 대화 중인 아이에게 붙여도 됩니다
+   · weak  : 샀다·구입 → 용품·먹이 이야기일 수 있어서, 문장에 아이 이름이 있고 물건 낱말이 없을 때만(부르는 쪽에서 확인)
+   돌려주는 값: { source, price(만원 글자, 없으면 ''), strong, weak } */
+const ADOPT_STRONG = /데려왔|데려옴|데려온|데리고\s*왔|입양\s*(?:했|함|해\s*왔|받|왔|온)|들여왔|들여옴|영입|분양\s*받(?:았|음|은)/;
+const ADOPT_WEAK = /샀어|샀다|샀음|샀고|구입|구매/;
+const ADOPT_NOT_SOURCE = /^(오늘|어제|그제|그저께|지난주|저번주|저번에|예전에|집|여기|거기|저기|어디|어디서|샵|가게|매장|분양샵|업체|브리더|사람|분|지인|친구|인터넷|온라인)$/;
+function adoptClaim(text) {
+  const s = String(text || '').trim();
+  if (!s) return null;
+  if (/[?？]\s*$/.test(s) || /어디서|어디에서|얼마에|얼마였|얼마야|언제\s*데려/.test(s)) return null;
+  if (/분양\s*(?:했|함|보냈|갔|완료|해\s*줬)/.test(s) && !/분양\s*받/.test(s)) return null;   // 보낸 쪽은 분양 기록입니다
+  const strong = ADOPT_STRONG.test(s);
+  const weak = !strong && ADOPT_WEAK.test(s);
+  const kw = /입양처|입양가/.test(s);
+  if (!strong && !weak && !kw) return null;
+  const clean = (w) => String(w || '').replace(/["'“”‘’]/g, '').replace(/(이야|이에요|예요|입니다|이고|이며|야|임|이라고|라고|으로|로|에서|이랑|랑)$/, '').trim();
+  let source = '';
+  let m = s.match(/입양처(?:는|은|가|이|:)?\s*["'“”‘’]?([^\s,·"'“”‘’]+)/);
+  if (m) source = clean(m[1]);
+  if (!source) {
+    // "새벽피딩에서 (30만원에) 데려왔어" — '에서' 바로 앞 낱말이 데려온 곳
+    m = s.match(/([^\s,·"'“”‘’]+)\s*에서(?=[\s\S]*(?:데려|데리고|입양|들여|영입|분양\s*받|샀|구입|구매|왔))/);
+    if (m) source = clean(m[1]);
+  }
+  if (source && (ADOPT_NOT_SOURCE.test(source) || /^\d/.test(source))) source = '';
+  let price = '';
+  if (strong || weak || /입양가/.test(s)) {
+    if ((m = s.match(/(\d+(?:\.\d+)?)\s*만\s*원?/))) price = String(parseFloat(m[1]));
+    else if ((m = s.match(/(\d[\d,]{3,})\s*원/))) { const won = parseInt(m[1].replace(/,/g, ''), 10); if (won) price = String(Math.round(won / 1000) / 10); }
+    else if ((m = s.match(/입양가(?:는|은|가|:)?\s*(\d+(?:\.\d+)?)(?!\s*[\d,]*\s*원)/)) && parseFloat(m[1]) <= 5000) price = String(parseFloat(m[1]));
+    else if (/무료|공짜|무상|선물|그냥\s*받/.test(s)) price = '0';
+  }
+  if (!source && price === '') return null;
+  return { source, price, strong: strong || kw, weak };
+}
+/* 물건·먹이 이야기인지 — '샀어'가 아이 입양이 아닐 때를 가려냅니다 */
+const SUPPLY_WORDS = /사료|먹이|판게아|레파시|슈퍼푸드|슈푸|귀뚜라미|귀뚤|밀웜|두비아|용품|사육장|케이지|렉|바닥재|은신처|핀셋|먹이컵|온습도계|분무기|화분|유목|히터|온조기|택배|박스|약/;
+
+/* ── 점 말 알아듣기 (v1.9.10) ──
+   "꼬리점 2개" · "등점 1개 꼬리점 3개" · "무점이야" · "점 없어" · "점박이" → 연필 창의 '점' 칸
+   점심·점검·지점·점수처럼 '점'이 들어간 다른 낱말, 알에 생긴 점("알에 점 생겼어")은 건드리지 않습니다. */
+const SPOT_PART = '(꼬리|등|옆구리|옆|머리|얼굴|다리|몸통|배|목|눈|엉덩이|골반|측면|턱|볼)';
+const SPOT_KNUM = { 한: 1, 하나: 1, 두: 2, 둘: 2, 세: 3, 셋: 3, 네: 4, 넷: 4, 다섯: 5, 여섯: 6, 일곱: 7, 여덟: 8, 아홉: 9, 열: 10 };
+function spotsClaim(text) {
+  const s = String(text || '').trim();
+  if (!s) return null;
+  if (/[?？]\s*$/.test(s) || /몇\s*개|있어\?|있나|있니|인지/.test(s)) return null;
+  if (/(^|\s)(무점|노점)(?:이야|이에요|입니다|이다|임|이고|이라|이|은|는|으로|이네)?(?=$|[\s,.!~])/.test(s) || /(^|\s)점\s*(?:이|은|는|도)?\s*(?:없|하나도\s*없)/.test(s)) return { value: '무점' };
+  const out = [];
+  if (/(^|\s)점박이/.test(s)) out.push('점박이');
+  const re = new RegExp('(^|\\s)' + SPOT_PART + '?\\s?(반점|점박이|점)(?:이|은|는|도|:)?(?=\\s|$|[0-9]|[한두세네다여일아열하둘셋넷]|있|많|조금|약간|살짝)', 'g');
+  let m;
+  while ((m = re.exec(s))) {
+    const part = m[2] || '', word = m[3];
+    const after = s.slice(m.index + m[0].length);
+    if (word === '점박이') { out.push('점박이'); continue; }
+    const cm = after.match(/^\s*(\d+|한|하나|두|둘|세|셋|네|넷|다섯|여섯|일곱|여덟|아홉|열|여러)\s*개/);
+    const hm = after.match(/^\s*(있|많|조금|약간|살짝)/);
+    const label = part ? part + '점' : (word === '반점' ? '반점' : '점');
+    if (cm) { const n = /^\d+$/.test(cm[1]) ? cm[1] : (SPOT_KNUM[cm[1]] || cm[1]); out.push(n === '여러' ? `${label} 여러 개` : `${label} ${n}개`); }
+    else if (hm) out.push(hm[1] === '많' ? `${label} 많음` : hm[1] === '있' ? `${label} 있음` : `${label} 조금`);
+    else if (part) out.push(label);                                       // "꼬리점" 만 말해도 알아듣습니다
+  }
+  if (!out.length) return null;
+  return { value: [...new Set(out)].join(' · ') };
+}
+
 /* 이름을 바꾸겠다는 말 알아듣기
    "이름이 마동5호야" / "이름 마동5호로 바꿔줘" / "마동5호로 이름 변경" / "이름을 마동5호라고 해줘"
    → 새 이름만 뽑아냅니다. 이름이라는 낱말이 없으면 건드리지 않습니다(엉뚱한 걸 이름으로 잡지 않게). */
@@ -5980,6 +6051,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
   const heldMorphRef = useRef(null);                 // 대상 미정 모프
   const heldGenderRef = useRef(null);               // 대상 미정 성별
   const heldExternalRef = useRef(false);             // 외부 개체 등록 플래그
+  const heldProfileRef = useRef(null);               // v1.9.10 새 아이 등록 뒤에 적을 입양처·입양가·점
   const pendingNameRef = useRef(null);               // 새 이름 등록 확인 대기
   const pendingRetargetRef = useRef(null);           // 등록 후 옮길 기록 (주인 정정 대기)
   const pendingBabyRef = useRef(null);               // 해칭 베이비 이름 답변 대기
@@ -6109,6 +6181,33 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     }
   };
 
+  /* ── v1.9.10 입양처·입양가·점 — 연필 창과 같은 자리에 바로 적습니다 ── */
+  const adoptText = (name, ac, before, after) => {
+    const lines = [];
+    if (ac.source) lines.push(`✅ ${name} 입양처: ${after.source}` + (before.source && before.source !== after.source ? ` (전: ${before.source})` : ''));
+    if (ac.price !== '') lines.push(`✅ ${name} 입양가: ${after.price === '0' ? '무상(선물)' : after.price + '만원'}`
+      + (before.price && before.price !== after.price ? ` (전: ${before.price === '0' ? '무상' : before.price + '만원'})` : '')
+      + (after.price !== '0' ? `\n가계부 '개체 구입'에도 이 금액으로 잡혀요.` : ''));
+    return lines.join('\n');
+  };
+  const applyAdopt = (who, ac) => {
+    missRef.current = 0;
+    const before = splitMemo(who.id);
+    const after = { source: ac.source || before.source || '', price: ac.price !== '' ? ac.price : (before.price || '') };
+    setAdoptMemo(who.id, after.source, after.price);
+    refreshIndividuals();
+    return adoptText(who.name, ac, before, after);
+  };
+  const applySpots = (who, value) => {
+    missRef.current = 0;
+    const prev = (DB.getIndividuals().find(i => i.id === who.id) || who).spots || '';
+    DB.updateIndividual(who.id, { spots: value });
+    refreshIndividuals();
+    geckoRef.current = DB.getIndividuals().find(i => i.id === who.id) || geckoRef.current;
+    return prev === value ? `${who.name} 점은 이미 '${value}'로 적혀 있어요 ✅`
+      : `✅ ${who.name} 점: ${value}` + (prev ? ` (전: ${prev})` : '');
+  };
+
   /* ── 새 개체 등록 ── */
   const doRegister = (name) => {
     if (isBadName(name)) { pendingNameRef.current = null; bot(BAD_NAME_MSG); return; }
@@ -6136,6 +6235,12 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     if (heldMorphRef.current) {
       morphLine = '\n' + applyMorph(saved, heldMorphRef.current);
       heldMorphRef.current = null;
+    }
+    if (heldProfileRef.current) {
+      const hp = heldProfileRef.current;
+      heldProfileRef.current = null;
+      if (hp.spots) morphLine += '\n' + applySpots(saved, hp.spots);
+      if (hp.adopt) morphLine += '\n' + applyAdopt(saved, hp.adopt);
     }
     const extLine = isExternal ? '\n(외부 개체로 등록했어요 — 축양리스트엔 표시되지 않고, 혈통 연결에만 사용돼요)' : '';
     if (detectedGender) {
@@ -6316,10 +6421,22 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       return;
     }
 
+    /* 2.94) 입양처·입양가 (v1.9.10) — 가계부·먹이 규칙보다 먼저 봅니다.
+       "새벽피딩에서 데려왔어"의 '피딩'을 먹이로, "30만원에 데려왔어"를 가계부 따로 적기로 새지 않게. */
+    const adoptC = adoptClaim(text);
+    if (adoptC) {
+      const nm0 = findNamesInText(text, DB.getIndividuals());
+      const okWeak = !adoptC.weak || (nm0.length && !SUPPLY_WORDS.test(text));
+      const who = okWeak ? (nm0[0] || (adoptC.strong ? geckoRef.current : null)) : null;
+      if (who) { setTarget(who); bot(applyAdopt(who, adoptC)); return; }
+    }
+    // 처음 보는 이름이면 등록한 뒤에 적습니다 (그동안 가계부·먹이로 새지 않게)
+    const adoptHeld = adoptC && adoptC.strong ? adoptC : null;
+
     // 2.95) 가계부 — 돈 이야기는 개체가 아니라 가계부로 보냅니다
     const lq = answerLedgerQuery(text);
     if (lq) { bot(lq); return; }
-    const led = extractLedger(text);
+    const led = adoptHeld ? null : extractLedger(text);
     if (led) {
       updatePending(p => [...p, { type: 'ledger', data: led.data, date: led.date, targetId: null, targetName: '💰 가계부' }]);
       bot(`${led.data.flow === 'out' ? '💸 지출' : '💰 수입'} · ${led.data.category} ${wonText(led.data.amount)} 담아뒀어요.\n`
@@ -6332,7 +6449,9 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     // 3) 해석
     const inds = DB.getIndividuals();
     const names = findNamesInText(text, inds);
-    const facts = extractFacts(text);
+    const spotsC = spotsClaim(text);
+    const factText = adoptHeld && adoptHeld.source ? text.split(adoptHeld.source).join(' ') : text;
+    const facts = spotsC ? [] : extractFacts(factText);
     const morph = extractMorph(text);
     const date = parseKDate(text);
 
@@ -6459,14 +6578,15 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       const singleWord = text.trim().split(/\s+/).length === 1;
       const genderAssert = !!genderClaim(text);
       const c = guessNewName(text, inds);
-      if (c && isBadName(c) && (singleWord || facts.length || morph || genderAssert)) {
+      const profileSaid = !!(adoptHeld || spotsC);
+      if (c && isBadName(c) && (singleWord || facts.length || morph || genderAssert || profileSaid)) {
         bot(BAD_NAME_MSG);
         return;
       }
       if (!target) {
-        if (c && (singleWord || facts.length || morph || genderAssert)) newSubject = c;
+        if (c && (singleWord || facts.length || morph || genderAssert || profileSaid)) newSubject = c;
       } else if (!mating) {
-        if (c && c !== target.name && (facts.length || morph || genderAssert)) newSubject = c;
+        if (c && c !== target.name && (facts.length || morph || genderAssert || profileSaid)) newSubject = c;
       }
     }
 
@@ -6475,6 +6595,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       pendingNameRef.current = newSubject;
       heldRef.current = [...heldRef.current, ...facts.map(f => ({ ...f, date }))];
       if (morph) heldMorphRef.current = morph;
+      heldProfileRef.current = (adoptHeld || spotsC) ? { adopt: adoptHeld, spots: spotsC && spotsC.value } : null;
       // 성별 미리 캡처 (메이팅 문장 제외)
       if (!mating) {
         const gc = genderClaim(text);
@@ -6530,6 +6651,9 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     // (질문 답변은 3.45에서 이미 처리했습니다 — 보류 기록이 대상에 붙은 뒤 한 번 더 확인)
     const qa = answerQuery(target, text);
     if (qa) { bot(qa); return; }
+
+    /* 5.52) 점 (v1.9.10) — "꼬리점 2개" · "무점이야" → 연필 창의 '점' 칸 */
+    if (spotsC) { bot(applySpots(target, spotsC.value)); return; }
 
     /* 5.54) 이미 적힌 값과 다른 정보가 들어온 경우 — 말없이 덮어쓰지 않고 여쭤봅니다.
        "고쳐줘"라는 말이 없어도 됩니다. 값이 같거나 아직 비어 있으면 평소대로 흘려보냅니다. */
