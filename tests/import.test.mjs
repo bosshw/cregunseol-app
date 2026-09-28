@@ -150,3 +150,12 @@ test("reads a free-form memo list (one animal per line, dot separated)", () => {
   assert.match(memo("소피"), /선주 윌리-심바x만시\/부개체-슈슈제니 라인/, "괄호 줄은 위 아이의 메모로");
   assert.equal(Math.round(plan.stats.cover * 100), 100);
 });
+
+test("iPhone file picker: no type filter on iOS (files were greyed out / hidden), with where-to-look help", async () => {
+  const src = await readFile(new URL("src/import-screen.jsx", root), "utf8");
+  assert.match(src, /accept=\{IS_IOS \? undefined : '\.xlsx,/, "아이폰에서는 종류 제한을 걸지 않습니다");
+  assert.match(src, /data-testid="ios-file-help"/);
+  assert.match(src, /원드라이브·구글 드라이브/);
+  assert.match(src, /'파일에 저장'/);
+  assert.match(src, /Numbers 파일은 바로 못 읽어요/);
+});
