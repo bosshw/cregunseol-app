@@ -190,8 +190,14 @@ const DB = {
     const d = o.date || todayStr();
     const won = Number(o.won || 0);
     const free = !won && !!o.free;                 // 무료 분양 — '아직 안 적음'과 구분합니다
-    const buyer = (o.buyer || '').trim();
-    this.updateIndividual(id, { status: 'sold', keep: false, salePrice: won ? String(won) : '', saleFree: free });
+    /* v1.9.13 — 입양자 이름·연락처를 개체에 따로 둡니다(adopterName·adopterPhone).
+       분양 창은 두 값을 늘 넘기고(빈 값 = 지움), 대화처럼 buyer 만 넘기는 길은 이름만 채우고 연락처는 그대로 둡니다. */
+    const hasAdopter = o.adopterName !== undefined || o.adopterPhone !== undefined;
+    const buyer = String((hasAdopter ? o.adopterName : o.buyer) || '').trim();
+    const patch = { status: 'sold', keep: false, salePrice: won ? String(won) : '', saleFree: free };
+    if (hasAdopter) { patch.adopterName = buyer; patch.adopterPhone = formatPhone(o.adopterPhone || ''); }
+    else if (buyer) patch.adopterName = buyer;
+    this.updateIndividual(id, patch);
     const evs = this.getEvents();
     const idx = evs.findIndex(e => e.individualId === id && e.type === 'distribution');
     if (idx >= 0) {
@@ -327,7 +333,8 @@ const DB = {
     if (!keep || !drop) return null;
 
     const PROFILE = ['gender', 'morph', 'spots', 'hatchDate', 'status', 'salePrice',
-                     'avatar', 'avatarRef', 'isExternal', 'isFromCreGunseol', 'favorite', 'keep', 'babyNotes', 'shareCode'];
+                     'avatar', 'avatarRef', 'isExternal', 'isFromCreGunseol', 'favorite', 'keep', 'babyNotes', 'shareCode',
+                     'adopterName', 'adopterPhone'];
     const src = profileFrom === 'drop' ? drop : keep;
     const alt = profileFrom === 'drop' ? keep : drop;
     const blank = v => v === undefined || v === null || v === '' || v === 'unknown' || v === false;
@@ -611,7 +618,7 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.12';
+const APP_VERSION = '1.9.13';
 const APP_PATCHED = '2026-09-28';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -1227,6 +1234,47 @@ function salePriceOf(ind) {
   const ev = DB.getEventsFor(ind.id).filter(e => e.type === 'distribution' && e.data && Number(e.data.price) > 0)
     .sort((a, b) => (a.date < b.date ? 1 : -1))[0];
   return ev ? Number(ev.data.price) : 0;
+}
+
+/* ── v1.9.13 입양자(데려간 사람) ──
+   이름은 개체의 adopterName → 예전 분양 기록의 '분양처: OOO' 순으로 찾습니다.
+   연락처는 목록 카드에서는 가운데를 가리고(010-****-5678), 전체 번호는 프로필(상세)에서만 보입니다.
+   ★ 공유 한 장(publicSnapshot)은 필드를 골라 담으므로 입양자 정보는 나가지 않습니다. */
+function phoneDigits(s) { return String(s || '').replace(/\D/g, ''); }
+function phoneParts(s) {
+  const d = phoneDigits(s);
+  if (d.length < 9 || d.length > 11) return null;
+  const head = d.startsWith('02') ? 2 : 3;
+  const mid = d.slice(head, d.length - 4);
+  if (mid.length < 3 || mid.length > 4) return null;
+  return [d.slice(0, head), mid, d.slice(-4)];
+}
+function formatPhone(s) {
+  const p = phoneParts(s);
+  return p ? p.join('-') : String(s || '').trim();
+}
+function maskPhone(s) {
+  const p = phoneParts(s);
+  if (p) return [p[0], '*'.repeat(p[1].length), p[2]].join('-');
+  const d = phoneDigits(s);
+  return d.length >= 4 ? '****-' + d.slice(-4) : (d ? '****' : '');
+}
+function adopterOf(ind) {
+  if (!ind) return { name: '', phone: '' };
+  const name = String(ind.adopterName || '').trim() || saleInfo(ind).buyer;
+  return { name, phone: formatPhone(ind.adopterPhone || '') };
+}
+/* 목록 카드 한 줄 — "입양자: 이름 · 010-****-1234" / 없으면 "입양자 미등록" */
+function adopterLine(ind) {
+  const a = adopterOf(ind);
+  const parts = [a.name, a.phone ? maskPhone(a.phone) : ''].filter(Boolean);
+  return parts.length ? '입양자: ' + parts.join(' · ') : '입양자 미등록';
+}
+/* 분양완료 카드의 분양가 한 줄 — 금액 / 무료 / 미입력 */
+function soldPriceLine(ind) {
+  const w = salePriceOf(ind);
+  if (w > 0) return '분양가 ' + wonText(w);
+  return saleIsFree(ind) ? '분양가 무료' : '분양가 미입력';
 }
 
 /* ── 알 하나하나(클러치 안의 개별 알) ──
@@ -5547,15 +5595,22 @@ function HatchView({ individuals, refreshIndividuals, showToast, navigate }) {
 function SalePrompt({ gecko, onDone, onClose }) {
   const already = gecko ? salePriceOf(gecko) : 0;
   const [price, setPrice] = useState(already ? String(already / 10000) : '');
-  const [buyer, setBuyer] = useState('');
-  const [date, setDate] = useState(todayStr());
+  /* v1.9.13 — 이미 적힌 입양자·분양일은 채워서 엽니다(분양가만 고치려다 지워지지 않게) */
+  const prevAdopter = gecko ? adopterOf(gecko) : { name: '', phone: '' };
+  const prevDate = gecko ? ((DB.getEventsFor(gecko.id).filter(e => e.type === 'distribution')
+    .sort((a, b) => (a.date < b.date ? 1 : -1))[0] || {}).date || '') : '';
+  const [buyer, setBuyer] = useState(prevAdopter.name);
+  const [phone, setPhone] = useState(prevAdopter.phone);
+  const [date, setDate] = useState(prevDate || todayStr());
   if (!gecko) return null;
   const won = parseMoney(price);
+  const phoneBad = !!phoneDigits(phone) && !phoneParts(phone);
   /* free=true 는 "무료로 보냈다"는 뜻입니다. 아직 안 적은 것과 구분해서 저장해야
      홈의 '분양가가 비어 있는 아이' 안내에 다시 잡히지 않습니다. */
   const save = (opt) => {
     const o = opt || {};
-    const r = DB.recordSale(gecko.id, { won: o.free ? 0 : (won || 0), free: !!o.free, buyer, date });
+    const r = DB.recordSale(gecko.id, { won: o.free ? 0 : (won || 0), free: !!o.free,
+      adopterName: buyer, adopterPhone: phone, date });
     onDone && onDone(r);
   };
   return (
@@ -5574,15 +5629,22 @@ function SalePrompt({ gecko, onDone, onClose }) {
                   : '숫자로 적어주세요 (예: 15 · 15만원 · 150000원)'}
         </div>
 
-        <div style={{fontSize:11.5, color:'var(--text3)', marginBottom:4}}>분양처 <span style={{opacity:.65}}>(선택)</span></div>
-        <input className="input" placeholder="예) 홍길동 · 파충류샵" value={buyer} onChange={e => setBuyer(e.target.value)} />
+        <div style={{fontSize:11.5, color:'var(--text3)', marginBottom:4}}>입양자 이름 <span style={{opacity:.65}}>(선택)</span></div>
+        <input className="input" data-testid="adopter-name" placeholder="예) 홍길동 · 파충류샵" value={buyer} onChange={e => setBuyer(e.target.value)} />
+
+        <div style={{fontSize:11.5, color:'var(--text3)', margin:'10px 0 4px'}}>입양자 연락처 <span style={{opacity:.65}}>(선택)</span></div>
+        <input className="input" data-testid="adopter-phone" type="tel" inputMode="tel" autoComplete="off" placeholder="예) 010-1234-5678"
+          value={phone} onChange={e => setPhone(e.target.value)} onBlur={() => setPhone(formatPhone(phone))} />
+        <div style={{fontSize:11, minHeight:15, margin:'4px 2px 0', color: phoneBad ? 'var(--danger)' : 'var(--text3)'}}>
+          {phoneBad ? '번호를 다시 봐 주세요 (예: 010-1234-5678)' : '목록에서는 가운데 자리를 가려서 보여 드려요'}
+        </div>
 
         <div style={{fontSize:11.5, color:'var(--text3)', margin:'10px 0 4px'}}>분양한 날</div>
         <input className="input" type="date" value={date} onChange={e => setDate(e.target.value)} />
 
         <div style={{display:'flex', gap:6, marginTop:14}}>
-          <button className="btn btn-primary btn-sm" style={{flex:1}} disabled={!!price && !won} onClick={() => save()}>저장</button>
-          <button className="btn btn-secondary btn-sm" style={{flex:1}} onClick={() => save({ free: true })}>🎁 무료로 보냄</button>
+          <button className="btn btn-primary btn-sm" style={{flex:1}} disabled={(!!price && !won) || phoneBad} onClick={() => save()}>저장</button>
+          <button className="btn btn-secondary btn-sm" style={{flex:1}} disabled={phoneBad} onClick={() => save({ free: true })}>🎁 무료로 보냄</button>
         </div>
         <div style={{fontSize:11, color:'var(--text3)', margin:'7px 2px 0', lineHeight:1.5}}>
           무료로 보내셨으면 <b>무료로 보냄</b>을 눌러주세요. 목록에 <b>무료</b>로 적히고, 분양가를 채우라는 안내도 뜨지 않습니다.
@@ -5652,16 +5714,14 @@ function SaleSection({ individuals, navigate, showToast, refreshIndividuals }) {
         </div>
       ) : saleList.map(gecko => (
         <div key={gecko.id}>
-          <GeckoCard gecko={gecko} onClick={() => navigate('profile', { gecko })} onToggleFav={toggleFav} />
+          {/* v1.9.13 — 분양완료 칸은 별·최근·먹이 대신 분양가·입양자를 카드 안에 보여 줍니다 */}
+          {saleFilter === 'sold'
+            ? <GeckoCard gecko={gecko} sold onClick={() => navigate('profile', { gecko })} />
+            : <GeckoCard gecko={gecko} onClick={() => navigate('profile', { gecko })} onToggleFav={toggleFav} />}
           {saleFilter === 'gone' && (
             <div style={{fontSize:11.5, color:'var(--text3)', padding:'8px 2px 2px', lineHeight:1.65}}>
               곁을 떠난 아이들이에요. 목록·먹이·제안에서는 빠졌지만
               혈통에는 그대로 남아서 자식들의 근친 판정에 계속 쓰입니다.
-            </div>
-          )}
-          {saleFilter === 'sold' && (
-            <div style={{margin:'-6px 16px 10px', fontSize:11.5, color: salePriceLabel(gecko) ? 'var(--accent2)' : 'var(--text3)'}}>
-              {salePriceLabel(gecko) ? `분양가 ${salePriceLabel(gecko)}` : '분양가 아직 안 적음'}
             </div>
           )}
         </div>
@@ -5669,7 +5729,7 @@ function SaleSection({ individuals, navigate, showToast, refreshIndividuals }) {
 
       {/* 빠진 분양가를 앞에서부터 하나씩 채웁니다 */}
       {fillQueue.length > 0 && (
-        <SalePrompt
+        <SalePrompt key={fillQueue[0]}
           gecko={individuals.find(i => i.id === fillQueue[0])}
           onClose={() => setFillQueue([])}
           onDone={() => {
@@ -5956,7 +6016,7 @@ function LedgerScreen({ individuals, navigate, showToast, refreshIndividuals }) 
   );
 }
 
-function GeckoCard({ gecko, onClick, onToggleFav }) {
+function GeckoCard({ gecko, onClick, onToggleFav, sold }) {
   const events = DB.getEventsFor(gecko.id);
   const lastEvent = [...events].sort((a,b) => b.createdAt > a.createdAt ? 1 : -1)[0];
   const lastFeed = events.filter(e => e.type === 'feeding')
@@ -5985,6 +6045,15 @@ function GeckoCard({ gecko, onClick, onToggleFav }) {
           <span className={`gender-dot ${gecko.gender}`}></span>
           {gecko.morph || (gecko.morphUnknown ? ' ' : '모프 미등록')}
         </div>
+        {sold ? (
+          /* v1.9.13 분양완료 카드 — 해칭일(있을 때만) · 분양가 · 입양자. 별·최근·먹이는 보이지 않습니다 */
+          <>
+            {gecko.hatchDate && <div className="gecko-line">🎂 {fmtDate(gecko.hatchDate)}</div>}
+            <div className="gecko-line" data-testid="sold-price"
+              style={{color: (salePriceOf(gecko) > 0 || saleIsFree(gecko)) ? 'var(--accent2)' : 'var(--text3)'}}>{soldPriceLine(gecko)}</div>
+            <div className="gecko-line" data-testid="sold-adopter">{adopterLine(gecko)}</div>
+          </>
+        ) : (<>
         <div className="gecko-line">
           {gecko.hatchDate ? `🎂 ${fmtDate(gecko.hatchDate)}` : ' '}
         </div>
@@ -6000,8 +6069,9 @@ function GeckoCard({ gecko, onClick, onToggleFav }) {
             </span>
           )}
         </div>
+        </>)}
       </div>
-      {onToggleFav && (
+      {onToggleFav && !sold && (
         <button
           onClick={(e) => { e.stopPropagation(); onToggleFav(gecko); }}
           aria-label="즐겨찾기"
@@ -8023,6 +8093,24 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
             </button>
           )}
         </div>
+        {/* v1.9.13 — 입양자 전체 번호는 여기(상세)에서만 보입니다 */}
+        {gecko.status === 'sold' && (() => {
+          const a = adopterOf(gecko);
+          return (
+            <div data-testid="adopter-detail" style={{fontSize:12, color:'var(--text2)', marginBottom:6, display:'flex', alignItems:'center', gap:6, flexWrap:'wrap'}}>
+              {a.name || a.phone ? (
+                <span style={{minWidth:0}}>
+                  입양자: {a.name || '이름 미등록'}
+                  {a.phone && <> · <a href={`tel:${phoneDigits(a.phone)}`} style={{color:'var(--accent2)', fontWeight:700}}>{a.phone}</a></>}
+                </span>
+              ) : <span style={{color:'var(--text3)'}}>입양자 미등록</span>}
+              <button onClick={() => setSalePrompt(true)}
+                style={{background:'none', border:'none', padding:0, cursor:'pointer', fontSize:11, color:'var(--accent2)', fontWeight:700, textDecoration:'underline'}}>
+                {a.name || a.phone ? '고치기' : '입양자 적기'}
+              </button>
+            </div>
+          );
+        })()}
         {(() => {
           // 개체 손익 — 가계부에서 이 아이에게 연결한 지출과 분양가를 견줍니다
           const pr = profitOfIndividual(gecko, DB.getEvents());
@@ -9070,7 +9158,7 @@ function saleInfo(ind) {
   const won = ev && ev.data ? Number(ev.data.price || 0) : Number(ind.salePrice || 0);
   const rest = notes.split('·').map(s => s.trim()).filter(s => s && !/^분양처\s*:/.test(s)).join(' · ');
   const free = !won && (!!(ev && ev.data && ev.data.free) || !!ind.saleFree);
-  return { buyer: (buyer || '').trim(), man: won ? String(won / 10000) : (ev ? '0' : ''),
+  return { buyer: String(ind.adopterName || '').trim() || (buyer || '').trim(), man: won ? String(won / 10000) : (ev ? '0' : ''),
            note: [free ? '무료 분양' : '', rest].filter(Boolean).join(' · ') };
 }
 
