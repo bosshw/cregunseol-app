@@ -618,7 +618,7 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.13';
+const APP_VERSION = '1.9.14';
 const APP_PATCHED = '2026-09-28';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -1275,6 +1275,19 @@ function soldPriceLine(ind) {
   const w = salePriceOf(ind);
   if (w > 0) return '분양가 ' + wonText(w);
   return saleIsFree(ind) ? '분양가 무료' : '분양가 미입력';
+}
+
+/* ── v1.9.14 가계부 [무지개다리] 칸 ──
+   대표님: '떠남'·'폐사'는 말이 세다 → 가계부 칸에서는 '무지개다리'로 부릅니다.
+   이 칸에는 실종·탈출로 빠진 아이도 함께 들어가므로, 그 아이는 '실종'으로 따로 적습니다.
+   (저장값 status:'gone'·goneReason:'폐사' 와 '이상이 있어요'의 버튼 글자는 그대로입니다) */
+const isMissingReason = (r) => /실종|탈출/.test(String(r || ''));
+function goneDayOf(ind) { return (ind && (ind.goneDate || lastDeathDate(ind.id))) || ''; }
+function goneBadge(ind) { return isMissingReason(ind && ind.goneReason) ? '실종' : '🌈 무지개다리'; }
+function goneDayLine(ind) {
+  const d = goneDayOf(ind);
+  if (isMissingReason(ind && ind.goneReason)) return d ? `${fmtDate(d)} 실종` : '실종 · 날짜 미기록';
+  return d ? `🌈 ${fmtDate(d)} 무지개다리` : '🌈 무지개다리 · 날짜 미기록';
 }
 
 /* ── 알 하나하나(클러치 안의 개별 알) ──
@@ -5688,10 +5701,11 @@ function SaleSection({ individuals, navigate, showToast, refreshIndividuals }) {
       <div style={{padding:'12px 16px 0'}}>
         <input className="input brand-search" placeholder=" 이름 또는 모프 검색" value={search} onChange={e => setSearch(e.target.value)} />
       </div>
-      <div style={{display:'flex', gap:6, padding:'10px 16px 0'}}>
+      {/* v1.9.14 — 좁은 화면(폴드 접힘 344px)에서 '무지개다리 1'이 두 줄로 찌그러져서, 칩은 줄바꿈 없이 다음 줄로 넘깁니다 */}
+      <div style={{display:'flex', flexWrap:'wrap', gap:6, padding:'10px 16px 0'}}>
         {[['available',`분양가능${availCount ? ' ' + availCount : ''}`],['reserved',`예약중${reservedCount ? ' ' + reservedCount : ''}`],['sold',`분양완료${soldCount ? ' ' + soldCount : ''}`],
-          ...(goneCount ? [['gone',`🌈 떠남 ${goneCount}`]] : [])].map(([k, l]) => (
-          <button key={k} className="chip-btn" style={{fontSize:12, padding:'6px 11px', ...(saleFilter === k ? {background:'var(--accent-soft)', fontWeight:700} : {})}}
+          ...(goneCount ? [['gone',`🌈 무지개다리 ${goneCount}`]] : [])].map(([k, l]) => (
+          <button key={k} className="chip-btn" style={{fontSize:12, padding:'6px 11px', whiteSpace:'nowrap', ...(saleFilter === k ? {background:'var(--accent-soft)', fontWeight:700} : {})}}
             onClick={() => setSaleFilter(k)}>{l}</button>
         ))}
       </div>
@@ -5707,6 +5721,12 @@ function SaleSection({ individuals, navigate, showToast, refreshIndividuals }) {
       )}
 
       <div style={{height:8}} />
+      {saleFilter === 'gone' && saleList.length > 0 && (
+        <div data-testid="gone-note" style={{fontSize:11.5, color:'var(--text3)', padding:'0 18px 8px', lineHeight:1.65}}>
+          무지개다리를 건넜거나 잃어버린 아이들이에요. 목록·먹이·제안에서는 빠졌지만
+          혈통에는 그대로 남아서 자식들의 근친 판정에 계속 쓰입니다.
+        </div>
+      )}
       {saleList.length === 0 ? (
         <div className="empty" style={{padding:'40px 20px'}}>
           <div className="empty-icon" style={{fontSize:36}}>🏷️</div>
@@ -5717,13 +5737,9 @@ function SaleSection({ individuals, navigate, showToast, refreshIndividuals }) {
           {/* v1.9.13 — 분양완료 칸은 별·최근·먹이 대신 분양가·입양자를 카드 안에 보여 줍니다 */}
           {saleFilter === 'sold'
             ? <GeckoCard gecko={gecko} sold onClick={() => navigate('profile', { gecko })} />
+            : saleFilter === 'gone'
+            ? <GeckoCard gecko={gecko} gone onClick={() => navigate('profile', { gecko })} />
             : <GeckoCard gecko={gecko} onClick={() => navigate('profile', { gecko })} onToggleFav={toggleFav} />}
-          {saleFilter === 'gone' && (
-            <div style={{fontSize:11.5, color:'var(--text3)', padding:'8px 2px 2px', lineHeight:1.65}}>
-              곁을 떠난 아이들이에요. 목록·먹이·제안에서는 빠졌지만
-              혈통에는 그대로 남아서 자식들의 근친 판정에 계속 쓰입니다.
-            </div>
-          )}
         </div>
       ))}
 
@@ -6016,7 +6032,7 @@ function LedgerScreen({ individuals, navigate, showToast, refreshIndividuals }) 
   );
 }
 
-function GeckoCard({ gecko, onClick, onToggleFav, sold }) {
+function GeckoCard({ gecko, onClick, onToggleFav, sold, gone }) {
   const events = DB.getEventsFor(gecko.id);
   const lastEvent = [...events].sort((a,b) => b.createdAt > a.createdAt ? 1 : -1)[0];
   const lastFeed = events.filter(e => e.type === 'feeding')
@@ -6037,7 +6053,7 @@ function GeckoCard({ gecko, onClick, onToggleFav, sold }) {
           {isMine(gecko) && <span className="badge badge-gold" style={{fontSize:10}}>MY</span>}
           {gecko.isExternal && <span className="badge badge-blue" style={{fontSize:10}}>외부</span>}
           {stKey !== 'own' && (
-            <span className="badge" style={{fontSize:10, background:'var(--bg3)', color:st.color, border:'1px solid var(--border)'}}>{st.label}</span>
+            <span className="badge" style={{fontSize:10, background:'var(--bg3)', color:st.color, border:'1px solid var(--border)'}}>{gone ? goneBadge(gecko) : st.label}</span>
           )}
         </div>
         {/* 모프 / 생일 / 최근기록을 한 줄씩 — 없는 항목도 칸은 그대로 비워 둡니다 */}
@@ -6052,6 +6068,12 @@ function GeckoCard({ gecko, onClick, onToggleFav, sold }) {
             <div className="gecko-line" data-testid="sold-price"
               style={{color: (salePriceOf(gecko) > 0 || saleIsFree(gecko)) ? 'var(--accent2)' : 'var(--text3)'}}>{soldPriceLine(gecko)}</div>
             <div className="gecko-line" data-testid="sold-adopter">{adopterLine(gecko)}</div>
+          </>
+        ) : gone ? (
+          /* v1.9.14 무지개다리 카드 — 해칭일(있을 때만) · 떠난 날. 별·최근·먹이는 보이지 않습니다 */
+          <>
+            {gecko.hatchDate && <div className="gecko-line">🎂 {fmtDate(gecko.hatchDate)}</div>}
+            <div className="gecko-line" data-testid="gone-day" style={{color:'var(--text2)'}}>{goneDayLine(gecko)}</div>
           </>
         ) : (<>
         <div className="gecko-line">
@@ -6071,7 +6093,7 @@ function GeckoCard({ gecko, onClick, onToggleFav, sold }) {
         </div>
         </>)}
       </div>
-      {onToggleFav && !sold && (
+      {onToggleFav && !sold && !gone && (
         <button
           onClick={(e) => { e.stopPropagation(); onToggleFav(gecko); }}
           aria-label="즐겨찾기"
