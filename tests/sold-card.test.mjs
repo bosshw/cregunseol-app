@@ -87,8 +87,8 @@ test("old records: name falls back to '분양처: OOO'; chat sale keeps a phone 
 test("source: sold variant only in the 분양완료 list, no star/recent/feed there, full number only in profile", async () => {
   const src = await read("src/app.jsx");
   const card = src.slice(src.indexOf("function GeckoCard("), src.indexOf("function WeightChart("));
-  assert.match(card, /function GeckoCard\(\{ gecko, onClick, onToggleFav, sold \}\)/);
-  assert.match(card, /\{onToggleFav && !sold && \(/, "분양완료 카드에는 별이 없습니다");
+  assert.match(card, /function GeckoCard\(\{ gecko, onClick, onToggleFav, sold, gone \}\)/);
+  assert.match(card, /\{onToggleFav && !sold && !gone && \(/, "분양완료·무지개다리 카드에는 별이 없습니다");
   // 분양완료 갈래 안에는 최근·먹이 줄이 없습니다
   const soldBranch = card.slice(card.indexOf("{sold ? ("), card.indexOf(") : (<>")).replace(/\/\*[\s\S]*?\*\//g, "");
   assert.ok(soldBranch.includes("soldPriceLine(gecko)") && soldBranch.includes("adopterLine(gecko)"));
@@ -112,4 +112,34 @@ test("source: sold variant only in the 분양완료 list, no star/recent/feed th
   // 공유 한 장에는 입양자 정보가 나가지 않습니다
   const snap = src.slice(src.indexOf("function publicSnapshot("), src.indexOf("function publicSnapshot(") + 4000);
   assert.ok(!/adopter/.test(snap));
+});
+
+/* v1.9.14 — 가계부 [떠남] 칸 → [🌈 무지개다리] (대표님 2026-10-02: 최근 줄 빼고 떠난 날 표기, '떠남·폐사'는 말이 셈) */
+test("무지개다리 card: shows the day it left, missing pets say 실종, no recent/feed/star", async () => {
+  const run = await loadApp();
+  run(`DB.saveIndividuals([
+    { id: 'g1', name: '빛산1호', morph: '25헷초초 노말', hatchDate: '2026-08-26', status: 'gone', goneDate: '2026-09-22', goneReason: '폐사' },
+    { id: 'g2', name: '도망이', status: 'gone', goneDate: '2026-09-01', goneReason: '실종·탈출' },
+    { id: 'g3', name: '옛기록', status: 'gone' },
+  ]); DB.saveEvents([{ id: 'h1', individualId: 'g3', type: 'health', date: '2026-07-10', data: { issue: '폐사' } }]);`);
+  const line = (id) => run(`goneDayLine(DB.getIndividuals().find(i => i.id === '${id}'))`);
+  const fmt = (d) => run(`fmtDate('${d}')`);
+  assert.equal(line("g1"), `🌈 ${fmt("2026-09-22")} 무지개다리`);
+  assert.equal(line("g2"), `${fmt("2026-09-01")} 실종`);
+  assert.equal(line("g3"), `🌈 ${fmt("2026-07-10")} 무지개다리`, "goneDate 가 없으면 폐사 기록 날짜로");
+  assert.equal(run(`goneBadge(DB.getIndividuals()[0])`), "🌈 무지개다리");
+  assert.equal(run(`goneBadge(DB.getIndividuals()[1])`), "실종");
+
+  const src = await read("src/app.jsx");
+  const card = src.slice(src.indexOf("function GeckoCard("), src.indexOf("function WeightChart("));
+  const goneBranch = card.slice(card.indexOf(") : gone ? ("), card.indexOf(") : (<>")).replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.ok(goneBranch.includes("goneDayLine(gecko)"));
+  assert.ok(!/최근|feedDays|🍽️/.test(goneBranch));
+  const sec = src.slice(src.indexOf("function SaleSection("), src.indexOf("function MoneySection("));
+  assert.match(sec, /saleFilter === 'gone'\s*\?\s*<GeckoCard gecko=\{gecko\} gone /);
+  assert.ok(sec.includes("`🌈 무지개다리 ${goneCount}`") && !sec.includes("🌈 떠남"), "칸 이름");
+  // 안내 문장은 목록 위에 한 번만 (아이마다 되풀이되지 않게)
+  const loop = sec.slice(sec.indexOf("saleList.map(gecko =>"), sec.indexOf("fillQueue.length > 0 &&"));
+  assert.ok(!loop.includes("혈통에는 그대로 남아서") && sec.includes('data-testid="gone-note"'));
+  assert.equal((src.match(/<GeckoCard [^>]*\bgone\b/g) || []).length, 1, "무지개다리 카드는 가계부 칸에서만");
 });
