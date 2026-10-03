@@ -637,7 +637,7 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.15';
+const APP_VERSION = '1.9.16';
 const APP_PATCHED = '2026-09-28';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -5361,7 +5361,27 @@ const EGG = {
       const hatchedNow = units.filter(x => x.status === 'hatched').length;
       if (EGG.recTotal(row) > hatchedNow) { const m = EGG.dropOne(row, u.date); if (m) notes.push(m); }
     }
-    return { ok: true, row: EGG.row(layingId) || row, note: notes.join(' · ') };
+    const after = EGG.row(layingId) || row;
+    /* v1.9.16 — 부화를 거두면 그때 함께 등록된 아기가 남습니다(제보: "별산이는 입력 안 했는데 생겼어").
+       이 알둥지 아기 목록에서 빠진 아이를 돌려줘서, 화면·대화가 "같이 지울까요?"를 여쭙게 합니다.
+       ★ 여기서는 지우지 않습니다 — 지우는 건 사람이 고른 뒤에만. */
+    let orphans = [];
+    if (u.status === 'hatched' && u.date) {
+      // 그날 나온 아기 수가 그날 남은 부화 기록 마릿수보다 많으면, 넘치는 만큼(나중에 등록된 아이부터)
+      const left = after.hatches.filter(h => h.date === u.date)
+        .reduce((a, h) => a + hatchCountOf(h, after.hatches.length, after.units.length), 0);
+      const same = DB.getIndividuals().filter(b => b.damId === row.e.individualId && b.hatchDate === u.date)
+        .sort((a, b) => ((b.createdAt || '') > (a.createdAt || '') ? 1 : -1));
+      orphans = same.slice(0, Math.max(0, same.length - left))
+        .map(b => ({ id: b.id, name: b.name, logs: DB.getEventsFor(b.id).length }));
+    }
+    return { ok: true, row: after, note: notes.join(' · '), orphans };
+  },
+  /* 거둔 부화의 아기 지우기 — 사람이 [같이 지우기]를 고른 뒤에만 부릅니다 */
+  dropBabies(ids) {
+    const names = [];
+    (ids || []).forEach(id => { const b = DB.getIndividuals().find(i => i.id === id); if (b) { names.push(b.name); DB.deleteIndividual(id); } });
+    return names;
   },
   /* 부화한 자리는 있는데 아기가 덜 이어진 경우 — 알 상태는 그대로 두고 아이만 잇습니다 */
   roomDates(row) {
@@ -5663,6 +5683,7 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals, back 
   const [moveFor, setMoveFor] = useState(null);     // 다른 알둥지로 옮길 부화 기록
   const [eggSheet, setEggSheet] = useState(null);   // v1.9.15 알 부화·아기 잇기 창 — { egg: i } 또는 { room: true }
   const [layEdit, setLayEdit] = useState(false);    // v1.9.15 산란 정보(산란일·알 개수·아빠·메모) 고치기
+  const [orphanAsk, setOrphanAsk] = useState(null); // v1.9.16 부화를 거둔 뒤 남은 아기 — 같이 지울지 여쭙니다
   const fileRef = useRef(null);
   const bump = () => { setVer(v => v + 1); refreshIndividuals(); };
 
@@ -5712,6 +5733,7 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals, back 
     setProbFor(null);
     if (!r.ok) return showToast('⚠️ ' + r.why);
     bump(); showToast(msg + (r.note ? ' · ' + r.note : ''));
+    if (r.orphans && r.orphans.length) setOrphanAsk(r.orphans);
   };
   const pickEggStatus = (i, k) => {
     const u = units[i];
@@ -5798,6 +5820,33 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals, back 
 
       {eggSheet && <EggHatchSheet layingId={ev.id} egg={eggSheet.egg} room={!!eggSheet.room} showToast={showToast}
         onClose={() => setEggSheet(null)} onDone={(m) => { setEggSheet(null); bump(); showToast(m); }} />}
+      {orphanAsk && (
+        <div className="pe-bg" onClick={() => setOrphanAsk(null)} data-testid="orphan-ask">
+          <div className="pe-sheet" onClick={e => e.stopPropagation()}>
+            <div className="pe-head"><b>같이 등록된 아기도 지울까요?</b><button onClick={() => setOrphanAsk(null)} aria-label="닫기">×</button></div>
+            <div className="pe-body" style={{fontSize:13, lineHeight:1.65}}>
+              부화로 적을 때 함께 등록된 아이가 남아 있어요.
+              <div style={{margin:'10px 0', display:'flex', flexDirection:'column', gap:6}}>
+                {orphanAsk.map(b => (
+                  <div key={b.id} style={{padding:'9px 12px', borderRadius:10, background:'var(--bg3)', border:'1px solid var(--border)'}}>
+                    <b>{b.name}</b>
+                    <span style={{color: b.logs ? 'var(--danger)' : 'var(--text3)', fontSize:12}}> · {b.logs ? `이 아이 기록 ${b.logs}건도 함께 지워져요` : '적은 기록 없음'}</span>
+                  </div>
+                ))}
+              </div>
+              <div style={{fontSize:11.5, color:'var(--text3)'}}>실제로 나온 아이라면 남겨 두세요. 지우면 되돌릴 수 없어요.</div>
+            </div>
+            <div className="pe-foot">
+              <button className="btn btn-secondary" onClick={() => setOrphanAsk(null)} data-testid="orphan-keep">남겨두기</button>
+              <button className="btn btn-danger" data-testid="orphan-del" onClick={() => {
+                const n = EGG.dropBabies(orphanAsk.map(b => b.id));
+                setOrphanAsk(null); bump();
+                showToast(n.length ? `🗑️ ${n.join(', ')} 지웠어요` : '지울 아이가 없어요');
+              }}>🗑️ 같이 지우기</button>
+            </div>
+          </div>
+        </div>
+      )}
       {layEdit && <BreedSheet kind="laying" ev={ev} showToast={showToast} onClose={() => setLayEdit(false)}
         onSaved={(m, gone) => { setLayEdit(false); showToast(m); if (gone) { refreshIndividuals(); goBack(); } else bump(); }} />}
       <div style={{padding:16}}>
@@ -6895,10 +6944,12 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     const d = hatchDate || (row.hatches.length ? row.hatches[row.hatches.length - 1].date : '') || todayStr();
     const notes = [];
     const done = [];
+    const orphans = [];
     for (const i of idx) {
       const r = EGG.set(layingId, i, ef.status, ef.status === 'hatched' ? { date: d } : { reason: ef.reason || '' });
       if (!r.ok) { bot('⚠️ ' + r.why); refreshIndividuals(); return; }
       if (r.note) notes.push(r.note);
+      (r.orphans || []).forEach(b => { if (!orphans.some(x => x.id === b.id)) orphans.push(b); });
       done.push(i + 1);
     }
     refreshIndividuals();
@@ -6914,6 +6965,16 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       bot(head + `\n\n아기도 등록할까요? 이미 등록된 아이라면 "크롱은 ${row.momName} ${row.nth}차 알에서 나왔어"처럼 말씀해 주세요.`, [
         { label: `🐣 아기 ${done.length}마리 등록`, kind: 'egg-baby-new', value: { layingId, date: d, n: done.length } },
         { label: '괜찮아요', kind: 'memo-skip' },
+      ]);
+      return;
+    }
+    /* v1.9.16 — 부화를 거뒀더니 그때 등록된 아기가 남으면, 같이 지울지 여쭙니다(말없이 지우지 않습니다) */
+    if (orphans.length) {
+      const nm = orphans.map(b => b.name).join(', ');
+      const logs = orphans.reduce((a, b) => a + b.logs, 0);
+      bot(head + `\n\n그때 함께 등록된 ${iga(nm)} 남아 있어요. 같이 지울까요?` + (logs ? `\n(그 아이 기록 ${logs}건도 함께 지워져요)` : ''), [
+        { label: `🗑️ ${nm}도 지우기`, kind: 'drop-baby', value: { ids: orphans.map(b => b.id) } },
+        { label: '남겨둘게요', kind: 'memo-skip' },
       ]);
       return;
     }
@@ -7192,6 +7253,10 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       bot(`네, ${eunneun(PROFILE_LABEL[value.field])} ${profileText(value.field, value.from)} 그대로 둘게요 🙂`);
     } else if (kind === 'egg-fix' && value) {
       applyEggFix(value.layingId, value.fix, value.date);
+    } else if (kind === 'drop-baby' && value) {
+      const n = EGG.dropBabies(value.ids);
+      refreshIndividuals();
+      bot(n.length ? `🗑️ ${n.join(', ')} 지웠어요.` : '이미 지워졌어요 🙂');
     } else if (kind === 'link-clutch' && value) {
       doLinkBaby(value.layingId, value.babyId, value.hatchDate);
     } else if (kind === 'egg-baby-new' && value) {
