@@ -206,7 +206,7 @@
     .confirm-val { font-size: 12px; color: var(--text3); font-weight: 500; text-align: right; display: flex; align-items: center; gap: 8px; }
 
     /* 토스트 */
-    .toast { position: fixed; bottom: calc(80px + var(--safe-bottom) + 10px); left: 50%; transform: translateX(-50%); background: var(--card); border: 1px solid var(--accent-dim); color: var(--accent2); padding: 10px 20px; border-radius: 20px; font-size: 13px; z-index: 100; white-space: nowrap; box-shadow: 0 4px 18px rgba(59,47,42,.18); animation: toastIn .2s ease; }
+    .toast { position: fixed; bottom: calc(80px + var(--safe-bottom) + 10px); left: 50%; transform: translateX(-50%); background: var(--card); border: 1px solid var(--accent-dim); color: var(--accent2); padding: 10px 20px; border-radius: 20px; font-size: 13px; z-index: 1050; white-space: normal; width: max-content; max-width: calc(100vw - 32px); text-align: center; line-height: 1.45; pointer-events: none; box-shadow: 0 4px 18px rgba(59,47,42,.18); animation: toastIn .2s ease; }
     @keyframes toastIn { from { opacity: 0; transform: translateX(-50%) translateY(10px); } }
 
     /* 새 버전 안내 막대 */
