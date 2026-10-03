@@ -179,8 +179,16 @@ const DB = {
     if (typeof p.morph === 'string' && p.morph.trim()) p.morphUnknown = false;
     this.saveIndividuals(this.getIndividuals().map(i => i.id === id ? { ...i, ...p } : i));
   },
-  updateEvent(id, patch) {
-    this.saveEvents(this.getEvents().map(e => e.id === id ? { ...e, ...patch } : e));
+  /* v1.9.15 — 부화 기록의 마릿수·날짜를 고치면 알별 기록도 같이 맞춥니다(EGG 한 곳에서).
+     어디서 고치든(프로필 연필·캘린더·대화) 이 자리를 지나므로 여기서 한 번만 합니다.
+     EGG 가 스스로 부화 기록을 고칠 때는 { eggSync: false } 로 두 번 맞추지 않게 합니다. */
+  updateEvent(id, patch, opt) {
+    const before = this.getEvents().find(e => e.id === id);
+    const ok = this.saveEvents(this.getEvents().map(e => e.id === id ? { ...e, ...patch } : e));
+    if (before && before.type === 'hatching' && !(opt && opt.eggSync === false)) {
+      try { EGG.afterHatchEdit(before, { ...before, ...patch }); } catch (e) {}
+    }
+    return ok;
   },
 
   /* ── 분양 확정 — 상태·분양가·분양 기록을 한 번에 맞춥니다 ──
@@ -277,8 +285,19 @@ const DB = {
     }));
     return { events, babies };
   },
-  deleteEvent(id) {
-    this.saveEvents(this.getEvents().filter(e => e.id !== id));
+  deleteEvent(id, opt) {
+    const before = this.getEvents().find(e => e.id === id);
+    /* v1.9.15 — 부화 기록을 지우면 그만큼 '부화'였던 알을 대기로 돌립니다 */
+    if (before && before.type === 'hatching' && !(opt && opt.eggSync === false)) {
+      try { EGG.beforeHatchGone(before); } catch (e) {}
+    }
+    let list = this.getEvents().filter(e => e.id !== id);
+    /* 산란 기록을 지우면 거기 묶여 있던 부화 기록의 연결만 풉니다(부화 기록은 남고, 다른 알둥지에 다시 붙을 수 있게) */
+    if (before && before.type === 'laying' && list.some(e => e.type === 'hatching' && e.data && e.data.layingId === id)) {
+      list = list.map(e => (e.type === 'hatching' && e.data && e.data.layingId === id)
+        ? { ...e, data: { ...e.data, layingId: undefined } } : e);
+    }
+    this.saveEvents(list);
   },
   getSettings() {
     try { return JSON.parse(localStorage.getItem('cg_settings') || '{}'); } catch { return {}; }
@@ -618,7 +637,7 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.14';
+const APP_VERSION = '1.9.15';
 const APP_PATCHED = '2026-09-28';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -1329,6 +1348,21 @@ function eggUnitsOf(ev, opt) {
     if (o.infertile) status = 'infertile';
     else if (i < hatchDates.length) { status = 'hatched'; date = hatchDates[i]; }
     out.push({ look: '', status, reason: '', note: '', date });
+  }
+  /* v1.9.15 — 부화 기록이 말하는 마릿수보다 '부화' 알이 적으면, 남은 대기 알을 부화로 맞춰 보여줍니다.
+     (제보 2026-10-03: 해칭 기록을 2마리로 고쳐도 알별 기록은 1개 대기로 남아 있었습니다.
+      알별로 한 번 손댄 기록은 저장된 값만 보고 부화 기록을 다시 보지 않았기 때문입니다.)
+     ★ 늘리기만 합니다. 줄이는 건 기록을 고치거나 지울 때 EGG 가 저장값까지 맞춥니다. */
+  if (saved && !o.infertile) {
+    const used = out.filter(u => u.status === 'hatched').map(u => u.date);
+    const left = hatchDates.slice();
+    used.forEach(d => { const k = left.indexOf(d); if (k >= 0) left.splice(k, 1); else left.pop(); });
+    let need = hatchDates.length - used.length;
+    for (let i = 0; i < out.length && need > 0; i++) {
+      if (out[i].status !== 'pending') continue;
+      out[i] = { ...out[i], status: 'hatched', date: left.shift() || hatchDates[hatchDates.length - 1] || '' };
+      need--;
+    }
   }
   return out;
 }
@@ -3240,7 +3274,8 @@ function matchExpectedReminder(indId, type, actualDate) {
 }
 
 const nameCore = (n) => {
-  let s = (n || '').trim();
+  // v1.9.15 "세이블헷(렙타일갤러리)"처럼 괄호·기호가 붙은 남의 집 아이 이름은 괄호를 떼고 봅니다 ("로)1호"가 되던 것)
+  let s = (n || '').replace(/\([^)]*\)|（[^）]*）|\[[^\]]*\]/g, '').replace(/[^가-힣A-Za-z0-9]/g, '').trim();
   if (s.length > 1 && s.endsWith('이')) s = s.slice(0, -1);
   return s.length ? s[s.length - 1] : '';
 };
@@ -3513,12 +3548,14 @@ const RE_UNDO_ALL = /^(?:전부|다|모두|싹)\s*(?:취소|지워|삭제)/;
    "알 하나는 곰팡이야" · "2번 알 무정란이야" · "알 다 무정란이야"
    index: 숫자면 그 알(1부터), 0이면 남은 것 중 첫 알, null이면 남은 알 전부 */
 const EGG_FIX_WORDS = [
+  /* v1.9.15 — 대기로 돌리기. '안 나왔'에 '나왔'이 들어 있어 부화보다 먼저 봅니다 */
+  [/대기|되돌|도로\s*(?:품|돌)|아직\s*안|안\s*나왔|안\s*깼|부화\s*취소|해칭\s*취소|부화\s*아니/, 'pending', ''],
   [/곰팡이|곰팽이/,              'problem',   '곰팡이'],
   [/함몰|쭈그|말랐|건조|쪼그/,    'problem',   '함몰·건조'],
   [/깨졌|깨짐|금\s*갔|터졌|깨서/, 'problem',   '깨짐'],
   [/중도\s*폐사|사산|썩었|폐사/,  'problem',   '중도 폐사'],
   [/무정/,                       'infertile', ''],
-  [/부화했|해칭했|나왔/,          'hatched',   ''],
+  [/부화했|해칭했|나왔|부화로|해칭으로|부화\s*상태|부화\s*완료|부화\s*됐|부화됐|깨어났|깨어\s*났/, 'hatched', ''],
 ];
 function extractEggFix(text) {
   const t = String(text || '');
@@ -3539,7 +3576,113 @@ function extractEggFix(text) {
   /* 알을 콕 집어 말했는지 — "2번 알", "알 하나", "알 전부"
      ★ 그냥 "알 해칭했어"는 알별 수정이 아니라 보통의 부화 기록입니다.
        (v4.8에서 이걸 구분 못 해 해칭이 엉뚱한 클러치에 붙었습니다) */
+  // v1.9.15 대기로 돌리기는 알을 콕 집었을 때만 ("알 아직 안 나왔어"는 그냥 기다리는 중이라는 말)
+  if (hit[1] === 'pending' && index === null && !all) return null;
   return { index, status: hit[1], reason: hit[2], explicitEgg: index !== null || all };
+}
+
+/* ══ v1.9.15 산란·알을 말로 고치기 ══
+   제보(2026-10-03)의 네 가지를 대화로도 됩니다.
+     "크롱은 크순이 6월 21일 낳은 알에서 나왔어"   → 따로 등록한 아이를 그 산란과 잇기
+     "미로 해칭 2마리로 고쳐줘"                    → 부화 기록 마릿수 고치기(알별 기록이 따라옴)
+     "크순 메이팅 5월 1일로 고쳐줘"                → 메이팅 날짜 고치기
+     "크순 산란일 6월 20일로 바꿔줘" · "크순 1차 알 3개로 고쳐줘" → 산란 고치기
+   (알 하나 대기·부화는 extractEggFix → EGG.set 길로 갑니다)
+   ★ 화면과 같은 EGG·DB 함수만 부릅니다 — 말로 하든 눌러서 하든 결과가 같아야 합니다. */
+const DATE_TOKEN = /\d{4}\s*[-./]\s*\d{1,2}\s*[-./]\s*\d{1,2}|(?:\d{4}|\d{2})\s*년\s*\d{1,2}\s*월\s*\d{1,2}\s*일?|(?:^|[^\d.])\d{2}\s*[./]\s*\d{1,2}\s*[./]\s*\d{1,2}(?![\d.])|(?:재작년|작년|올해|내년)?\s*\d{1,2}\s*월\s*\d{1,2}\s*일|그저께|그제|어제|오늘|\d+\s*일\s*전/g;
+function datesIn(text) {
+  return (String(text || '').match(DATE_TOKEN) || []).map(t => absDate(t) || relDate(t)).filter(Boolean);
+}
+const RE_FIXWORD = /고쳐|고치|바꿔|바꾸|수정|정정|변경|잘못|아니라|아니고|였어|이었어|였어요|이었어요|맞아/;
+const nthIn = (text) => { const m = String(text).match(/(\d+)\s*차/); return m ? parseInt(m[1], 10) : null; };
+/* 이 아이의 산란 중 말에 맞는 것 — "1차" 또는 산란 날짜. 못 고르면 후보를 그대로 돌려줍니다 */
+function pickClutch(rows, text, dates) {
+  let c = rows;
+  const n = nthIn(text);
+  if (n) c = c.filter(r => r.nth === n);
+  const byDate = c.filter(r => (dates || []).indexOf(r.e.date) >= 0);
+  if (byDate.length) c = byDate;
+  return c;
+}
+function planBreedChat(text, target, names) {
+  const t = String(text || '');
+  const dates = datesIn(t);
+  const rowsAll = () => clutchRows();
+  // ① 따로 등록한 아이를 산란과 잇기 — 이름 둘 + "알에서/산란에서 … 나왔/태어/부화"
+  const uniq = (names || []).filter((n, i, a) => a.findIndex(x => x.id === n.id) === i);
+  if (uniq.length >= 2 && /(?:알|산란|클러치|차)\s*(?:에서|서|출신)/.test(t) && /나왔|태어|부화|해칭|깨어|출신/.test(t)) {
+    const rows = rowsAll();
+    const hasLay = (g) => rows.some(r => r.e.individualId === g.id);
+    const moms = uniq.filter(hasLay);
+    if (!moms.length) return { kind: 'say', text: `${uniq.map(g => g.name).join('·')} 중에 산란 기록이 있는 아이가 없어요 🥚\n엄마의 산란을 먼저 적어 주세요. 예) "${uniq[1].name} 6월 21일 알 2개 낳았어"` };
+    const mom = moms.find(g => g.gender === 'female') || moms[moms.length - 1];
+    const baby = uniq.find(g => g.id !== mom.id);
+    const mine = rows.filter(r => r.e.individualId === mom.id);
+    let cand = pickClutch(mine, t, dates);
+    if (cand.length > 1) { const w = cand.filter(r => r.nPending > 0 || EGG.roomDates(r).length); if (w.length) cand = w; }
+    const layDates = cand.length === 1 ? [cand[0].e.date] : [];
+    const hatchDate = dates.find(d => layDates.indexOf(d) < 0 && mine.every(r => r.e.date !== d)) || '';
+    return { kind: 'link', baby, mom, rows: cand, hatchDate };
+  }
+  if (!target || !RE_FIXWORD.test(t)) return null;
+  // ② 부화 기록 마릿수 고치기 — "미로 해칭 2마리로 고쳐줘"
+  const cnt = countIn(t, '마리');
+  if (/해칭|부화/.test(t) && cnt) {
+    const hs = DB.getEventsFor(target.id).filter(e => e.type === 'hatching').sort((a, b) => (a.date < b.date ? 1 : -1));
+    if (!hs.length) return { kind: 'say', text: `${eunneun(target.name)} 아직 부화 기록이 없어요 🐣` };
+    const h = hs.find(e => dates.indexOf(e.date) >= 0) || hs[0];
+    return { kind: 'hatchFix', hatch: h, count: parseInt(cnt, 10), target };
+  }
+  // ③ 메이팅 날짜 고치기 — "크순 메이팅 5월 1일로 고쳐줘" (날짜가 둘이면 앞이 옛 날짜)
+  if (/메이팅|교배|합사/.test(t) && dates.length) {
+    const ms = DB.getEvents().filter(e => e.type === 'mating' && (e.individualId === target.id || (e.data && e.data.partnerId === target.id)))
+      .sort((a, b) => (a.date < b.date ? 1 : -1));
+    if (!ms.length) return { kind: 'say', text: `${eunneun(target.name)} 아직 메이팅 기록이 없어요 💞` };
+    const other = (names || []).find(n => n.id !== target.id);
+    const pool = other ? ms.filter(e => e.individualId === other.id || (e.data && e.data.partnerId === other.id)) : ms;
+    const m = (dates.length > 1 && pool.find(e => e.date === dates[0])) || pool[0] || ms[0];
+    return { kind: 'mateFix', ev: m, to: dates[dates.length - 1], target };
+  }
+  // ④ 산란 고치기 — 산란일 / 알 개수
+  const layWord = /산란|낳은|알/.test(t);
+  if (layWord) {
+    const mine = rowsAll().filter(r => r.e.individualId === target.id);
+    if (!mine.length) return null;
+    const eggN = (() => { const m = t.match(new RegExp('알\\s*(' + KNUM_ALT + '|\\d+)\\s*개')); return m ? (/^\d+$/.test(m[1]) ? parseInt(m[1], 10) : KNUM[m[1]]) : null; })();
+    if (/산란\s*일|산란\s*날|낳은\s*날|산란\s*날짜/.test(t) && dates.length) {
+      const to = dates[dates.length - 1];
+      let cand = pickClutch(mine, t, dates.length > 1 ? [dates[0]] : []);
+      if (!nthIn(t) && dates.length < 2) cand = [mine[mine.length - 1]];
+      return { kind: 'layFix', field: 'date', rows: cand, to, target };
+    }
+    if (eggN) {
+      let cand = pickClutch(mine, t, dates);
+      if (!nthIn(t) && !dates.length) cand = [mine[mine.length - 1]];
+      return { kind: 'layFix', field: 'eggCount', rows: cand, to: eggN, target };
+    }
+  }
+  return null;
+}
+/* 고른 산란에 아이 잇기 — 화면의 '이미 등록된 아이 잇기'와 같은 순서(빈 부화 자리 → 남은 알) */
+function linkBabyToClutch(layingId, babyId, hatchDate) {
+  const row = EGG.row(layingId);
+  const baby = DB.getIndividuals().find(i => i.id === babyId);
+  if (!row || !baby) return { ok: false, why: '기록을 찾지 못했어요' };
+  if (row.babies.some(b => b.id === babyId)) return { ok: true, row, already: true, date: baby.hatchDate };
+  const room = EGG.roomDates(row);
+  const want = hatchDate || baby.hatchDate || '';
+  if (room.length) {
+    const d = room.indexOf(want) >= 0 ? want : room[0];
+    EGG.linkBaby(row, babyId, d);
+    return { ok: true, row, date: d, moved: !!baby.hatchDate && baby.hatchDate !== d };
+  }
+  const k = row.units.findIndex(u => u.status === 'pending');
+  if (k < 0) return { ok: false, why: `${row.nth}차 알은 남은 알이 없어요. 알 개수를 먼저 늘려 주세요` };
+  const ok = want && want >= row.e.date && want <= todayStr();
+  const d = ok ? want : todayStr();
+  const r = EGG.set(layingId, k, 'hatched', { date: d, babyId });
+  if (!r.ok) return r;
+  return { ok: true, row: r.row, date: d, egg: k + 1, guessed: !ok };
 }
 
 /* 지금 품고 있는(결과가 안 난) 클러치들 — 오래된 순.
@@ -4778,7 +4921,15 @@ function MatingView({ individuals, navigate, showToast }) {
   const [editingId, setEditingId] = useState(null);
   const [editVals, setEditVals] = useState({});
   const [confirmDel, setConfirmDel] = useState(null);
+  const [addOpen, setAddOpen] = useState(false);     // v1.9.15 메이팅 직접 적기
   const refresh = () => setVer(v => v + 1);
+  const addBtn = (
+    <>
+      <button className="btn btn-secondary" data-testid="mate-add" style={{margin:'0 0 10px'}} onClick={() => setAddOpen(true)}>＋ 메이팅 기록하기</button>
+      {addOpen && <BreedSheet kind="mating" showToast={showToast} onClose={() => setAddOpen(false)}
+        onSaved={(m) => { setAddOpen(false); refresh(); showToast && showToast(m); }} />}
+    </>
+  );
   const byId = {};
   individuals.forEach(i => { byId[i.id] = i; });
   const evs = DB.getEvents();
@@ -4832,12 +4983,14 @@ function MatingView({ individuals, navigate, showToast }) {
     return (
       <div className="empty" style={{padding:'40px 20px'}}>
         <div className="empty-icon" style={{fontSize:36}}>💞</div>
-        <p>아직 메이팅 기록이 없어요.{'\n'}💬 대화에서 "크한이 크봉이랑 메이팅했어"처럼 말씀해보세요.</p>
+        <p>아직 메이팅 기록이 없어요.{'\n'}아래 버튼으로 바로 적거나, 💬 대화에서 "크한이 크봉이랑 메이팅했어"처럼 말씀해보세요.</p>
+        <div style={{maxWidth:280, margin:'0 auto'}}>{addBtn}</div>
       </div>
     );
   }
   return (
     <div style={{paddingTop:10}}>
+      <div style={{padding:'0 16px'}}>{addBtn}</div>
       {list.map(([k, p]) => {
         const lays = [...p.layings].sort((a, b) => a.date > b.date ? 1 : -1);
         const mates = [...p.matings].sort((a, b) => a.date > b.date ? 1 : -1);
@@ -4948,9 +5101,18 @@ function MatingView({ individuals, navigate, showToast }) {
 /* ── 산란기록 뷰: 클러치(알 묶음) 일정 중심 ──
    메이팅기록이 "누가 누구랑"이라면, 여기는 "알이 언제 부화하나"를 봅니다.
    부화 임박한 것부터 위로 올라옵니다. ── */
-function LayingView({ individuals, navigate }) {
+function LayingView({ individuals, navigate, showToast }) {
   const [momFilter, setMomFilter] = useState('all');   // 암컷별로 골라 보기
+  const [addOpen, setAddOpen] = useState(false);       // v1.9.15 산란 직접 적기
+  const [, setVer] = useState(0);
   const all = clutchRows(individuals, DB.getEvents());
+  const addBtn = (
+    <>
+      <button className="btn btn-secondary" data-testid="lay-add" style={{margin:'0 0 10px'}} onClick={() => setAddOpen(true)}>＋ 산란 기록하기</button>
+      {addOpen && <BreedSheet kind="laying" presetMomId={momFilter !== 'all' ? momFilter : ''} showToast={showToast}
+        onClose={() => setAddOpen(false)} onSaved={(m) => { setAddOpen(false); setVer(v => v + 1); showToast && showToast(m); }} />}
+    </>
+  );
 
   // 암컷 목록 (산란 기록이 있는 아이만, 산란 많은 순)
   const momList = [];
@@ -4978,7 +5140,8 @@ function LayingView({ individuals, navigate }) {
   if (!all.length) return (
     <div className="empty" style={{padding:'40px 20px'}}>
       <div className="empty-icon">🥚</div>
-      <p>{'아직 산란 기록이 없어요.\n💬 대화 버튼에서 "크범이 알 낳았어" 처럼 말씀해보세요.'}</p>
+      <p>{'아직 산란 기록이 없어요.\n아래 버튼으로 바로 적거나, 💬 대화에서 "크범이 알 낳았어" 처럼 말씀해보세요.'}</p>
+      <div style={{maxWidth:280, margin:'0 auto'}}>{addBtn}</div>
     </div>
   );
 
@@ -4998,6 +5161,7 @@ function LayingView({ individuals, navigate }) {
         </div>
       )}
 
+      {addBtn}
       <div className="card" style={{margin:'0 0 12px', display:'flex', justifyContent:'space-around', textAlign:'center'}}>
         <div>
           <div style={{fontSize:20, fontWeight:800, color:'var(--accent2)'}}>{waitCnt}</div>
@@ -5095,6 +5259,389 @@ function moveHatchTo(hatchId, toLayingId) {
   return true;
 }
 
+/* ══════════════════════════════════════════
+   v1.9.15 알 상태를 바꾸는 단 한 곳 — 화면(알별 기록)·대화가 같이 씁니다
+   제보(2026-10-03): ① '되돌리기'로 대기가 된 알을 다시 부화로 만들 길이 없음
+                    ② 해칭 기록을 2마리로 고쳐도 알별 기록에 1개 대기가 남음
+                    ④ 따로 등록한 아이를 그 산란 기록과 이을 길이 없음
+   ★ 원칙: '부화' 알의 수 = 그 알둥지 부화 기록 마릿수의 합.
+     알을 부화로 바꾸면 부화 기록이 한 마리 늘고, 대기로 돌리면 한 마리 줄어듭니다.
+     부화 기록을 고치거나 지우면(DB.updateEvent·deleteEvent) 알별 기록이 따라옵니다.
+   ══════════════════════════════════════════ */
+const hatchCountOf = (h, nHatches, nEggs) =>
+  Math.max(1, parseInt((h && h.data && h.data.count) || 0, 10) || (nHatches === 1 ? (nEggs || 1) : 1));
+const EGG = {
+  row(layingId) { return clutchRows().find(r => r.e.id === layingId) || null; },
+  rowOfHatch(hatch) {
+    const rows = clutchRows();
+    return rows.find(r => r.hatches.some(h => h.id === hatch.id))
+      || (hatch.data && hatch.data.layingId ? rows.find(r => r.e.id === hatch.data.layingId) : null) || null;
+  },
+  recTotal(row) { return row.hatches.reduce((a, h) => a + hatchCountOf(h, row.hatches.length, row.units.length), 0); },
+  /* 부화 알 k개를 대기로 — 그 날짜에 나온 알부터, 뒤에서부터 */
+  demote(units, k, date) {
+    const out = units.map(u => ({ ...u }));
+    const pick = (pred) => { for (let i = out.length - 1; i >= 0 && k > 0; i--) if (out[i].status === 'hatched' && pred(out[i])) { out[i] = { ...out[i], status: 'pending', date: '' }; k--; } };
+    pick(u => u.date === date); pick(() => true);
+    return out;
+  },
+  /* 부화 기록 하나를 한 마리 줄입니다 (0이 되면 지웁니다) */
+  dropOne(row, date) {
+    const h = row.hatches.find(x => x.date === date) || row.hatches[row.hatches.length - 1];
+    if (!h) return '';
+    const c = hatchCountOf(h, row.hatches.length, row.units.length);
+    if (c <= 1) { DB.deleteEvent(h.id, { eggSync: false }); return '부화 기록도 지웠어요'; }
+    DB.updateEvent(h.id, { data: { ...(h.data || {}), layingId: row.e.id, count: String(c - 1) } }, { eggSync: false });
+    return `부화 기록을 ${c - 1}마리로 고쳤어요`;
+  },
+  /* 부화 기록에 한 마리 더 (그날 기록이 있으면 거기에, 없으면 새로) */
+  addOne(row, date, morph) {
+    const h = row.hatches.find(x => x.date === date);
+    if (h) {
+      const c = hatchCountOf(h, row.hatches.length, row.units.length);
+      DB.updateEvent(h.id, { data: { ...(h.data || {}), layingId: row.e.id, count: String(c + 1) } }, { eggSync: false });
+      return;
+    }
+    const eta = row.etaISO;
+    DB.addEvent({ individualId: row.e.individualId, type: 'hatching', date,
+      data: { count: 1, layingId: row.e.id, morph: morph || '', expectedDate: eta,
+              diffDays: Math.round((new Date(date) - new Date(eta)) / 86400000) } });
+  },
+  /* 이미 등록된 아이를 이 알둥지에서 나온 아이로 잇습니다 */
+  linkBaby(row, babyId, date) {
+    const kid = DB.getIndividuals().find(i => i.id === babyId);
+    if (!kid) return null;
+    const patch = { damId: row.e.individualId, hatchDate: date };
+    if (row.dadId && DB.getIndividuals().some(i => i.id === row.dadId)) patch.sireId = row.dadId;
+    DB.updateIndividual(babyId, patch);
+    return kid.name;
+  },
+  newBaby(row, date, name, morph) {
+    const all = DB.getIndividuals();
+    const nm = (name || '').trim() || makeBabyNames(row.momName, row.dadName || '', 1, all.map(i => i.name))[0];
+    DB.addIndividual({
+      name: nm, gender: 'unknown', morph: morph || '', morphUnknown: !morph, hatchDate: date,
+      isFromCreGunseol: true, status: 'own', sireId: (row.dad && row.dad.id) || null, damId: row.e.individualId,
+      shareCode: newShareCode(),
+    });
+    return nm;
+  },
+  /* 알 i 의 상태를 바꿉니다.
+     opt: { date, reason, morph, babyId(이미 등록된 아이 잇기), newBaby(true), babyName } */
+  set(layingId, i, status, opt) {
+    const o = opt || {};
+    const row = EGG.row(layingId);
+    if (!row || !row.units[i]) return { ok: false, why: '그 알을 찾지 못했어요' };
+    const u = row.units[i];
+    const units = row.units.map(x => ({ ...x }));
+    const notes = [];
+    let baby = '';
+    if (status === 'hatched') {
+      const date = o.date || u.date || todayStr();
+      if (date < row.e.date) return { ok: false, why: '부화일이 산란일보다 빠를 수 없어요' };
+      if (date > todayStr()) return { ok: false, why: '아직 오지 않은 날짜예요' };
+      if (o.babyName && DB.getIndividuals().some(x => x.name === o.babyName.trim())) return { ok: false, why: `"${o.babyName.trim()}"는 이미 있는 이름이에요` };
+      units[i] = { ...u, status: 'hatched', reason: '', date };
+      DB.setEggUnits(layingId, units);
+      const was = u.status === 'hatched';
+      if (was && u.date && u.date !== date) { EGG.dropOne(row, u.date); }
+      if (!was || (u.date && u.date !== date)) {
+        const fresh = EGG.row(layingId);
+        const hatchedNow = units.filter(x => x.status === 'hatched').length;
+        if (fresh && EGG.recTotal(fresh) < hatchedNow) EGG.addOne(fresh, date, o.morph);
+      }
+      const r2 = EGG.row(layingId) || row;
+      if (o.babyId) baby = EGG.linkBaby(r2, o.babyId, date) || '';
+      else if (o.newBaby) baby = EGG.newBaby(r2, date, o.babyName, o.morph);
+      return { ok: true, row: r2, date, baby, linked: !!o.babyId };
+    }
+    units[i] = { ...u, status, reason: status === 'problem' ? (o.reason || '') : '', date: '' };
+    DB.setEggUnits(layingId, units);
+    if (u.status === 'hatched') {
+      const hatchedNow = units.filter(x => x.status === 'hatched').length;
+      if (EGG.recTotal(row) > hatchedNow) { const m = EGG.dropOne(row, u.date); if (m) notes.push(m); }
+    }
+    return { ok: true, row: EGG.row(layingId) || row, note: notes.join(' · ') };
+  },
+  /* 부화한 자리는 있는데 아기가 덜 이어진 경우 — 알 상태는 그대로 두고 아이만 잇습니다 */
+  roomDates(row) {
+    const dates = [];
+    row.hatches.forEach(h => {
+      const c = hatchCountOf(h, row.hatches.length, row.units.length);
+      const have = row.babies.filter(b => b.hatchDate === h.date).length;
+      for (let k = have; k < c; k++) dates.push(h.date);
+    });
+    return [...new Set(dates)];
+  },
+  /* DB.updateEvent 가 부릅니다 — 부화 기록의 마릿수·날짜를 고친 뒤 */
+  afterHatchEdit(before, after) {
+    const row = EGG.rowOfHatch(after);
+    if (!row || !Array.isArray(row.e.data && row.e.data.eggUnits)) return;   // 손댄 적 없는 알은 저절로 맞습니다
+    const nb = parseInt((before.data && before.data.count) || 0, 10) || 0;
+    const na = parseInt((after.data && after.data.count) || 0, 10) || 0;
+    let units = row.units.map(u => ({ ...u }));
+    let changed = false;
+    if (nb && na && na < nb) { units = EGG.demote(units, nb - na, before.date); changed = true; }
+    if (before.date !== after.date) {
+      let k = na || nb || units.length;
+      units = units.map(u => (u.status === 'hatched' && u.date === before.date && k-- > 0) ? { ...u, date: after.date } : u);
+      changed = true;
+    }
+    if (changed) DB.setEggUnits(row.e.id, units);
+  },
+  /* DB.deleteEvent 가 지우기 직전에 부릅니다 */
+  beforeHatchGone(ev) {
+    const row = EGG.rowOfHatch(ev);
+    if (!row || !Array.isArray(row.e.data && row.e.data.eggUnits)) return;
+    const k = hatchCountOf(ev, row.hatches.length, row.units.length);
+    DB.setEggUnits(row.e.id, EGG.demote(row.units, k, ev.date));
+  },
+};
+
+/* ── v1.9.15 산란·메이팅을 버튼으로 바로 적기 (대화 저장과 같은 뒷일을 합니다) ── */
+function recordLaying(o) {
+  const date = o.date || todayStr();
+  const data = { eggCount: parseInt(o.eggCount || 0, 10) || undefined, notes: (o.notes || '').trim() };
+  if (o.sireId) { const s = DB.getIndividuals().find(i => i.id === o.sireId); data.sireId = o.sireId; data.sireName = s ? s.name : ''; }
+  else if ((o.sireName || '').trim()) data.sireName = o.sireName.trim();
+  else {
+    const mate = DB.getEventsFor(o.momId)
+      .filter(e => e.type === 'mating' && e.date <= date && e.data && e.data.partnerId)
+      .sort((a, b) => b.date > a.date ? 1 : -1)[0];
+    if (mate) { data.sireId = mate.data.partnerId; data.sireName = mate.data.partnerName; }
+  }
+  const exp = matchExpectedReminder(o.momId, 'laying_expected', date);
+  if (exp) {
+    data.expectedDate = exp.date;
+    data.diffDays = Math.round((new Date(date) - new Date(exp.date)) / 86400000);
+    DB.saveReminders(DB.getReminders().filter(r => r.id !== exp.id));
+  }
+  return DB.addEvent({ individualId: o.momId, type: 'laying', date, data });
+}
+function recordMating(o) {
+  const date = o.date || todayStr();
+  const all = DB.getIndividuals();
+  const p = o.partnerId ? all.find(i => i.id === o.partnerId) : null;
+  const data = { partnerId: p ? p.id : undefined, partnerName: p ? p.name : (o.partnerName || '').trim() };
+  const ev = DB.addEvent({ individualId: o.femaleId, type: 'mating', date, data });
+  // 산란 예정 알림 — 대화로 적을 때와 같게 (암컷 기준)
+  const fem = all.find(i => i.id === o.femaleId);
+  if (fem) {
+    const d = new Date(date); d.setDate(d.getDate() + LAYING_AFTER_MATING);
+    const dISO = localISO(d);
+    const rs = DB.getReminders();
+    if (dISO >= todayStr() && !rs.some(r => r.individualId === fem.id && r.type === 'laying_expected' && r.date === dISO)) {
+      rs.push({ id: uuid(), individualId: fem.id, geckoName: fem.name, type: 'laying_expected', date: dISO, message: `${fem.name} 산란 예정일` });
+      DB.saveReminders(rs);
+    }
+  }
+  return ev;
+}
+
+/* ── v1.9.15 메이팅·산란을 버튼으로 적고 고치는 창 ──
+   제보(2026-10-03): 산란 탭도 축양 탭의 개체 화면처럼 대화 없이 직접 등록·수정하고 싶다.
+   kind: 'mating'(새로) · 'laying'(새로, 또는 ev 를 주면 고치기) */
+const byKo = (a, b) => (a.name || '').localeCompare(b.name || '', 'ko');
+function BreedSheet({ kind, ev, presetMomId, onClose, onSaved, showToast }) {
+  const all = DB.getIndividuals();
+  const females = [...all.filter(i => i.gender === 'female').sort(byKo), ...all.filter(i => i.gender !== 'female').sort(byKo)];
+  const males = [...all.filter(i => i.gender === 'male').sort(byKo), ...all.filter(i => i.gender !== 'male').sort(byKo)];
+  const d0 = (ev && ev.data) || {};
+  const [momId, setMomId] = useState((ev && ev.individualId) || presetMomId || '');
+  const [date, setDate] = useState((ev && ev.date) || todayStr());
+  const [eggs, setEggs] = useState(d0.eggCount ? String(d0.eggCount) : (ev ? '' : '2'));
+  const [sire, setSire] = useState(d0.sireId && all.some(i => i.id === d0.sireId) ? d0.sireId : (d0.sireName ? '__text' : (kind === 'mating' ? '' : 'auto')));
+  const [sireText, setSireText] = useState(d0.sireId && all.some(i => i.id === d0.sireId) ? '' : (d0.sireName || ''));
+  const [notes, setNotes] = useState(d0.notes || '');
+  const [delAsk, setDelAsk] = useState(false);
+  const [err, setErr] = useState('');
+  const isLay = kind === 'laying';
+  // 아빠를 비워 두면 산란일 이전의 마지막 메이팅 상대로 봅니다(대화로 적을 때와 같은 규칙)
+  const autoMate = isLay && momId ? DB.getEventsFor(momId).filter(e => e.type === 'mating' && e.date <= date)
+    .sort((a, b) => (a.date < b.date ? 1 : -1))[0] : null;
+  const autoName = autoMate && autoMate.data ? (autoMate.data.partnerName || '') : '';
+  const fail = (m) => { setErr(m); showToast && showToast('⚠️ ' + m); };
+  const save = () => {
+    if (!momId) return fail(isLay ? '엄마를 골라 주세요' : '암컷을 골라 주세요');
+    if (!date) return fail('날짜를 골라 주세요');
+    if (date > todayStr()) return fail('아직 오지 않은 날짜예요');
+    if (!isLay) {
+      if (sire === '__text' ? !sireText.trim() : !sire) return fail('수컷을 골라 주세요');
+      if (sire === momId) return fail('같은 아이끼리는 메이팅할 수 없어요');
+      const p = all.find(i => i.id === sire);
+      recordMating({ femaleId: momId, partnerId: sire === '__text' ? '' : sire, partnerName: sire === '__text' ? sireText : '', date });
+      onSaved(`💞 ${(all.find(i => i.id === momId) || {}).name} × ${p ? p.name : sireText.trim()} · ${fmtDate(date)} 메이팅 기록`);
+      return;
+    }
+    const n = parseInt(eggs || '0', 10) || 0;
+    if (eggs && (n < 1 || n > 20)) return fail('알 개수는 1~20개로 적어 주세요');
+    const sireOpt = sire === '__text' ? { sireName: sireText } : (sire && sire !== 'auto' ? { sireId: sire } : {});
+    if (!ev) {
+      recordLaying({ momId, date, eggCount: n, notes, ...sireOpt });
+      onSaved(`🥚 ${(all.find(i => i.id === momId) || {}).name} · ${fmtDate(date)} 알 ${n || '?'}개 산란 기록`);
+      return;
+    }
+    const data = { ...d0, eggCount: n || undefined, notes: notes.trim() };
+    delete data.sireId; delete data.sireName;
+    if (sire === '__text' && sireText.trim()) data.sireName = sireText.trim();
+    else if (sire && sire !== 'auto' && sire !== '__text') { const p = all.find(i => i.id === sire); data.sireId = sire; data.sireName = p ? p.name : ''; }
+    DB.updateEvent(ev.id, { date, individualId: momId, data });
+    onSaved('✏️ 산란 정보를 고쳤어요');
+  };
+  const del = () => { DB.deleteEvent(ev.id); onSaved('🗑️ 산란 기록을 지웠어요', true); };
+  const opt = (list) => list.map(i => <option key={i.id} value={i.id}>{i.name}{i.gender === 'female' ? ' (암)' : i.gender === 'male' ? ' (수)' : ''}</option>);
+  return (
+    <div className="pe-bg" onClick={onClose} data-testid={isLay ? 'lay-sheet' : 'mate-sheet'}>
+      <div className="pe-sheet" onClick={e => e.stopPropagation()}>
+        <div className="pe-head"><b>{isLay ? (ev ? '산란 정보 수정' : '산란 기록하기') : '메이팅 기록하기'}</b><button onClick={onClose} aria-label="닫기">×</button></div>
+        <div className="pe-body">
+          <label className="pe-row"><span>{isLay ? '엄마' : '암컷'}</span>
+            <select className="input" value={momId} onChange={e => setMomId(e.target.value)} data-testid="bs-mom">
+              <option value="">골라 주세요</option>{opt(females)}
+            </select>
+          </label>
+          <label className="pe-row"><span>{isLay ? '산란일' : '메이팅일'}</span>
+            <input className="input" type="date" value={date} max={todayStr()} onChange={e => setDate(e.target.value)} data-testid="bs-date" />
+          </label>
+          {isLay && (
+            <label className="pe-row"><span>알 개수</span>
+              <input className="input" type="number" min="1" max="20" inputMode="numeric" value={eggs} placeholder="예: 2" onChange={e => setEggs(e.target.value)} data-testid="bs-eggs" />
+            </label>
+          )}
+          <label className="pe-row"><span>{isLay ? '아빠' : '수컷'}</span>
+            <select className="input" value={sire} onChange={e => setSire(e.target.value)} data-testid="bs-sire">
+              {isLay ? <option value="auto">{autoName ? `메이팅 기록대로 (${autoName})` : '모름 / 메이팅 기록대로'}</option> : <option value="">골라 주세요</option>}
+              {opt(males.filter(i => i.id !== momId))}
+              <option value="__text">✍️ 목록에 없어요 (이름만 적기)</option>
+            </select>
+          </label>
+          {sire === '__text' && (
+            <label className="pe-row"><span></span>
+              <input className="input" value={sireText} maxLength={30} placeholder="예: 세이블헷(렙타일갤러리)" onChange={e => setSireText(e.target.value)} data-testid="bs-sire-text" />
+            </label>
+          )}
+          {isLay && (
+            <label className="pe-row"><span>메모</span>
+              <input className="input" value={notes} placeholder="선택" onChange={e => setNotes(e.target.value)} />
+            </label>
+          )}
+          {err && <div style={{fontSize:12, color:'var(--danger)', margin:'2px 2px 0'}}>{err}</div>}
+          {isLay && ev && (delAsk ? (
+            <div style={{display:'flex', gap:6, alignItems:'center', marginTop:6}}>
+              <span style={{flex:1, fontSize:12, color:'var(--danger)'}}>이 산란 기록을 지울까요? 알별 기록도 함께 사라져요.</span>
+              <button className="btn btn-danger btn-sm" style={{width:'auto'}} onClick={del} data-testid="bs-del-yes">지우기</button>
+              <button className="btn btn-secondary btn-sm" style={{width:'auto'}} onClick={() => setDelAsk(false)}>취소</button>
+            </div>
+          ) : (
+            <button className="btn btn-secondary btn-sm" style={{marginTop:6, color:'var(--danger)'}} onClick={() => setDelAsk(true)} data-testid="bs-del">🗑️ 이 산란 기록 지우기</button>
+          ))}
+        </div>
+        <div className="pe-foot">
+          <button className="btn btn-secondary" onClick={onClose}>취소</button>
+          <button className="btn btn-primary" onClick={save} data-testid="bs-save">저장</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── v1.9.15 알 하나를 부화로 적는 창 — 아기는 새로 등록하거나, 이미 등록된 아이를 잇습니다 ──
+   egg: 몇 번째 알(0부터) · room: 알은 그대로 두고 비어 있는 부화 자리에 아이만 잇기 */
+function EggHatchSheet({ layingId, egg, room, onClose, onDone, showToast }) {
+  const row = EGG.row(layingId);
+  const inds = DB.getIndividuals();
+  const hatchDays = row ? [...new Set(row.hatches.map(h => h.date))].sort() : [];
+  const roomDays = row && room ? EGG.roomDates(row) : [];
+  const cur = row && egg != null ? row.units[egg] : null;
+  const [mode, setMode] = useState(room ? 'link' : 'new');
+  const [date, setDate] = useState(() => (room ? roomDays[0] : (cur && cur.status === 'hatched' && cur.date) || hatchDays[hatchDays.length - 1]) || todayStr());
+  const [babyId, setBabyId] = useState('');
+  const [name, setName] = useState('');
+  const [morph, setMorph] = useState('');
+  const [err, setErr] = useState('');
+  if (!row) return null;
+  const cands = inds.filter(i => i.id !== row.e.individualId && i.id !== row.dadId && !row.babies.some(b => b.id === i.id))
+    .sort((a, b) => ((a.damId ? 1 : 0) - (b.damId ? 1 : 0)) || byKo(a, b));
+  const autoName = makeBabyNames(row.momName, row.dadName || '', 1, inds.map(i => i.name))[0];
+  const pickBaby = (id) => {
+    setBabyId(id);
+    const k = inds.find(i => i.id === id);
+    if (!k || !k.hatchDate) return;
+    if (room ? roomDays.indexOf(k.hatchDate) >= 0 : (k.hatchDate >= row.e.date && k.hatchDate <= todayStr())) setDate(k.hatchDate);
+  };
+  const fail = (m) => { setErr(m); showToast && showToast('⚠️ ' + m); };
+  const save = () => {
+    if (mode === 'link' && !babyId) return fail('이을 아이를 골라 주세요');
+    if (room) {
+      const nm = EGG.linkBaby(row, babyId, date);
+      return onDone(`🔗 ${eulreul(nm)} ${row.nth}차 알에서 나온 아이로 이었어요`);
+    }
+    if (mode === 'new' && name.trim() && isBadName(name.trim())) return fail('그 이름은 쓸 수 없어요');
+    const r = EGG.set(layingId, egg, 'hatched', {
+      date, morph: morph.trim(), babyId: mode === 'link' ? babyId : undefined,
+      newBaby: mode === 'new', babyName: mode === 'new' ? name.trim() : '',
+    });
+    if (!r.ok) return fail(r.why);
+    onDone(`🐣 알 ${egg + 1} 부화 · ${fmtDate(r.date)}` + (r.baby ? (r.linked ? ` · ${r.baby} 연결` : ` · ${r.baby} 등록`) : ''));
+  };
+  const dayChips = [...hatchDays.map(d => [d, `${fmtDateShort(d)} (같이 나온 날)`]),
+    [todayStr(), '오늘'], [localISO(new Date(Date.now() - 86400000)), '어제']]
+    .filter(([d], k, arr) => d >= row.e.date && d <= todayStr() && arr.findIndex(x => x[0] === d) === k)
+    .filter(([d]) => !room || roomDays.indexOf(d) >= 0);
+  const M = room ? [['link', '이미 등록된 아이']] : [['new', '새로 등록'], ['link', '이미 등록된 아이'], ['later', '나중에']];
+  return (
+    <div className="pe-bg" onClick={onClose} data-testid="egg-sheet">
+      <div className="pe-sheet" onClick={e => e.stopPropagation()}>
+        <div className="pe-head"><b>{room ? `${row.nth}차 알에서 나온 아이 잇기` : `알 ${egg + 1} 부화`}</b><button onClick={onClose} aria-label="닫기">×</button></div>
+        <div className="pe-body">
+          <div style={{fontSize:12, color:'var(--text3)', margin:'0 2px 8px'}}>{row.pairName} · {fmtDate(row.e.date)} 산란</div>
+          <label className="pe-row"><span>부화한 날</span>
+            {room && roomDays.length <= 1
+              ? <b style={{fontSize:14}}>{fmtDate(date)}</b>
+              : <input className="input" type="date" value={date} min={row.e.date} max={todayStr()} onChange={e => setDate(e.target.value)} data-testid="es-date" />}
+          </label>
+          {dayChips.length > 1 && (
+            <div style={{display:'flex', gap:5, flexWrap:'wrap', margin:'-2px 0 10px'}}>
+              {dayChips.map(([d, l]) => (
+                <button key={d} className="chip-btn" style={{fontSize:11.5, padding:'5px 10px', ...(date === d ? {background:'var(--accent-soft)', fontWeight:700} : {})}}
+                  onClick={() => setDate(d)}>{l}</button>
+              ))}
+            </div>
+          )}
+          <div className="pe-row"><span>아기</span>
+            <div className="pe-seg">{M.map(([k, l]) => <button key={k} className={mode === k ? 'on' : ''} onClick={() => setMode(k)} data-testid={'es-mode-' + k}>{l}</button>)}</div>
+          </div>
+          {mode === 'new' && (
+            <>
+              <label className="pe-row"><span>이름</span><input className="input" value={name} maxLength={20} placeholder={`비우면 ${autoName}`} onChange={e => setName(e.target.value)} data-testid="es-name" /></label>
+              <label className="pe-row"><span>모프</span><input className="input" value={morph} placeholder="선택 — 모르면 비워 두세요" onChange={e => setMorph(e.target.value)} /></label>
+            </>
+          )}
+          {mode === 'link' && (
+            <label className="pe-row"><span>아이</span>
+              <select className="input" value={babyId} onChange={e => pickBaby(e.target.value)} data-testid="es-baby">
+                <option value="">골라 주세요</option>
+                {cands.map(i => <option key={i.id} value={i.id}>{i.name}{i.hatchDate ? ` · ${fmtDateShort(i.hatchDate)}생` : ''}{i.damId ? ' · 부모 있음' : ''}</option>)}
+              </select>
+            </label>
+          )}
+          {mode === 'link' && babyId && (
+            <div style={{fontSize:11.5, color:'var(--text3)', margin:'0 2px'}}>
+              엄마 {row.momName}{row.dad ? ` · 아빠 ${row.dad.name}` : ''}로 잇고, 생일을 {fmtDate(date)}로 맞춰요.
+            </div>
+          )}
+          {mode === 'later' && <div style={{fontSize:11.5, color:'var(--text3)', margin:'0 2px'}}>알만 부화로 적어요. 아기는 나중에 이 화면에서 이을 수 있어요.</div>}
+          {err && <div style={{fontSize:12, color:'var(--danger)', margin:'6px 2px 0'}}>{err}</div>}
+        </div>
+        <div className="pe-foot">
+          <button className="btn btn-secondary" onClick={onClose}>취소</button>
+          <button className="btn btn-primary" onClick={save} data-testid="es-save">저장</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ── 클러치(알) 상세 — 알 묶음을 개체처럼 들여다보는 화면 ──
    알 사진 · 부/모 · 산란일 · 해칭 예정일, 그리고 [해칭했어요] 한 번으로 베이비 등록까지. ── */
 function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals, back }) {
@@ -5114,6 +5661,8 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals, back 
   const [openEgg, setOpenEgg] = useState(null);     // 펼쳐 본 알 (몇 번째)
   const [probFor, setProbFor] = useState(null);     // 문제 사유를 고르는 중 (-1 = 남은 알 전부)
   const [moveFor, setMoveFor] = useState(null);     // 다른 알둥지로 옮길 부화 기록
+  const [eggSheet, setEggSheet] = useState(null);   // v1.9.15 알 부화·아기 잇기 창 — { egg: i } 또는 { room: true }
+  const [layEdit, setLayEdit] = useState(false);    // v1.9.15 산란 정보(산란일·알 개수·아빠·메모) 고치기
   const fileRef = useRef(null);
   const bump = () => { setVer(v => v + 1); refreshIndividuals(); };
 
@@ -5135,7 +5684,8 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals, back 
     .sort((a, b) => (a.date < b.date ? 1 : -1))[0];
   const dadId = (ev.data && ev.data.sireId) || (mate && mate.data && mate.data.partnerId) || null;
   const dad = inds.find(i => i.id === dadId) || null;
-  const dadName = (dad && dad.name) || (mate && mate.data && mate.data.partnerName) || '';
+  // v1.9.15 산란 기록에 직접 적힌 아빠 이름(sireName)도 봅니다 — 등록 안 된 남의 집 수컷이면 이것뿐입니다
+  const dadName = (dad && dad.name) || (ev.data && ev.data.sireName) || (mate && mate.data && mate.data.partnerName) || '';
 
   const eggs = ev.data && ev.data.eggCount;
   const notes = (ev.data && ev.data.notes) || '';
@@ -5156,6 +5706,21 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals, back 
   const allDone = nPending === 0;
   const setUnits = (next, msg) => { DB.setEggUnits(ev.id, next); setProbFor(null); bump(); if (msg) showToast(msg); };
   const setUnit = (i, up, msg) => setUnits(units.map((u, k) => k === i ? { ...u, ...up } : u), msg);
+  /* v1.9.15 — 알 상태는 EGG 한 곳에서 바꿉니다(부화 기록 마릿수까지 같이 맞춰집니다) */
+  const eggTo = (i, status, opt, msg) => {
+    const r = EGG.set(ev.id, i, status, opt);
+    setProbFor(null);
+    if (!r.ok) return showToast('⚠️ ' + r.why);
+    bump(); showToast(msg + (r.note ? ' · ' + r.note : ''));
+  };
+  const pickEggStatus = (i, k) => {
+    const u = units[i];
+    if (k === 'hatched') { setEggSheet({ egg: i }); return; }
+    if (k === 'problem') { setProbFor(i); return; }
+    if (u.status === k) return;
+    if (k === 'pending') eggTo(i, 'pending', null, `알 ${i + 1}을 대기로 돌렸어요`);
+    else eggTo(i, 'infertile', null, `알 ${i + 1}은 무정란으로 적었어요`);
+  };
 
   let state = `부화까지 D-${d}`, tone = d <= 7 ? '#B3261E' : 'var(--accent2)';
   if (infertile) { state = '무정란'; tone = '#8A8177'; }
@@ -5231,6 +5796,10 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals, back 
         </div>
       </div>
 
+      {eggSheet && <EggHatchSheet layingId={ev.id} egg={eggSheet.egg} room={!!eggSheet.room} showToast={showToast}
+        onClose={() => setEggSheet(null)} onDone={(m) => { setEggSheet(null); bump(); showToast(m); }} />}
+      {layEdit && <BreedSheet kind="laying" ev={ev} showToast={showToast} onClose={() => setLayEdit(false)}
+        onSaved={(m, gone) => { setLayEdit(false); showToast(m); if (gone) { refreshIndividuals(); goBack(); } else bump(); }} />}
       <div style={{padding:16}}>
         <div className="card" style={{margin:'0 0 12px', textAlign:'center'}}>
           <button onClick={() => fileRef.current && fileRef.current.click()} title="알 사진"
@@ -5258,8 +5827,12 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals, back 
                 onClick={() => { patch({ eggCount: parseInt(eggVal || '0', 10) || undefined }); setEggEdit(false); showToast('알 개수 저장'); }}>저장</button>
             </div>
           ) : (
-            <button className="btn btn-secondary btn-sm" style={{marginTop:10}}
-              onClick={() => { setEggVal(eggs ? String(eggs) : ''); setEggEdit(true); }}>알 개수 {eggs ? '수정' : '입력'}</button>
+            <div style={{display:'flex', gap:6, marginTop:10}}>
+              <button className="btn btn-secondary btn-sm" style={{flex:1}}
+                onClick={() => { setEggVal(eggs ? String(eggs) : ''); setEggEdit(true); }}>알 개수 {eggs ? '수정' : '입력'}</button>
+              <button className="btn btn-secondary btn-sm" style={{flex:1}} data-testid="lay-edit"
+                onClick={() => setLayEdit(true)}>✏️ 산란 정보 수정</button>
+            </div>
           )}
         </div>
 
@@ -5315,31 +5888,34 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals, back 
                         <div style={{display:'flex', flexWrap:'wrap', gap:5}}>
                           {EGG_PROBLEMS.map(R => (
                             <button key={R} className="chip-btn" style={{fontSize:11.5, padding:'5px 10px'}}
-                              onClick={() => setUnit(i, { status: 'problem', reason: R }, `알 ${i + 1} · ${R}으로 적었어요`)}>{R}</button>
+                              onClick={() => eggTo(i, 'problem', { reason: R }, `알 ${i + 1} · ${R}으로 적었어요`)}>{R}</button>
                           ))}
                         </div>
                         <button className="btn btn-secondary btn-sm" style={{marginTop:7}} onClick={() => setProbFor(null)}>취소</button>
                       </div>
-                    ) : u.status === 'pending' ? (
-                      <div style={{display:'flex', gap:6, marginTop:9}}>
-                        {!hatched && (
-                          <button className="btn btn-primary btn-sm" style={{flex:1}} data-testid={'egg-hatch-' + i}
-                            onClick={() => {
-                              setHatchEgg(i); setCount('1'); setHDate(todayStr()); setMorph(''); setMorphUnknown(false); setHatchOpen(true);
-                              setTimeout(() => { try { const el = document.querySelector('[data-testid=hatch-form]'); el && el.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {} }, 60);
-                            }}>🐣 부화</button>
-                        )}
-                        <button className="btn btn-secondary btn-sm" style={{flex:1}}
-                          onClick={() => setUnit(i, { status: 'infertile' }, `알 ${i + 1}은 무정란으로 적었어요`)}>무정란</button>
-                        <button className="btn btn-secondary btn-sm" style={{flex:1}} onClick={() => setProbFor(i)}>⚠️ 문제</button>
-                      </div>
                     ) : (
-                      <div style={{display:'flex', alignItems:'center', gap:8, marginTop:9}}>
-                        <span style={{flex:1, fontSize:11.5, color:st.color, fontWeight:700}}>
-                          {st.label}{u.reason ? ` · ${u.reason}` : ''}{u.date ? ` · ${fmtDate(u.date)}` : ''}
-                        </span>
-                        <button className="btn btn-secondary btn-sm" style={{width:'auto', padding:'5px 11px', fontSize:12}}
-                          onClick={() => setUnit(i, { status: 'pending', reason: '' }, `알 ${i + 1}을 대기로 되돌렸어요`)}>되돌리기</button>
+                      /* v1.9.15 — 어느 상태에서든 네 가지 중 하나로 바로 바꿉니다.
+                         (예전엔 대기 → 결과는 되는데, 결과 → '되돌리기'로 대기가 된 알을 다시 부화로 만들 길이 없었습니다) */
+                      <div style={{marginTop:9}}>
+                        <div style={{fontSize:11, color:'var(--text3)', marginBottom:5}}>상태 바꾸기</div>
+                        <div style={{display:'flex', gap:5}} data-testid={'egg-status-' + i}>
+                          {[['pending', '대기'], ['hatched', '🐣 부화'], ['infertile', '무정란'], ['problem', '⚠️ 문제']].map(([k, l]) => {
+                            const on = u.status === k;
+                            const c = (EGG_STATE[k] || EGG_STATE.pending).color;
+                            return (
+                              <button key={k} className={'btn btn-sm ' + (k === 'hatched' && !on && u.status === 'pending' ? 'btn-primary' : 'btn-secondary')}
+                                data-testid={k === 'hatched' ? 'egg-hatch-' + i : 'egg-' + k + '-' + i}
+                                style={{flex:1, padding:'7px 0', fontSize:12, ...(on ? {borderColor:c, color:c, fontWeight:800, background:'var(--bg2)'} : {})}}
+                                onClick={() => pickEggStatus(i, k)}>{l}</button>
+                            );
+                          })}
+                        </div>
+                        {u.status !== 'pending' && (
+                          <div style={{fontSize:11.5, color:st.color, fontWeight:700, marginTop:6}}>
+                            지금: {st.label}{u.reason ? ` · ${u.reason}` : ''}{u.date ? ` · ${fmtDate(u.date)}` : ''}
+                            {u.status === 'hatched' && <span style={{color:'var(--text3)', fontWeight:500}}> — 날짜·아기를 바꾸려면 🐣 부화를 다시 누르세요</span>}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -5394,6 +5970,15 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals, back 
               <button key={b.id} className="option-btn" style={{textAlign:'left', width:'100%', marginBottom:6}}
                 onClick={() => navigate('profile', { gecko: b })}>{genderEmoji(b.gender)} {b.name}{b.morph ? ` · ${b.morph}` : ''}</button>
             )) : <div style={{fontSize:12, color:'var(--text3)'}}>{(hatched.data && hatched.data.count) || 0}마리</div>}
+            {/* v1.9.15 따로 등록해 둔 아이를 이 알둥지에서 나온 아이로 잇기 */}
+            <button className="btn btn-secondary btn-sm" style={{marginTop:4}} data-testid="link-baby"
+              onClick={() => {
+                const r0 = EGG.row(ev.id);
+                if (r0 && EGG.roomDates(r0).length) return setEggSheet({ room: true });
+                const k = units.findIndex(u => u.status === 'pending');
+                if (k >= 0) return setEggSheet({ egg: k });
+                showToast('⚠️ 남은 알이 없어요 — 알 개수를 먼저 늘려 주세요');
+              }}>🔗 이미 등록된 아이 잇기</button>
             <button className="btn btn-secondary btn-sm" style={{marginTop:4}} onClick={() => navigate('home', { view: 'hatch' })}>해칭기록으로 이동</button>
           </div>
         ) : hatchOpen ? (
@@ -6294,30 +6879,126 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     bot(`축하드려요! 🐣 몇 마리가 나왔나요?\n마릿수를 알려주시면 아기들을 바로 등록해둘게요.`, chips);
   };
 
-  /* ── 알별 결과 적용 ── 한 곳에서만 고칩니다(직접 말했을 때·어느 산란인지 고르셨을 때 공용) */
-  const applyEggFix = (layingId, ef) => {
-    const row = clutchRows().find(r => r.e.id === layingId);
+  /* ── 알별 결과 적용 ── 한 곳에서만 고칩니다(직접 말했을 때·어느 산란인지 고르셨을 때 공용)
+     v1.9.15 — 화면과 같은 EGG.set 을 씁니다. 부화로 바꾸면 부화 기록 마릿수도, 대기로 돌리면 그만큼 줄어듭니다. */
+  const applyEggFix = (layingId, ef, hatchDate) => {
+    const row = EGG.row(layingId);
     if (!row) { missBot('그 산란 기록을 못 찾았어요 🥚'); return; }
-    const units = row.units.slice();
-    const touched = [];
-    const mark = (i) => {
-      if (!units[i]) return;
-      units[i] = { ...units[i], status: ef.status, reason: ef.reason || '' };
-      touched.push(i + 1);
-    };
-    if (ef.index >= 1) mark(ef.index - 1);
-    else if (ef.index === 0) { const i = units.findIndex(u => u.status === 'pending'); if (i >= 0) mark(i); }
-    else units.forEach((u, i) => { if (u.status === 'pending') mark(i); });
-    if (!touched.length) {
-      bot(`고칠 알을 못 찾았어요 🥚\n${row.nth}차 산란에 알이 ${units.length}개 있어요. "2번 알"처럼 짚어주시겠어요?`);
+    const idx = [];
+    if (ef.index >= 1) { if (row.units[ef.index - 1]) idx.push(ef.index - 1); }
+    else if (ef.index === 0) { const i = row.units.findIndex(u => u.status === 'pending'); if (i >= 0) idx.push(i); }
+    else row.units.forEach((u, i) => { if (u.status === 'pending' && ef.status !== 'pending') idx.push(i); });
+    if (!idx.length) {
+      bot(`고칠 알을 못 찾았어요 🥚\n${row.nth}차 산란에 알이 ${row.units.length}개 있어요. "2번 알"처럼 짚어주시겠어요?`);
       return;
     }
-    DB.setEggUnits(row.e.id, units);
+    const d = hatchDate || (row.hatches.length ? row.hatches[row.hatches.length - 1].date : '') || todayStr();
+    const notes = [];
+    const done = [];
+    for (const i of idx) {
+      const r = EGG.set(layingId, i, ef.status, ef.status === 'hatched' ? { date: d } : { reason: ef.reason || '' });
+      if (!r.ok) { bot('⚠️ ' + r.why); refreshIndividuals(); return; }
+      if (r.note) notes.push(r.note);
+      done.push(i + 1);
+    }
     refreshIndividuals();
-    const label = ef.status === 'infertile' ? '무정란'
+    missRef.current = 0;
+    const label = ef.status === 'infertile' ? '무정란' : ef.status === 'pending' ? '대기'
       : ef.status === 'hatched' ? '부화' : (ef.reason || '문제');
-    bot(`🥚 ${row.pairName} ${row.nth}차 산란 · 알 ${touched.join('·')}번을 ${label}으로 적었어요.\n`
-      + '산란기록에서 알별로 다시 고칠 수 있어요.');
+    const after = EGG.row(layingId) || row;
+    const head = `🥚 ${row.pairName} ${row.nth}차 산란 · 알 ${done.join('·')}번을 ${euroWord(label)} 적었어요`
+      + (ef.status === 'hatched' ? ` (${fmtDate(d)})` : '') + '.'
+      + (notes.length ? '\n' + [...new Set(notes)].join(' · ') : '')
+      + `\n지금 상태: ${after.state}`;
+    if (ef.status === 'hatched') {
+      bot(head + `\n\n아기도 등록할까요? 이미 등록된 아이라면 "크롱은 ${row.momName} ${row.nth}차 알에서 나왔어"처럼 말씀해 주세요.`, [
+        { label: `🐣 아기 ${done.length}마리 등록`, kind: 'egg-baby-new', value: { layingId, date: d, n: done.length } },
+        { label: '괜찮아요', kind: 'memo-skip' },
+      ]);
+      return;
+    }
+    bot(head + '\n산란기록 › 알 화면에서도 알마다 바로 바꿀 수 있어요.');
+  };
+
+  /* ── v1.9.15 산란·알을 말로 고치기 (planBreedChat 이 정한 것을 실행) ── */
+  const doLinkBaby = (layingId, babyId, hatchDate) => {
+    const r = linkBabyToClutch(layingId, babyId, hatchDate);
+    if (!r.ok) { bot('⚠️ ' + r.why); return; }
+    refreshIndividuals();
+    missRef.current = 0;
+    const b = DB.getIndividuals().find(i => i.id === babyId) || { name: '' };
+    if (r.already) { bot(`${eunneun(b.name)} 이미 ${r.row.pairName} ${r.row.nth}차 알에서 나온 아이로 이어져 있어요 🙂`); return; }
+    bot(`🔗 ${eulreul(b.name)} ${r.row.pairName} ${r.row.nth}차(${fmtDate(r.row.e.date)} 산란) 알에서 나온 아이로 이었어요.\n`
+      + `엄마 ${r.row.momName}${r.row.dad ? ' · 아빠 ' + r.row.dad.name : ''} · 생일 ${fmtDate(r.date)}`
+      + (r.egg ? `\n알 ${r.egg}번을 부화로 적었어요.` : '')
+      + (r.guessed ? `\n생일을 몰라 오늘로 적었어요. 다르면 "${b.name} 생일 8월 20일"처럼 알려주세요.` : '')
+      + (r.moved ? `\n생일을 그 알둥지 부화 기록 날짜(${fmtDate(r.date)})로 맞췄어요.` : ''));
+  };
+  const runBreed = (p) => {
+    if (p.kind === 'say') { bot(p.text); return; }
+    if (p.kind === 'link') {
+      if (!p.rows.length) { missBot(`${p.mom.name}의 산란 기록 중에 맞는 걸 못 찾았어요 🥚\n"1차"나 산란 날짜(예: 6월 21일)로 짚어 주세요.`); return; }
+      if (p.rows.length > 1) {
+        bot(`${iga(p.baby.name)} ${p.mom.name}의 어느 알에서 나왔나요? 🥚`, p.rows.map(r => ({
+          label: `${r.nth}차 · ${fmtDate(r.e.date)} 산란${r.dadName ? ' · ' + r.dadName : ''}`,
+          kind: 'link-clutch', value: { layingId: r.e.id, babyId: p.baby.id, hatchDate: p.hatchDate } })));
+        return;
+      }
+      doLinkBaby(p.rows[0].e.id, p.baby.id, p.hatchDate);
+      return;
+    }
+    if (p.kind === 'hatchFix') {
+      const h = p.hatch;
+      const old = parseInt((h.data && h.data.count) || 0, 10) || 0;
+      if (old === p.count) { bot(`${fmtDate(h.date)} 부화 기록은 이미 ${p.count}마리로 적혀 있어요 🙂`); return; }
+      if (p.count < 1 || p.count > 20) { bot('마릿수는 1~20마리로 알려주세요 🙂'); return; }
+      DB.updateEvent(h.id, { data: { ...(h.data || {}), count: String(p.count) } });
+      refreshIndividuals();
+      missRef.current = 0;
+      const row = EGG.rowOfHatch(h);
+      const fresh = row ? EGG.row(row.e.id) : null;
+      const line = `🐣 ${p.target.name} ${fmtDate(h.date)} 부화 기록을 ${p.count}마리로 고쳤어요.`
+        + (fresh ? `\n${fresh.nth}차 알별 기록도 맞췄어요 — 지금 ${fresh.state}` : '');
+      const room = fresh ? EGG.roomDates(fresh).length : 0;
+      if (p.count > old && fresh && room) {
+        bot(line + `\n\n늘어난 아기도 등록할까요? 이미 등록된 아이라면 "크롱은 ${fresh.momName} ${fresh.nth}차 알에서 나왔어"처럼 말씀해 주세요.`, [
+          { label: `🐣 아기 ${Math.min(room, p.count - old)}마리 등록`, kind: 'egg-baby-new', value: { layingId: fresh.e.id, date: h.date, n: Math.min(room, p.count - old) } },
+          { label: '괜찮아요', kind: 'memo-skip' },
+        ]);
+        return;
+      }
+      bot(line);
+      return;
+    }
+    if (p.kind === 'mateFix') {
+      if (p.to > todayStr()) { bot(`${fmtDate(p.to)}은 아직 오지 않은 날짜예요 🙂`); return; }
+      if (p.ev.date === p.to) { bot(`메이팅 날짜는 이미 ${fmtDate(p.to)}로 적혀 있어요 🙂`); return; }
+      const from = p.ev.date;
+      DB.updateEvent(p.ev.id, { date: p.to });
+      refreshIndividuals();
+      missRef.current = 0;
+      bot(`💞 메이팅 날짜를 ${fmtDate(from)} → ${fmtDate(p.to)}로 고쳤어요${p.ev.data && p.ev.data.partnerName ? ` (상대 ${p.ev.data.partnerName})` : ''}.`);
+      return;
+    }
+    if (p.kind === 'layFix') {
+      if (p.rows.length !== 1) {
+        bot(`어느 산란인지 "1차"처럼 짚어 주세요 🥚\n` + clutchRows().filter(r => r.e.individualId === p.target.id)
+          .map(r => `· ${r.nth}차 ${fmtDate(r.e.date)} 산란 · 알 ${r.units.length}개`).join('\n'));
+        return;
+      }
+      const row = p.rows[0];
+      if (p.field === 'date') {
+        if (p.to > todayStr()) { bot(`${fmtDate(p.to)}은 아직 오지 않은 날짜예요 🙂`); return; }
+        DB.updateEvent(row.e.id, { date: p.to });
+        bot(`🥚 ${row.pairName} ${row.nth}차 산란일을 ${fmtDate(row.e.date)} → ${fmtDate(p.to)}로 고쳤어요.\n부화 예정일도 따라 바뀌어요.`);
+      } else {
+        if (p.to < 1 || p.to > 20) { bot('알 개수는 1~20개로 알려주세요 🙂'); return; }
+        DB.updateEvent(row.e.id, { data: { ...(row.e.data || {}), eggCount: p.to } });
+        bot(`🥚 ${row.pairName} ${row.nth}차 알 개수를 ${row.units.length}개 → ${p.to}개로 고쳤어요.`);
+      }
+      refreshIndividuals();
+      missRef.current = 0;
+    }
   };
 
   /* ── 담긴 기록의 주인 정정 ──
@@ -6510,7 +7191,18 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     } else if (kind === 'fix-no' && value) {
       bot(`네, ${eunneun(PROFILE_LABEL[value.field])} ${profileText(value.field, value.from)} 그대로 둘게요 🙂`);
     } else if (kind === 'egg-fix' && value) {
-      applyEggFix(value.layingId, value.fix);
+      applyEggFix(value.layingId, value.fix, value.date);
+    } else if (kind === 'link-clutch' && value) {
+      doLinkBaby(value.layingId, value.babyId, value.hatchDate);
+    } else if (kind === 'egg-baby-new' && value) {
+      const made = [];
+      for (let k = 0; k < (value.n || 1); k++) {
+        const row = EGG.row(value.layingId);
+        if (!row || !EGG.roomDates(row).length) break;
+        made.push(EGG.newBaby(row, value.date, '', ''));
+      }
+      refreshIndividuals();
+      bot(made.length ? `🐣 ${made.join(', ')} 등록했어요. 이름은 프로필 연필(✏️)이나 "이름 바꿔줘"로 고칠 수 있어요.` : '더 이을 자리가 없어요 🙂');
     } else if (kind === 'hatch-clutch' && value) {
       const f = { ...value.fact, data: { ...value.fact.data, layingId: value.layingId } };
       const t = DB.getIndividuals().find(i => i.id === f.targetId) || { name: f.targetName };
@@ -6637,6 +7329,13 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
 
     let target = geckoRef.current;
     if (names.length) { target = names[0]; setTarget(names[0]); }
+
+    /* 3.02) v1.9.15 산란·알을 말로 고치기 — 잇기("크롱은 크순 1차 알에서 나왔어")·부화 마릿수·메이팅/산란 날짜·알 개수.
+       ★ 여러 아이 담기(3.1)·동배 묶기(3.05)보다 먼저 봅니다 — 이름이 둘이라 거기로 새면 '2마리 해칭'으로 잘못 담깁니다. */
+    {
+      const bp = planBreedChat(text, target, names);
+      if (bp) { runBreed(bp); return; }
+    }
 
     /* 3.05) 동배 묶기 · 짝 추천 · 모프 계산 — 혈연을 다루는 말들
        ★ 순서가 중요합니다. 이 검사는
@@ -6916,17 +7615,33 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       if (ef && target && (ef.status !== 'hatched' || ef.explicitEgg)) {
         const rows = clutchRows().filter(r => r.e.individualId === target.id);
         if (!rows.length) { bot(`${target.name}는 아직 산란 기록이 없어요 🥚`); return; }
-        /* 지금 품고 있는 알 중에서 고릅니다. 여러 개면 말없이 찍지 않고 여쭤봅니다. */
-        const alive = rows.filter(r => r.waiting);
+        /* v1.9.15 "1차"·산란 날짜로 짚으셨으면 그 산란에 — 부화일은 산란일이 아닌 다른 날짜가 있으면 그날 */
+        const dts = datesIn(text);
+        const hDate = dts.find(d => rows.every(r => r.e.date !== d)) || '';
+        if (nthIn(text) || dts.some(d => rows.some(r => r.e.date === d))) {
+          const pk = pickClutch(rows, text, dts);
+          if (pk.length === 1) { applyEggFix(pk[0].e.id, ef, hDate); return; }
+          if (pk.length > 1) {
+            bot(`${target.name}의 어느 산란인가요? 🥚`, pk.map(r => ({
+              label: `${r.nth}차 · ${fmtDate(r.e.date)} 산란${r.dadName ? ' · ' + r.dadName : ''}`,
+              kind: 'egg-fix', value: { layingId: r.e.id, fix: ef, date: hDate } })));
+            return;
+          }
+        }
+        /* 지금 품고 있는 알 중에서 고릅니다. 여러 개면 말없이 찍지 않고 여쭤봅니다.
+           대기로 돌리기는 이미 결과가 난 알이 있는 산란에서 찾습니다. */
+        const alive = ef.status === 'pending'
+          ? rows.filter(r => r.units.some(u => u.status !== 'pending')).slice(-3)
+          : rows.filter(r => r.waiting);
         if (alive.length > 1) {
           bot(`${target.name}는 지금 품고 있는 알이 ${alive.length}개예요.\n어느 산란인가요? 🥚`,
             alive.map(r => ({
               label: `${r.nth}차 (${fmtDate(r.e.date)} 산란 · ${r.d >= 0 ? whenWord(r.etaISO) : dayWord(-r.d) + ' 지남'})`,
-              kind: 'egg-fix', value: { layingId: r.e.id, fix: ef },
+              kind: 'egg-fix', value: { layingId: r.e.id, fix: ef, date: hDate },
             })));
           return;
         }
-        applyEggFix((alive[0] || rows[rows.length - 1]).e.id, ef);
+        applyEggFix((alive[0] || rows[rows.length - 1]).e.id, ef, hDate);
         return;
       }
     }
@@ -7504,7 +8219,7 @@ function PublicPreview({ gecko, onClose }) {
   );
 }
 
-function ProfileEditSheet({ gecko, onClose, onSaved, showToast }) {
+function ProfileEditSheet({ gecko, onClose, onSaved, onMerged, showToast }) {
   const all = DB.getIndividuals();
   const memo = splitMemo(gecko.id);
   const [v, setV] = useState({
@@ -7512,17 +8227,29 @@ function ProfileEditSheet({ gecko, onClose, onSaved, showToast }) {
     spots: gecko.spots || '', sireId: gecko.sireId || '', damId: gecko.damId || '', source: memo.source || '', price: memo.price || '',
   });
   const [moveSibs, setMoveSibs] = useState(true);
-  const put = (k, val) => setV(x => ({ ...x, [k]: val }));
+  /* v1.9.15 — 이미 있는 이름으로 바꾸려 하면 조용히 막히던 것(제보: "n호 아이 이름이 저장 안 돼요").
+     실제로는 같은 이름이 있어서 막혔는데, 안내가 이 창 뒤에 깔려 안 보였습니다.
+     이제 창 안에 바로 적고, 같은 아이라면 하나로 합칠 수 있게 합니다. */
+  const [err, setErr] = useState('');
+  const [dup, setDup] = useState(null);
+  const put = (k, val) => { setV(x => ({ ...x, [k]: val })); if (k === 'name') { setDup(null); setErr(''); } };
   const others = all.filter(i => i.id !== gecko.id).sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ko'));
   const sibs = gecko.damId && gecko.hatchDate ? all.filter(x => x.damId === gecko.damId && x.hatchDate === gecko.hatchDate).length : 1;
   const dateMoved = (v.hatchDate || '') !== (gecko.hatchDate || '');
   const save = () => {
     const nm = v.name.trim();
-    if (nm !== gecko.name) { const chk = renameCheck(gecko.id, nm, all); if (!chk.ok) return showToast('⚠️ ' + chk.reason); }
-    if (v.hatchDate && v.hatchDate > todayStr()) return showToast('⚠️ 아직 오지 않은 날짜예요');
-    if (v.sireId && v.sireId === v.damId) return showToast('⚠️ 아빠와 엄마를 같은 아이로 고를 수 없어요');
+    const fail = (m) => { setErr(m); showToast('⚠️ ' + m); };
+    if (nm !== gecko.name) {
+      const chk = renameCheck(gecko.id, nm, all);
+      if (!chk.ok) {
+        if (chk.dup) { setDup(all.find(i => i.id !== gecko.id && i.name === nm) || null); setErr(''); return; }
+        return fail(chk.reason);
+      }
+    }
+    if (v.hatchDate && v.hatchDate > todayStr()) return fail('아직 오지 않은 날짜예요');
+    if (v.sireId && v.sireId === v.damId) return fail('아빠와 엄마를 같은 아이로 고를 수 없어요');
     const price = String(v.price || '').replace(/,/g, '').trim();
-    if (price && !/^\d+(\.\d+)?$/.test(price)) return showToast('⚠️ 입양가는 숫자(만원)로 적어 주세요');
+    if (price && !/^\d+(\.\d+)?$/.test(price)) return fail('입양가는 숫자(만원)로 적어 주세요');
     const up = {};
     if (nm !== gecko.name) up.name = nm;
     if (v.gender !== (gecko.gender || 'unknown')) up.gender = v.gender;
@@ -7571,6 +8298,24 @@ function ProfileEditSheet({ gecko, onClose, onSaved, showToast }) {
           <label className="pe-row"><span>입양처</span><input className="input" value={v.source} placeholder="데려온 곳" onChange={e => put('source', e.target.value)} /></label>
           <label className="pe-row"><span>입양가</span><div className="pe-unit"><input className="input" inputMode="decimal" value={v.price} placeholder="예: 30" onChange={e => put('price', e.target.value)} data-testid="pe-price" /><em>만원</em></div></label>
         </div>
+        {err && <div style={{fontSize:12, color:'var(--danger)', padding:'0 18px 8px'}} data-testid="pe-err">{err}</div>}
+        {dup && (
+          <div data-testid="pe-dup" style={{margin:'0 16px 10px', padding:'10px 12px', borderRadius:12, background:'var(--accent-soft)', border:'1px solid var(--accent-edge)', fontSize:12.5, lineHeight:1.55}}>
+            <b>"{dup.name}"</b>는 이미 있는 이름이에요{dup.hatchDate ? ` (${fmtDate(dup.hatchDate)}생)` : ''}.<br />
+            같은 아이라면 <b>{dup.name}</b> 하나로 합칠 수 있어요. 두 쪽 기록은 모두 남고,
+            {gecko.damId ? ` ${gecko.name}의 부모·생일(부화 기록)을 이어받아요.` : ' 빈 칸은 서로 채워요.'}
+            <div style={{display:'flex', gap:6, marginTop:8}}>
+              <button className="btn btn-primary btn-sm" style={{flex:1}} data-testid="pe-merge" onClick={() => {
+                const keep = dup;
+                DB.mergeIndividuals(keep.id, gecko.id, 'keep');
+                if (gecko.damId && gecko.hatchDate) DB.updateIndividual(keep.id, { hatchDate: gecko.hatchDate });
+                showToast(`🔗 ${gecko.name} → ${keep.name} 하나로 합쳤어요`);
+                onMerged && onMerged(keep.id);
+              }}>🔗 {dup.name}로 합치기</button>
+              <button className="btn btn-secondary btn-sm" style={{flex:1}} onClick={() => { setDup(null); put('name', gecko.name); }}>다른 이름 쓸게요</button>
+            </div>
+          </div>
+        )}
         <div className="pe-foot">
           <button className="btn btn-secondary" onClick={onClose}>취소</button>
           <button className="btn btn-primary" onClick={save} data-testid="pe-save">저장</button>
@@ -7706,7 +8451,8 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
   return (
     <div className="screen">
       {infoEdit && <ProfileEditSheet gecko={gecko} showToast={showToast} onClose={() => setInfoEdit(false)}
-        onSaved={() => { refreshLocal(); refreshIndividuals && refreshIndividuals(); }} />}
+        onSaved={() => { refreshLocal(); refreshIndividuals && refreshIndividuals(); }}
+        onMerged={(id) => { setInfoEdit(false); refreshIndividuals && refreshIndividuals(); const k = DB.getIndividuals().find(i => i.id === id); if (k) navigate('profile', { gecko: k }); }} />}
       <div className="header">
         <div className="header-row">
           <button className="back-btn" onClick={() => { refreshIndividuals(); navigate('home'); }}>
