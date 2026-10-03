@@ -637,7 +637,7 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.16';
+const APP_VERSION = '1.9.17';
 const APP_PATCHED = '2026-09-28';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -3604,6 +3604,219 @@ function pickClutch(rows, text, dates) {
   if (byDate.length) c = byDate;
   return c;
 }
+/* ══════════════════════════════════════════
+   v1.9.17 대화 ↔ 화면 기능 전수 연동
+   제보(2026-10-03): "크범이 공유하고 싶어"가 메모로 담겼습니다.
+   화면 기능은 늘었는데 대화 엔진이 따라가지 못해, 버튼으로만 되는 일이 많았습니다.
+   전수 실측(40문장)에서 못 하던 것을 여기 한 곳에 모읍니다 — 공유·즐겨찾기·KEEP·MY·목록 복귀·
+   산란 시즌·개체 삭제/합치기·기록 고치기/지우기·대표사진·입양자 연락처·해칭 옮기기·가계부 지우기·
+   알림 등록/목록·설정(인큐 온도·밥 간격/요일·걱정 시작일·베이비 이름·호칭·말투·브리더 이름·테마)·
+   엑셀/백업·화면 열기.
+   ★ 화면 버튼이 부르는 것과 같은 함수만 부릅니다(DB.setKeep·recordSeasonCheck·PUB·EGG·moveHatchTo …).
+   ★ 지우기·합치기는 말만으로 하지 않고 버튼으로 한 번 더 여쭙니다.
+   ══════════════════════════════════════════ */
+const THEME_WORDS = [[/버건디|와인|빨강|빨간|기본\s*색/, 'burgundy'], [/그린|초록|녹색/, 'green'], [/브라운|갈색|우드/, 'brown'],
+  [/블루|파랑|파란|코발트/, 'blue'], [/차콜|다크|어둡|어두운|검정|검은|블랙/, 'charcoal']];
+const EV_WORDS = [[/몸무게|무게|체중/, 'growth'], [/밥|먹이|피딩|급여/, 'feeding'], [/탈피/, 'shed'], [/메모/, 'memo'], [/사진/, 'photo'],
+  [/이상\s*기록|증상/, 'health'], [/온습도|습도/, 'env'], [/컨디션/, 'condition'], [/산란/, 'laying'], [/메이팅|교배/, 'mating'],
+  [/해칭|부화/, 'hatching']];
+const RE_DEL = /지워|지우|삭제|없애|빼\s*줘|빼줘/;
+const RE_OFF = /해제|풀어|풀기|빼|취소|끄|꺼|떼|그만|없애/;
+const RE_GO = /열어|보여\s*줘|보여줘|가자|이동|가\s*줘|켜\s*줘|들어가|띄워/;
+/* "다음주 화요일" · "이번 주 금요일" · "토요일" → 날짜 (지난 요일이면 다음 주) */
+function weekdayDate(text) {
+  const m = String(text || '').match(/(다다음\s*주|다음\s*주|담주|이번\s*주)?\s*([월화수목금토일])요일/);
+  if (!m) return null;
+  const want = WEEKDAY_KO.indexOf(m[2]);
+  const base = new Date(todayStr());
+  const mon = new Date(base.getTime() - ((base.getDay() + 6) % 7) * 86400000);
+  const w = !m[1] ? 0 : /다다음/.test(m[1]) ? 2 : /다음|담/.test(m[1]) ? 1 : 0;
+  let d = new Date(mon.getTime() + (w * 7 + (want + 6) % 7) * 86400000);
+  if (!m[1] && localISO(d) < todayStr()) d = new Date(d.getTime() + 7 * 86400000);
+  return localISO(d);
+}
+const amountIn = (t) => {
+  let m = String(t).match(/(\d+(?:\.\d+)?)\s*만\s*원?/);
+  if (m) return Math.round(parseFloat(m[1]) * 10000);
+  m = String(t).match(/(\d[\d,]*)\s*원/);
+  return m ? parseInt(m[1].replace(/,/g, ''), 10) : 0;
+};
+const evWordOf = (t) => { const h = EV_WORDS.find(([re]) => re.test(t)); return h ? h[1] : null; };
+
+function planAppChat(text, target, names) {
+  const t = String(text || '').trim();
+  const s = DB.getSettings() || {};
+  const two = (names || []).filter((n, i, a) => a.findIndex(x => x.id === n.id) === i);
+
+  /* ── 설정 (누구 얘기가 아니어도 됩니다) ── */
+  // 인큐 온도
+  if (/인큐|부화\s*온도|품는\s*온도/.test(t)) {
+    const m = t.match(/(\d+(?:\.\d+)?)\s*(?:도|°|℃)/);
+    if (m) return { kind: 'set', what: 'incubate', value: parseFloat(m[1]) };
+    if (/몇|얼마|뭐|알려/.test(t)) return { kind: 'say', text: `🌡️ 인큐 온도는 ${incubateTemp()}°C로 적혀 있어요 (온도 기준 ${hatchDaysNow()}일).\n"인큐 온도 25도로 바꿔줘"처럼 말씀하시면 바꿔드려요.` };
+  }
+  // 걱정 시작일 — "5일 안 먹으면 알려줘"
+  {
+    const m = t.match(/(\d+)\s*일\s*(?:째|이상|동안|넘게)?\s*(?:안|못)\s*먹으면/);
+    if (m) return { kind: 'set', what: 'feedWarn', value: parseInt(m[1], 10) };
+  }
+  // 밥 주는 간격·요일
+  if (/밥|먹이|급여|피딩/.test(t) && /마다|간격|에\s*한\s*번|에\s*한번|매일|요일|주기/.test(t) && !/먹었|줬|먹음|안\s*먹/.test(t)) {
+    const flat = t.replace(/([월화수목금토일])요일/g, ' $1 ');
+    const days = [...flat.matchAll(/(?:^|[\s,·/])([월화수목금토일])(?=[\s,·/]|에|마다|$)/g)].map(x => WEEKDAY_KO.indexOf(x[1]));
+    if (/요일/.test(t) && days.length) return { kind: 'set', what: 'feedDays', value: [...new Set(days)].sort((a, b) => a - b) };
+    if (/매일|하루에\s*한/.test(t)) return { kind: 'set', what: 'feedInterval', value: 1 };
+    const k = t.match(new RegExp('(\\d+|' + KNUM_ALT + ')\\s*일\\s*(?:마다|에\\s*한\\s*번|에\\s*한번|간격)'));
+    if (k) return { kind: 'set', what: 'feedInterval', value: /^\d+$/.test(k[1]) ? parseInt(k[1], 10) : KNUM[k[1]] };
+    if (/이틀/.test(t)) return { kind: 'set', what: 'feedInterval', value: 2 };
+    if (/사흘/.test(t)) return { kind: 'set', what: 'feedInterval', value: 3 };
+  }
+  // 해칭 베이비 이름 규칙
+  if (/(베이비|아기|해칭|새끼)\s*이름/.test(t) && /규칙|방식|으로|로\s*(?:해|바꿔)|물어|조합/.test(t)) {
+    if (/물어|묻|직접/.test(t)) return { kind: 'set', what: 'babyNaming', value: 'ask' };
+    if (/조합|자동|부모/.test(t)) return { kind: 'set', what: 'babyNaming', value: 'combo' };
+  }
+  // 호칭 — "형님이라고 불러줘"
+  {
+    const m = t.match(/(?:^|\s)([가-힣A-Za-z]{1,8}?)\s*(?:이라고|라고|으로|로)\s*(?:불러|부르)/);
+    if (m && !two.length && !/애칭|별명|이름은|이름을/.test(t)) return { kind: 'set', what: 'call', value: m[1].replace(/^(?:나를|날|저를|절)\s*/, '') };
+  }
+  // 말투
+  if (/말투|말씨|존댓말|반말/.test(t)) {
+    if (/정중|존댓|공손|예의/.test(t)) return { kind: 'set', what: 'tone', value: 'polite' };
+    if (/친근|편하게|다정|부드럽/.test(t)) return { kind: 'set', what: 'tone', value: 'friendly' };
+    if (/짧게|간단|짧은/.test(t)) return { kind: 'set', what: 'tone', value: 'short' };
+  }
+  // 브리더 이름 (공유 기록에 찍히는 이름)
+  if (/브리더\s*(?:이름|명)|농장\s*이름|브랜드\s*이름|샵\s*이름|가게\s*이름/.test(t)) {
+    const m = t.match(/(?:이름|명)\s*(?:은|는|을|를|이|가)?\s*["'“]?([가-힣A-Za-z0-9_ .&-]{1,24}?)["'”]?\s*(?:으로|로|이야|야|예요|이에요|입니다|해\s*줘|해줘|바꿔|고쳐|$)/);
+    const v = m && m[1].trim();
+    if (v && !/^(뭐|뭔|무엇|어떻게)/.test(v)) return { kind: 'set', what: 'breeder', value: v };
+    return { kind: 'say', text: `브리더 이름은 지금 ${s.breederName ? `"${s.breederName}"` : '비어 있어요'}.\n"브리더 이름 OO로 해줘"라고 말씀하시면 공유 기록 한 장에 찍혀요.` };
+  }
+  // 테마
+  if (/테마|다크\s*모드|다크모드|(?:화면|앱)\s*(?:색|색상|색깔)|화면\s*어둡게/.test(t)) {
+    const h = THEME_WORDS.find(([re]) => re.test(t));
+    if (h) return { kind: 'set', what: 'theme', value: h[1] };
+    return { kind: 'say', text: `고를 수 있는 색은 ${THEMES.map(x => x.label).join(' · ')}예요. "그린 테마로 바꿔줘"처럼 말씀해 주세요.` };
+  }
+  // 엑셀 · 백업
+  if (/엑셀/.test(t) && /내려|다운|받|뽑|만들|저장|보내|줘/.test(t) && !/가져|올려|불러/.test(t)) return { kind: 'export', what: 'excel' };
+  if (/엑셀|가져오기/.test(t) && /가져|올려|불러/.test(t)) return { kind: 'go', name: 'import', label: '📥 가져오기 화면 열기', text: '쓰던 엑셀·메모는 가져오기 화면에서 올리시면 나눠 읽어요.' };
+  if (/백업/.test(t)) {
+    if (/어떻게|방법|\?|뭐야/.test(t)) return { kind: 'go', name: 'settings', label: '⚙️ 설정 열기', text: '"백업해줘"라고 하시면 바로 백업 파일을 내려받아요. 설정 › 데이터에서도 할 수 있어요.' };
+    if (/복원|불러|가져|되돌/.test(t)) return { kind: 'go', name: 'settings', label: '⚙️ 설정 열기', text: '백업 복원은 설정 › 데이터 › 백업 복원에서 파일을 고르시면 돼요.' };
+    return { kind: 'export', what: 'backup' };
+  }
+  // 알림 목록
+  if (/(알림|일정|예정|할\s*일|스케줄)/.test(t) && /(목록|뭐\s*있|뭐야|보여|알려|있어|언제|정리)/.test(t) && !/(해\s*줘|해줘|설정|등록|맞춰|걸어)\s*$/.test(t)
+      && !/(산란|부화|해칭)\s*예정/.test(t)) return { kind: 'alerts', who: target && two.length ? target : null };
+  // 알림 등록 — "다음주 화요일 크범이 병원 알림 해줘"
+  if (/알림|알려\s*줘|알려줘|리마인드|잊지\s*않게|챙겨\s*줘/.test(t) && !/안\s*먹으면|몇|언제|뭐|는지|인지|했나/.test(t)) {
+    const d = weekdayDate(t) || explicitDate(t);
+    if (d && d >= todayStr()) {
+      let msg = t.replace(DATE_TOKEN, ' ').replace(/(다다음\s*주|다음\s*주|담주|이번\s*주)?\s*[월화수목금토일]요일/g, ' ')
+        .replace(/(내일|모레|글피)/g, ' ')
+        .replace(/(알림|리마인드)\s*(?:좀|을|를)?\s*(?:해\s*줘|해줘|설정해\s*줘|맞춰\s*줘|걸어\s*줘|등록해\s*줘|줘)?|알려\s*줘|알려줘|잊지\s*않게|챙겨\s*줘|에\s*$/g, ' ');
+      if (target && two.length) msg = msg.split(target.name).join(' ');
+      msg = msg.replace(/\s+/g, ' ').replace(/^[\s,에]+|[\s,에]+$/g, '').trim();
+      return { kind: 'remind', date: d, who: two.length ? target : null, msg: msg || '알림' };
+    }
+  }
+  // 화면 열기
+  if (RE_GO.test(t) && !two.length) {
+    const SCREENS = [[/캘린더|달력/, 'calendar', '📅 캘린더'], [/설정/, 'settings', '⚙️ 설정'], [/가계부/, 'ledger', '💰 가계부'],
+      [/브리핑|알림\s*(?:화면|탭)/, 'reminders', '📋 브리핑'], [/밥\s*주기|급여\s*(?:화면|탭)|피딩\s*(?:화면|탭)/, 'feeding', '🍽️ 밥 주기'],
+      [/산란\s*(?:기록|탭|목록)/, 'home:laying', '🥚 산란 탭'], [/해칭\s*(?:기록|탭|목록)/, 'home:hatch', '🐣 해칭 탭'],
+      [/메이팅\s*(?:기록|탭|목록)/, 'home:mating', '💞 메이팅 탭'], [/가져오기/, 'import', '📥 가져오기']];
+    const h = SCREENS.find(([re]) => re.test(t));
+    if (h) return { kind: 'go', name: h[1], label: h[2] + ' 열기', text: h[1] === 'ledger' ? (answerLedgerQuery('이번 달 얼마 썼어') || '') : '' };
+  }
+
+  /* ── 가계부 지우기·고치기 (돈 이야기를 새 지출로 담기 전에) ── */
+  if (/지출|수입|가계부|썼|샀|사료값|용품값|원\b|만원/.test(t) && (RE_DEL.test(t) || /고쳐|수정|잘못/.test(t))) {
+    const won = amountIn(t);
+    if (won) {
+      const cat = (LEDGER_CAT.find(([re]) => re.test(t)) || [])[1];
+      let list = DB.getEvents().filter(e => e.type === 'ledger' && Number((e.data && e.data.amount) || 0) === won);
+      if (cat && list.some(e => e.data.category === cat)) list = list.filter(e => e.data.category === cat);
+      list.sort((a, b) => (a.date < b.date ? 1 : -1));
+      if (/고쳐|수정|잘못/.test(t) && !RE_DEL.test(t)) return { kind: 'go', name: 'ledger', label: '💰 가계부 열기', text: '가계부 항목은 가계부 탭에서 눌러 고치실 수 있어요.' };
+      return { kind: 'delLedger', list: list.slice(0, 4), won };
+    }
+  }
+
+  if (!target) return null;
+  const g = DB.getIndividuals().find(i => i.id === target.id) || target;
+
+  // 공유 — "크범이 공유하고 싶어" · "공유 링크 줘" · "공유 꺼줘" · "새 주소로"
+  if (/공유|링크|기록\s*(?:한\s*장|보내)|분양\s*(?:카드|페이지)/.test(t) && !/가계부/.test(t)) {
+    if (/새\s*주소|주소\s*(?:바꿔|새로)|링크\s*(?:바꿔|새로)|새\s*링크/.test(t)) return { kind: 'share', op: 'rotate', g };
+    if (/미리\s*보기|미리보기|어떻게\s*보여|보이는\s*화면/.test(t)) return { kind: 'share', op: 'preview', g };
+    if (RE_OFF.test(t) || /안\s*할래|막아|닫아/.test(t)) return { kind: 'share', op: 'off', g };
+    return { kind: 'share', op: 'on', g };
+  }
+  // 즐겨찾기
+  if (/즐겨\s*찾기|즐찾|별\s*표시|별표/.test(t)) return { kind: 'flag', what: 'favorite', on: !RE_OFF.test(t), g };
+  // KEEP
+  if (/\bkeep\b|킵|안\s*팔|안\s*보낼|소장할|내\s*새끼로\s*남/i.test(t)) return { kind: 'flag', what: 'keep', on: !RE_OFF.test(t) && !/다시\s*팔|내놓/.test(t), g };
+  // MY (우리 집에서 나온 아이)
+  if (/\bmy\b|마이\s*표시|우리\s*집\s*(?:에서\s*)?(?:나온|태어난|출신|해칭)|직접\s*(?:해칭|뽑)|내가\s*(?:뽑은|해칭한|부화시킨)/i.test(t))
+    return { kind: 'flag', what: 'mine', on: !(RE_OFF.test(t) || /아니|아냐|데려온|입양한|외부/.test(t)), g };
+  // 목록으로 되돌리기 (떠남·분양완료 → 보유중)
+  if (/다시\s*(?:목록|보유|데려|우리\s*집)|목록으로\s*(?:돌려|복귀|되돌)|되돌려\s*놔|돌아왔|살아\s*있|살아있|파양|반품/.test(t)
+      ) {
+    if (statusOf(g) === 'gone' || statusOf(g) === 'sold') return { kind: 'back', g };
+    if (/목록|보유/.test(t)) return { kind: 'say', text: `${eunneun(g.name)} 이미 보유중 목록에 있어요 🙂` };
+  }
+  // 산란 시즌
+  if (/시즌/.test(t)) {
+    if (/다시|시작|열어|재개|안\s*끝/.test(t)) return { kind: 'season', op: 'open', g };
+    if (/끝|종료|마감|닫|쉬|휴식|마무리/.test(t)) return { kind: 'season', op: 'end', g };
+  }
+  // 대표사진
+  if (/대표\s*사진|프사|얼굴\s*사진|대표\s*얼굴/.test(t)) return { kind: 'avatar', g };
+  // 입양자 연락처·이름
+  {
+    const ph = t.match(/01[016789][-\s.]?\d{3,4}[-\s.]?\d{4}/);
+    if (ph && /연락처|전화|번호|폰|입양자|분양\s*받/.test(t)) return { kind: 'adopter', g, phone: ph[0] };
+    const nm = t.match(/(?:입양자|입양하신\s*분|데려간\s*분|분양\s*받은\s*분)\s*(?:은|는|이|가)?\s*([가-힣A-Za-z0-9]{2,12})(?:\s*(?:이야|야|예요|이에요|님|씨))?/);
+    if (nm && !/연락처|전화|번호/.test(nm[1])) return { kind: 'adopter', g, name: nm[1].replace(/(이야|야|예요|이에요|님|씨)$/, '') };
+  }
+  // 합치기 — "크범이랑 크순이 같은 애야 합쳐줘"
+  if (two.length >= 2 && /합쳐|합치|병합|같은\s*(?:애|아이|개체|녀석)|중복/.test(t)) return { kind: 'merge', a: two[0], b: two[1] };
+  // 해칭 기록 옮기기 — "1차 해칭 2차로 옮겨줘"
+  if (/해칭|부화/.test(t) && /옮겨|옮기|차로|알둥지/.test(t)) {
+    const ns = [...t.matchAll(/(\d+)\s*차/g)].map(x => parseInt(x[1], 10));
+    if (ns.length >= 2) return { kind: 'moveHatch', g, from: ns[0], to: ns[ns.length - 1] };
+  }
+  // 기록 고치기 — 몸무게
+  if (/몸무게|무게|체중/.test(t) && /고쳐|아니고|아니라|잘못|수정|바꿔|정정/.test(t)) {
+    const m = t.match(/(\d+(?:\.\d+)?)\s*(?:g|그램|그람|키로)?(?:\s*(?:으로|로|이야|야))?\s*(?:고쳐|바꿔|수정|정정|$)/) || t.match(/(\d+(?:\.\d+)?)\s*(?:g|그램|그람)/g);
+    const nums = [...t.matchAll(/(\d+(?:\.\d+)?)\s*(?:g|그램|그람)/g)].map(x => x[1]);
+    const to = nums.length ? nums[nums.length - 1] : (m && m[1]);
+    if (to) {
+      const d = explicitDate(t);
+      const ws = DB.getEventsFor(g.id).filter(e => e.type === 'growth').sort((a, b) => (a.date < b.date ? 1 : -1));
+      const ev = (d && ws.find(e => e.date === d)) || (nums.length > 1 && ws.find(e => String(e.data && e.data.weight) === nums[0])) || ws[0];
+      if (ev) return { kind: 'fixWeight', g, ev, to };
+    }
+  }
+  // 기록 지우기 — "크범이 어제 밥 준 거 지워줘"
+  if (RE_DEL.test(t)) {
+    const type = evWordOf(t);
+    if (type) {
+      const d = explicitDate(t) || weekdayDate(t);
+      let list = DB.getEventsFor(g.id).filter(e => e.type === type).sort((a, b) => (a.date < b.date ? 1 : -1));
+      if (d) list = list.filter(e => e.date === d);
+      return { kind: 'delEvent', g, type, list: list.slice(0, 3), when: d };
+    }
+    // 개체 지우기 — 이름만 있고 무슨 기록인지 없으면
+    if (!/알림|공유|링크|즐겨|킵|표시|사진|가계부|지출|수입/.test(t) && two.length === 1) return { kind: 'delInd', g };
+  }
+  return null;
+}
+
 function planBreedChat(text, target, names) {
   const t = String(text || '');
   const dates = datesIn(t);
@@ -7062,6 +7275,271 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     }
   };
 
+  /* ── v1.9.17 화면 기능을 말로 (planAppChat 이 정한 것을 실행) ── */
+  const lastSavedRef = useRef([]);   // 방금 저장한 기록 id — "방금 저장한 거 지워줘"용
+  const SET_OK = {
+    incubate: (v) => (v >= INCUBATE_MIN && v <= INCUBATE_MAX) ? `🌡️ 인큐 온도를 ${v}°C로 바꿨어요 (온도 기준 ${hatchDays(v)}일). 이날 뒤에 낳은 알부터 부화 기간을 다시 배워요.` : null,
+    feedWarn: (v) => (v >= 3 && v <= 30) ? `⚠️ ${v}일째 안 먹으면 알려드릴게요.` : null,
+    feedInterval: (v) => (v >= 1 && v <= 14) ? `🍽️ 밥은 ${v}일마다로 맞췄어요. 밥 주기·캘린더·브리핑이 이 간격을 따라요.` : null,
+    feedDays: (v) => v.length ? `🍽️ 밥은 ${feedDaysLabel(v)}요일마다로 맞췄어요.` : null,
+    babyNaming: (v) => v === 'ask' ? '🐣 해칭할 때마다 베이비 이름을 여쭤볼게요.' : '🐣 베이비 이름은 부모 이름 조합(예: 순한1호)으로 지을게요.',
+    call: (v) => `네, 이제 "${v}"이라고 부를게요 🙂`,
+    tone: (v) => ({ polite: '네, 정중한 말투로 할게요.', friendly: '좋아요, 이제 친근하게 말할게요 😊', short: '알겠습니다. 짧게 말씀드릴게요.' })[v],
+    breeder: (v) => `🏷️ 브리더 이름을 "${v}"로 적었어요. 공유 기록 한 장에 찍혀요.`,
+    theme: (v) => `🎨 ${themeOf(v).label} 테마로 바꿨어요.`,
+  };
+  const applySetting = (what, value) => {
+    const cur = DB.getSettings() || {};
+    const msg = SET_OK[what] && SET_OK[what](value);
+    if (!msg) { bot(what === 'incubate' ? `인큐 온도는 ${INCUBATE_MIN}~${INCUBATE_MAX}°C 사이로 알려주세요 🙂` : what === 'feedWarn' ? '3~30일 사이로 알려주세요 🙂' : what === 'feedInterval' ? '1~14일 사이로 알려주세요 🙂' : '요일을 하나 이상 알려주세요 🙂'); return; }
+    const patch = {
+      incubate: { incubateTemp: value, incubateTempAt: todayStr() }, feedWarn: { feedWarn: value },
+      feedInterval: { feedMode: 'gap', feedInterval: value }, feedDays: { feedMode: 'days', feedDays: value },
+      babyNaming: { babyNaming: value }, tone: { tone: value }, breeder: { breederName: value }, theme: { theme: value },
+      call: ({ 브리더님: { callName: 'breeder' }, 대표님: { callName: 'boss' }, 사장님: { callName: 'sajang' } })[value] || { callName: 'custom', callCustom: value },
+    }[what];
+    DB.saveSettings({ ...cur, ...patch });
+    if (what === 'theme') { try { applyTheme(value); } catch (e) {} }
+    missRef.current = 0;
+    bot(msg + '\n설정 화면에서도 같은 값으로 보여요.', [{ label: '⚙️ 설정 열기', kind: 'go', value: { name: 'settings' } }]);
+  };
+  const shareRun = async (op, g) => {
+    if (op === 'preview') { bot(`👀 ${g.name} 공유 화면을 열어 드릴게요. 받는 사람 화면 미리 보기도 거기 있어요.`, [{ label: '🔗 공유 화면 열기', kind: 'go', value: { name: 'profile', geckoId: g.id, openShare: true } }]); return; }
+    if (!PUB.ready()) {
+      bot(`공유 링크를 만들려면 먼저 서버 연결(로그인)이 필요해요 🔐\n설정 › 서버 연결에서 로그인하신 뒤 "${g.name} 공유해줘"라고 다시 말씀해 주세요.`, [{ label: '⚙️ 설정 열기', kind: 'go', value: { name: 'settings' } }]);
+      return;
+    }
+    const linkChips = (code) => [
+      { label: '📋 링크 복사', kind: 'copy', value: { text: publicUrl(code) } },
+      { label: '🔗 공유 화면 열기', kind: 'go', value: { name: 'profile', geckoId: g.id, openShare: true } },
+    ];
+    try {
+      if (op === 'off') {
+        if (!g.publicOn) { bot(`${eunneun(g.name)} 지금 공유하고 있지 않아요 🙂`); return; }
+        await PUB.remove(g.shareCode);
+        DB.updateIndividual(g.id, { publicOn: false, publicAt: '' });
+        refreshIndividuals();
+        bot(`🔒 ${g.name} 공유를 껐어요. 보내셨던 링크는 이제 안 열려요.`);
+        return;
+      }
+      if (op === 'rotate') {
+        const old = g.shareCode, code = newShareCode();
+        await PUB.put({ ...g, shareCode: code });
+        if (old && old !== code) { try { await PUB.remove(old); } catch (e) {} }
+        DB.updateIndividual(g.id, { shareCode: code, publicOn: true, publicAt: todayStr(), publicSig: publicSig({ ...g, shareCode: code }) });
+        refreshIndividuals();
+        bot(`🔄 ${g.name} 공유 주소를 새로 바꿨어요. 옛 링크는 이제 안 열려요.\n${publicUrl(code)}`, linkChips(code));
+        return;
+      }
+      if (g.publicOn && g.shareCode) {
+        bot(`🔗 ${g.name}는 이미 공유 중이에요. 이 링크를 보내시면 돼요.\n${publicUrl(g.shareCode)}`, linkChips(g.shareCode));
+        return;
+      }
+      const code = g.shareCode || newShareCode();
+      bot(`🔗 ${g.name} 공유 링크를 만드는 중이에요…`);
+      await PUB.put({ ...g, shareCode: code });
+      DB.updateIndividual(g.id, { shareCode: code, publicOn: true, publicAt: todayStr(), publicSig: publicSig({ ...g, shareCode: code }) });
+      refreshIndividuals();
+      bot(`✅ ${g.name} 공유 링크가 만들어졌어요. 분양가·가계부는 담기지 않아요.\n${publicUrl(code)}`, linkChips(code));
+    } catch (e) {
+      bot('⚠️ ' + ((e && e.message) || '공유하지 못했어요') + '\n잠시 뒤 다시 말씀해 주시거나, 프로필의 [기록 공유하기]를 눌러 주세요.',
+        [{ label: '🔗 공유 화면 열기', kind: 'go', value: { name: 'profile', geckoId: g.id, openShare: true } }]);
+    }
+  };
+  const runApp = (p) => {
+    missRef.current = 0;
+    if (p.kind === 'say') { bot(p.text); return; }
+    if (p.kind === 'set') { applySetting(p.what, p.value); return; }
+    if (p.kind === 'go') {
+      const [name, view] = p.name.split(':');
+      bot((p.text ? p.text + '\n' : '') + '아래 버튼을 누르시면 바로 열려요.', [{ label: p.label, kind: 'go', value: { name, view } }]);
+      return;
+    }
+    if (p.kind === 'export') {
+      if (p.what === 'backup') {
+        try {
+          const data = { individuals: DB.getIndividuals(), events: DB.getEvents(), reminders: DB.getReminders(), settings: DB.getSettings(), exportedAt: now() };
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+          a.download = `creg_backup_${todayStr()}.json`; a.click();
+          bot(`📦 백업 파일을 내려받았어요 (개체 ${data.individuals.length}마리 · 기록 ${data.events.length}건).\n복원은 설정 › 데이터 › 백업 복원에서 해요.`);
+        } catch (e) { bot('⚠️ 백업 파일을 만들지 못했어요. 설정 › 데이터에서 다시 해 주세요.', [{ label: '⚙️ 설정 열기', kind: 'go', value: { name: 'settings' } }]); }
+        return;
+      }
+      bot('📊 엑셀 파일을 만드는 중이에요…');
+      loadXLSX().then(XLSX => { XLSX.writeFile(buildWorkbook(XLSX), `크레건설_브리딩_${todayStr()}.xlsx`); bot('📊 엑셀 파일을 내려받았어요 (애기들 리스트 · 메이팅 · 해칭 · 분양 4시트).'); })
+        .catch(e => bot('⚠️ ' + ((e && e.message) || '엑셀 만들기 실패'), [{ label: '⚙️ 설정 열기', kind: 'go', value: { name: 'settings' } }]));
+      return;
+    }
+    if (p.kind === 'alerts') {
+      const until = addDaysISO(todayStr(), 14);
+      let list = allAlerts().filter(r => r.date >= todayStr() && r.date <= until);
+      if (p.who) list = list.filter(r => r.individualId === p.who.id);
+      const fp = (() => { try { return feedPlan(); } catch (e) { return null; } })();
+      const lines = list.slice(0, 12).map(r => `· ${fmtDateShort(r.date)} ${r.geckoName ? r.geckoName + ' · ' : ''}${r.message}`);
+      if (!p.who && fp && fp.nextDay) lines.unshift(`· ${fmtDateShort(fp.nextDay)} 🍽️ 밥 주는 날`);
+      bot(lines.length ? `📋 앞으로 2주 일정이에요${p.who ? ` (${p.who.name})` : ''}\n${lines.join('\n')}${list.length > 12 ? `\n외 ${list.length - 12}건` : ''}` : '앞으로 2주 안에는 알림이 없어요 🙂',
+        [{ label: '📋 브리핑 열기', kind: 'go', value: { name: 'reminders' } }]);
+      return;
+    }
+    if (p.kind === 'remind') {
+      if (p.date < todayStr()) { bot(`${fmtDate(p.date)}은 이미 지난 날이에요 🙂 앞날로 알려주세요.`); return; }
+      const rs = DB.getReminders();
+      rs.push({ id: uuid(), individualId: p.who ? p.who.id : null, geckoName: p.who ? p.who.name : '', type: 'custom', date: p.date, message: p.msg });
+      DB.saveReminders(rs);
+      bot(`🔔 ${fmtDate(p.date)} (${WEEKDAY_KO[new Date(p.date).getDay()]})${p.who ? ' ' + p.who.name : ''} · "${p.msg}" 알림을 걸어뒀어요.\n캘린더·브리핑에 보여요.`,
+        [{ label: '📅 캘린더 열기', kind: 'go', value: { name: 'calendar' } }]);
+      return;
+    }
+    if (p.kind === 'delLedger') {
+      /* 아직 저장 안 한(담아둔) 것이면 담은 데서 뺍니다 */
+      const pl = pendingRef.current.map((f, i) => ({ f, i })).filter(x => x.f.type === 'ledger' && Number(x.f.data && x.f.data.amount) === p.won);
+      if (pl.length) {
+        const k = pl[pl.length - 1].i;
+        updatePending(list => list.filter((_, i) => i !== k));
+        bot(`🧹 담아둔 ${wonText(p.won)} 지출을 뺐어요 (아직 저장 전이었어요).`);
+        return;
+      }
+      if (!p.list.length) { bot(`가계부에서 ${wonText(p.won)}짜리 항목을 못 찾았어요 🙂`, [{ label: '💰 가계부 열기', kind: 'go', value: { name: 'ledger' } }]); return; }
+      bot(`가계부에서 ${wonText(p.won)} 항목을 찾았어요. 어느 걸 지울까요?`, p.list.map(e => ({
+        label: `🗑️ ${fmtDateShort(e.date)} · ${e.data.category} ${wonText(e.data.amount)}`, kind: 'app-do', value: { op: 'del-ev', id: e.id } }))
+        .concat([{ label: '그만둘게요', kind: 'memo-skip' }]));
+      return;
+    }
+    const g = p.g;
+    if (p.kind === 'share') { shareRun(p.op, g); return; }
+    if (p.kind === 'flag') {
+      if (p.what === 'favorite') {
+        DB.updateIndividual(g.id, { favorite: p.on });
+        bot(p.on ? `⭐ ${g.name} 즐겨찾기에 넣었어요.` : `${g.name} 즐겨찾기를 뺐어요.`);
+      } else if (p.what === 'keep') {
+        const r = DB.setKeep(g.id, p.on);
+        bot(p.on ? `🔒 ${g.name} KEEP으로 표시했어요${r.status === 'own' && g.status !== 'own' ? ' (분양 목록에서도 내렸어요)' : ''}. 분양가능 목록에 안 올라가요.` : `${g.name} KEEP을 풀었어요.`);
+      } else {
+        DB.updateIndividual(g.id, p.on ? { cgOff: false, isFromCreGunseol: true } : { cgOff: true, isFromCreGunseol: false });
+        bot(p.on ? `🏷️ ${g.name}를 MY(우리 집에서 나온 아이)로 표시했어요.` : `${g.name} MY 표시를 뗐어요.`);
+      }
+      refreshIndividuals();
+      return;
+    }
+    if (p.kind === 'back') {
+      DB.updateIndividual(g.id, { status: 'own', goneDate: '', goneReason: '' });
+      refreshIndividuals();
+      bot(`🏠 ${g.name}를 다시 보유중 목록으로 돌려놨어요.`);
+      return;
+    }
+    if (p.kind === 'season') {
+      if (p.op === 'end') { recordSeasonCheck(g.id, 'ended'); bot(`🌙 ${g.name} 이번 산란 시즌을 닫아뒀어요. 산란 예정일 알림은 이제 안 떠요.\n다시 낳으면 저절로 열려요.`); }
+      else { const n = reopenSeason(g.id); bot(n ? `🌱 ${g.name} 산란 시즌을 다시 열었어요. 예정일 알림이 다시 떠요.` : `${eunneun(g.name)} 닫힌 시즌이 없어요 🙂`); }
+      refreshIndividuals();
+      return;
+    }
+    if (p.kind === 'avatar') {
+      const cur = pendingRef.current;
+      const pi = (() => { for (let i = cur.length - 1; i >= 0; i--) if (cur[i].type === 'photo' && cur[i].targetId === g.id) return i; return -1; })();
+      if (pi >= 0) {
+        updatePending(list => list.map((f, i) => i === pi ? { ...f, data: { ...f.data, makeAvatar: true } } : f));
+        bot(`⭐ 방금 사진을 ${g.name} 대표사진으로 할게요. 저장하면 바뀌어요.`, [{ label: '💾 이제 저장할래', kind: 'save' }]);
+        return;
+      }
+      const ph = DB.getEventsFor(g.id).filter(e => e.type === 'photo' && e.data && e.data.photo).sort((a, b) => (a.date < b.date ? 1 : -1));
+      if (!ph.length) { bot(`${eunneun(g.name)} 아직 사진이 없어요 📷\n아래 📷 버튼으로 사진을 보내시면서 "대표사진"이라고 말씀해 주세요.`); return; }
+      DB.updateIndividual(g.id, { avatarRef: ph[0].id, avatar: '' });
+      refreshIndividuals();
+      bot(`⭐ ${g.name} 대표사진을 가장 최근 사진(${fmtDate(ph[0].date)})으로 바꿨어요.\n다른 사진으로 하려면 프로필에서 사진을 눌러 [대표사진으로]를 고르세요.`,
+        [{ label: `🦎 ${g.name} 프로필 열기`, kind: 'go', value: { name: 'profile', geckoId: g.id } }]);
+      return;
+    }
+    if (p.kind === 'adopter') {
+      if (p.phone) {
+        const f = formatPhone(p.phone);
+        DB.updateIndividual(g.id, { adopterPhone: f });
+        bot(`📞 ${g.name} 입양자 연락처를 ${f}로 적었어요. 목록에서는 가운데 자리를 가려서 보여요.`);
+      } else {
+        DB.updateIndividual(g.id, { adopterName: p.name });
+        bot(`🤝 ${g.name} 입양자를 ${p.name}님으로 적었어요.`);
+      }
+      refreshIndividuals();
+      return;
+    }
+    if (p.kind === 'merge') {
+      const ca = DB.getEventsFor(p.a.id).length, cb = DB.getEventsFor(p.b.id).length;
+      bot(`${p.a.name}(기록 ${ca}건)와 ${p.b.name}(기록 ${cb}건)를 하나로 합칠까요?\n기록은 모두 남고, 고르신 이름으로 남아요. 되돌릴 수 없어요.`, [
+        { label: `🔗 ${p.a.name}로 합치기`, kind: 'app-do', value: { op: 'merge', keepId: p.a.id, dropId: p.b.id } },
+        { label: `🔗 ${p.b.name}로 합치기`, kind: 'app-do', value: { op: 'merge', keepId: p.b.id, dropId: p.a.id } },
+        { label: '그만둘게요', kind: 'memo-skip' },
+      ]);
+      return;
+    }
+    if (p.kind === 'moveHatch') {
+      const rows = clutchRows().filter(r => r.e.individualId === g.id);
+      const from = rows.filter(r => r.nth === p.from && r.hatches.length);
+      const to = rows.filter(r => r.nth === p.to);
+      if (from.length !== 1 || to.length !== 1) { bot(`${g.name}의 ${p.from}차·${p.to}차를 하나로 못 짚었어요 🥚\n산란기록 › 알 화면의 [다른 알둥지로]에서 옮기실 수 있어요.`); return; }
+      const h = from[0].hatches[from[0].hatches.length - 1];
+      if (!moveHatchTo(h.id, to[0].e.id)) { bot('⚠️ 옮기지 못했어요'); return; }
+      refreshIndividuals();
+      bot(`🐣 ${g.name} ${fmtDate(h.date)} 부화 기록을 ${p.from}차 → ${p.to}차(${fmtDate(to[0].e.date)} 산란)로 옮겼어요. 알별 기록도 함께 맞췄어요.`);
+      return;
+    }
+    if (p.kind === 'fixWeight') {
+      const old = p.ev.data && p.ev.data.weight;
+      DB.updateEvent(p.ev.id, { data: { ...(p.ev.data || {}), weight: String(p.to) } });
+      refreshIndividuals();
+      bot(`📏 ${g.name} ${fmtDate(p.ev.date)} 몸무게를 ${old}g → ${p.to}g으로 고쳤어요. 그래프도 따라 바뀌어요.`);
+      return;
+    }
+    if (p.kind === 'delEvent') {
+      const lbl = (EVENT_TYPES.find(x => x.key === p.type) || {}).label || '기록';
+      const pe = pendingRef.current.map((f, i) => ({ f, i })).filter(x => x.f.type === p.type && x.f.targetId === g.id);
+      if (pe.length) {
+        const k = pe[pe.length - 1].i;
+        updatePending(list => list.filter((_, i) => i !== k));
+        bot(`🧹 담아둔 ${g.name} ${lbl} 기록을 뺐어요 (아직 저장 전이었어요).`);
+        return;
+      }
+      if (!p.list.length) { bot(`${g.name}의 ${p.when ? fmtDate(p.when) + ' ' : ''}${lbl} 기록을 못 찾았어요 🙂`); return; }
+      bot(`${g.name}의 ${lbl} 기록이에요. 어느 걸 지울까요? (되돌릴 수 없어요)`, p.list.map(e => ({
+        label: `🗑️ ${fmtDateShort(e.date)} · ${String(formatEventDetail(e) || lbl).slice(0, 18)}`, kind: 'app-do', value: { op: 'del-ev', id: e.id } }))
+        .concat([{ label: '그만둘게요', kind: 'memo-skip' }]));
+      return;
+    }
+    if (p.kind === 'delInd') {
+      const n = DB.getEventsFor(g.id).length;
+      bot(`정말 ${g.name}를 지울까요? 이 아이 기록 ${n}건도 함께 지워지고 되돌릴 수 없어요.\n떠난 아이라면 지우지 말고 "무지개다리 건넜어"라고 남기시는 걸 권해요(혈통에 남아요).`, [
+        { label: `🗑️ ${g.name} 지우기`, kind: 'app-do', value: { op: 'del-ind', id: g.id } },
+        { label: '그만둘게요', kind: 'memo-skip' },
+      ]);
+    }
+  };
+  /* 지우기·합치기 — 버튼을 누르셨을 때만 */
+  const appDo = (v) => {
+    if (v.op === 'del-ev') {
+      const e = DB.getEvents().find(x => x.id === v.id);
+      if (!e) { bot('이미 지워졌어요 🙂'); return; }
+      DB.deleteEvent(v.id); refreshIndividuals();
+      bot(`🗑️ ${fmtDate(e.date)} ${(EVENT_TYPES.find(x => x.key === e.type) || { label: '가계부' }).label} 기록을 지웠어요.`);
+    } else if (v.op === 'del-saved') {
+      const evs = DB.getEvents(); let n = 0;
+      v.ids.forEach(id => { if (evs.some(e => e.id === id)) { DB.deleteEvent(id); n++; } });
+      refreshIndividuals();
+      bot(n ? `🗑️ 방금 저장한 기록 ${n}건을 지웠어요.` : '이미 지워졌어요 🙂');
+      lastSavedRef.current = [];
+    } else if (v.op === 'del-ind') {
+      const g = DB.getIndividuals().find(i => i.id === v.id);
+      if (!g) { bot('이미 지워졌어요 🙂'); return; }
+      DB.deleteIndividual(v.id); refreshIndividuals();
+      if (geckoRef.current && geckoRef.current.id === v.id) setTarget(null);
+      bot(`🗑️ ${g.name}를 지웠어요.`);
+    } else if (v.op === 'merge') {
+      const k = DB.getIndividuals().find(i => i.id === v.keepId), d = DB.getIndividuals().find(i => i.id === v.dropId);
+      if (!k || !d) { bot('이미 합쳐졌거나 없는 아이예요 🙂'); return; }
+      DB.mergeIndividuals(v.keepId, v.dropId, 'keep'); refreshIndividuals();
+      setTarget(DB.getIndividuals().find(i => i.id === v.keepId) || null);
+      bot(`🔗 ${d.name} → ${k.name} 하나로 합쳤어요. 기록은 모두 ${k.name}에게 옮겨졌어요.`);
+    }
+  };
+
   /* ── 담긴 기록의 주인 정정 ──
      대화 도중 다른 아이 얘기가 섞여도 그 기록만 옮길 수 있게 합니다. */
   const applyRetarget = (ind, scope) => {
@@ -7253,6 +7731,25 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       bot(`네, ${eunneun(PROFILE_LABEL[value.field])} ${profileText(value.field, value.from)} 그대로 둘게요 🙂`);
     } else if (kind === 'egg-fix' && value) {
       applyEggFix(value.layingId, value.fix, value.date);
+    } else if (kind === 'go' && value) {
+      const n = pendingRef.current.length;
+      if (n && !value.force) {
+        bot(`담아둔 기록 ${n}건이 아직 저장 전이에요. 어떻게 할까요?`, [
+          { label: '💾 저장하고 갈게요', kind: 'save' },
+          { label: '저장 안 하고 갈게요', kind: 'go', value: { ...value, force: true } },
+        ]);
+        return;
+      }
+      if (value.name === 'profile') {
+        const g = DB.getIndividuals().find(i => i.id === value.geckoId);
+        if (g) navigate('profile', { gecko: g, openShare: !!value.openShare });
+      } else if (value.name === 'home') navigate('home', { view: value.view || 'own' });
+      else navigate(value.name);
+    } else if (kind === 'copy' && value) {
+      try { navigator.clipboard && navigator.clipboard.writeText(value.text); showToast('링크를 복사했어요 📋'); }
+      catch (e) { showToast('복사하지 못했어요 — 링크를 길게 눌러 복사해 주세요'); }
+    } else if (kind === 'app-do' && value) {
+      appDo(value);
     } else if (kind === 'drop-baby' && value) {
       const n = EGG.dropBabies(value.ids);
       refreshIndividuals();
@@ -7296,7 +7793,9 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     }
 
     // 2) 저장 의도
-    if (/(저장|기록해\s*줘|끝|완료|됐어)/.test(text) && text.replace(/\s/g, '').length <= 8) {
+    /* v1.9.17 — "크범이 예약됐어"가 저장으로 새던 것: 이름이나 기록 낱말이 있으면 저장 말이 아닙니다 */
+    if (/(저장|기록해\s*줘|끝|완료|됐어)/.test(text) && text.replace(/\s/g, '').length <= 8
+        && !findNamesInText(text, DB.getIndividuals()).length && !/예약|분양|부화|해칭|탈피|산란|메이팅|시즌/.test(text)) {
       goConfirm();
       return;
     }
@@ -7313,7 +7812,18 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       }
       if (RE_UNDO.test(tt)) {
         const cur = pendingRef.current;
-        if (!cur.length) { bot('아직 담긴 기록이 없어요 🙂'); return; }
+        if (!cur.length) {
+          /* v1.9.17 — 저장한 뒤에 "방금 거 취소"라고 하시면, 방금 저장한 기록을 지울지 여쭙니다 */
+          const ids = lastSavedRef.current.filter(id => DB.getEvents().some(e => e.id === id));
+          if (ids.length) {
+            bot(`방금 저장한 기록 ${ids.length}건을 지울까요?`, [
+              { label: `🗑️ ${ids.length}건 지우기`, kind: 'app-do', value: { op: 'del-saved', ids } },
+              { label: '그대로 둘게요', kind: 'memo-skip' },
+            ]);
+            return;
+          }
+          bot('아직 담긴 기록이 없어요 🙂'); return;
+        }
         const last = cur[cur.length - 1];
         updatePending(p => p.slice(0, -1));
         bot(`"${factLabel(last)}" 지웠어요 🧹` + (cur.length > 1 ? `\n남은 건 ${cur.length - 1}건이에요.` : ''));
@@ -7339,6 +7849,16 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       }
       bot('네, 자동 이름으로 등록할게요 🙂 계속 말씀해주세요.');
       return;
+    }
+
+    /* 2.8) v1.9.17 화면 기능을 말로 — 공유·즐겨찾기·KEEP·MY·설정·알림·지우기·합치기 …
+       ★ 가계부(2.95)·새 이름 감지(3.5)보다 먼저 봅니다 — "인큐 온도 24도"가 새 개체로, "지출 지워줘"가 새 지출로 새지 않게. */
+    {
+      const inds0 = DB.getIndividuals();
+      const names0 = findNamesInText(text, inds0);
+      const t0 = names0[0] || geckoRef.current;
+      const ap = planAppChat(text, t0, names0);
+      if (ap) { if (names0[0]) setTarget(names0[0]); runApp(ap); return; }
     }
 
     // 2.9) 주인 정정 / 대상 전환 — "사진은 밤울2호야", "이건 크순이 거야", "이제 크순이 얘기할게"
@@ -7800,6 +8320,16 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
         bot(`${morphLine ? morphLine + '\n' : ''}${warm}\n\n계속 말씀하셔도 되고, 끝나면 저장을 눌러주세요.`, [
           { label: '💾 이제 저장할래', kind: 'save' },
         ]);
+      } else if (/싶어|싶은데|해\s*줘|해줘|해\s*주세요|할래|하고\s*싶|어떻게|방법|가능해|돼\?|되나|켜\s*줘|꺼\s*줘|바꿔\s*줘|만들어\s*줘/.test(text)) {
+        /* v1.9.17 — 뭔가 해 달라는 말을 못 알아들었을 때, 말없이 메모로 담지 않습니다
+           (제보: "크범이 공유하고 싶어"가 메모로 담김). 무엇을 할 수 있는지 보여드리고 메모는 고르시게. */
+        missBot(`죄송해요, "${text}"는 제가 아직 못 알아들었어요 🙏\n`
+          + `말로 할 수 있는 일 예) "${target.name} 공유해줘" · "즐겨찾기 해줘" · "KEEP 해줘" · "대표사진 바꿔줘" · `
+          + `"다음주 화요일 병원 알림 해줘" · "인큐 온도 24도로" · "밥 3일마다" · "설정 열어줘"\n메모로 남겨둘까요?`, [
+          { label: '📝 메모로 남기기', kind: 'memo-save', value: { text, date, targetId: target.id, targetName: target.name } },
+          { label: '괜찮아요', kind: 'memo-skip' },
+        ], target);
+        return;
       } else {
         // 기록으로 못 알아듣고 메모로 담은 경우 — '못 알아들음'으로 셉니다
         missBot(`${morphLine ? morphLine + '\n' : ''}${target.name} ${pickOpener()}\n· ${factLabel({ type: 'memo', data: { notes: text } })}\n\n계속 말씀하셔도 되고, 끝나면 저장을 눌러주세요.`, [
@@ -7930,6 +8460,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
   const doSave = () => {
     const list = pendingRef.current;
     if (!list.length) { setPhase('chat'); return; }
+    const beforeIds = new Set(DB.getEvents().map(e => e.id));   // v1.9.17 "방금 저장한 거 지워줘"용
     let reminderMsg = '';
     let babyMsg = '';
     list.forEach(f => {
@@ -7988,7 +8519,10 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
         });
         return;
       }
-      DB.addEvent({ individualId: f.targetId, type: f.type, date: fDate, data: f.data || {} });
+      /* v1.9.17 "이 사진 대표사진으로" — 사진 기록을 남긴 뒤 얼굴로 가리킵니다(표시용 칸은 기록에 남기지 않습니다) */
+      const { makeAvatar, ...fdata } = f.data || {};
+      const savedEv = DB.addEvent({ individualId: f.targetId, type: f.type, date: fDate, data: fdata });
+      if (makeAvatar && savedEv && f.type === 'photo') DB.updateIndividual(f.targetId, { avatarRef: savedEv.id, avatar: '' });
       // 산란에 겉보기 상태를 적었으면 알마다 같은 상태로 채워 둡니다 (나중에 알별로 고칠 수 있습니다)
       if (f.type === 'laying' && f.data && f.data.eggLook) {
         const lay = DB.getEvents().filter(e => e.individualId === f.targetId && e.type === 'laying' && e.date === fDate)
@@ -8059,6 +8593,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       }
     });
     refreshIndividuals();
+    lastSavedRef.current = DB.getEvents().filter(e => !beforeIds.has(e.id)).map(e => e.id);
     showToast(`✅ ${list.length}건 저장 완료!${reminderMsg}${babyMsg}${eggPhotoMsg}`);
     navigate('home');
   };
@@ -8390,12 +8925,12 @@ function ProfileEditSheet({ gecko, onClose, onSaved, onMerged, showToast }) {
   );
 }
 
-function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndividuals, individuals, openEdit }) {
+function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndividuals, individuals, openEdit, openShare }) {
   const [gecko, setGecko] = useState(() => DB.getIndividuals().find(i => i.id === initialGecko.id) || initialGecko);
   const [events, setEvents] = useState(() => DB.getEventsFor(initialGecko.id).filter(e => e.type !== 'ledger'));
   const [showShare, setShowShare] = useState(false);
   const [pubBusy, setPubBusy] = useState(false);       // 공개 기록 올리는 중
-  const [shareOpen, setShareOpen] = useState(false);   // v1.9.9 기록 공유하기 펼침
+  const [shareOpen, setShareOpen] = useState(!!openShare);   // v1.9.9 기록 공유하기 펼침 · v1.9.17 대화의 [공유 화면 열기]로 오면 펼친 채로
   const [pubPreview, setPubPreview] = useState(false); // v1.9.12 공유 한 장 미리 보기
   const [seasonAsk, setSeasonAsk] = useState(false);   // 산란 시즌 확인 열기
   const [confirmDelete, setConfirmDelete] = useState(false);
