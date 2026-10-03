@@ -164,3 +164,28 @@ test("source contracts: one place for egg state, visible warnings, merge offer",
   // 대화: 잇기·고치기는 여러 아이 담기보다 먼저
   assert.ok(src.indexOf("const bp = planBreedChat(text, target, names);") < src.indexOf("/* 3.1) 여러 아이에게 같은 기록"));
 });
+
+/* v1.9.16 — 제보 후속(2026-10-03): 알을 부화로 적었다가 되돌리면 그때 자동 등록된 아기(별산1호)가 남았습니다.
+   이제 알을 대기로 돌리면 남은 아기를 알려주고, 고르시면 지웁니다(말없이 지우지 않습니다). */
+test("undoing a hatch reports the auto-registered baby, and deletes it only when asked", async () => {
+  const { run, json } = await loadApp();
+  run(`DB.saveIndividuals([{ id: 'mom', name: '새별이', gender: 'female' }, { id: 'dad', name: '크산이', gender: 'male' }]);
+       DB.saveEvents([{ id: 'm', individualId: 'mom', type: 'mating', date: '2026-06-26', data: { partnerId: 'dad', partnerName: '크산이' } },
+                      { id: 'l', individualId: 'mom', type: 'laying', date: '2026-07-28', data: { eggCount: 2 } }]);`);
+  const h = json(`EGG.set('l', 0, 'hatched', { date: '2026-10-03', newBaby: true })`);
+  assert.equal(h.baby, "별산1호");
+  // 실제 제보 데이터 모양: 예전 '되돌리기'로 알만 대기, 부화 기록·아기는 남음
+  run(`DB.setEggUnits('l', [{ status: 'pending', date: '2026-10-03' }, { status: 'pending' }])`);
+  assert.deepEqual(stateOf(json, "l"), ["hatched", "pending"], "부화 기록이 남아 있으니 부화로 보입니다");
+  const r = json(`EGG.set('l', 0, 'pending')`);
+  assert.deepEqual(r.orphans.map(b => b.name), ["별산1호"], "남은 아기를 알려줍니다");
+  assert.equal(run(`DB.getEvents().filter(e => e.type === 'hatching').length`), 0, "부화 기록은 지워집니다");
+  assert.equal(run(`DB.getIndividuals().some(i => i.name === '별산1호')`), true, "아기는 고르기 전까지 그대로");
+  assert.deepEqual(json(`EGG.dropBabies(${JSON.stringify(r.orphans.map(b => b.id))})`), ["별산1호"]);
+  assert.equal(run(`DB.getIndividuals().some(i => i.name === '별산1호')`), false);
+  // 무정란 → 대기 같은 변경에는 묻지 않습니다
+  run(`EGG.set('l', 1, 'infertile')`);
+  assert.deepEqual(json(`EGG.set('l', 1, 'pending')`).orphans, []);
+  const src = await read("src/app.jsx");
+  assert.ok(src.includes('data-testid="orphan-ask"') && src.includes("kind: 'drop-baby'"), "화면·대화 모두 여쭙습니다");
+});
