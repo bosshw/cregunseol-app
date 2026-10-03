@@ -100,6 +100,7 @@ test("editing adoption source/price rewrites the memo the ledger reads, keeping 
 test("egg screen: tap a laying record in the profile, then 부화 per egg", async () => {
   const src = await read("src/app.jsx");
   assert.match(src, /navigate\('clutch', \{ layingId: ev\.id, back: \{ name: 'profile', props: \{ gecko \} \} \}\)/);
-  assert.match(src, /data-testid=\{'egg-hatch-' \+ i\}/);
+  // v1.9.15 — 알마다 [대기·부화·무정란·문제] 네 버튼으로 바뀌었고, 부화 버튼의 표식은 그대로 egg-hatch-N 입니다
+  assert.match(src, /k === 'hatched' \? 'egg-hatch-' \+ i/);
   assert.match(src, /const first = \(hatchEgg != null && units\[hatchEgg\] && units\[hatchEgg\]\.status === 'pending'\) \? hatchEgg : -1;/, "고른 알부터 부화로");
 });
