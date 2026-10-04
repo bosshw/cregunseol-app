@@ -495,7 +495,12 @@ const DEMO = {
   clear() { DEMO_KEYS.forEach(k => STORE.drop('cg_demo:' + k)); STORE.drop('cg_demo'); STORE.drop('cg_tut'); },
   // 다시 열기 — go 를 주면 그 화면으로 (예: 가져오기)
   reopen(go) { try { location.replace(location.pathname + (go ? '?go=' + go : '')); } catch (e) {} },
-  exit(go) { this.clear(); this.reopen(go); },
+  exit(go) {
+    this.clear();
+    // v1.9.21 연습을 끝냈는데 내 아이가 아직 없으면 '첫 등록'으로 이어 갑니다
+    try { if (!DB.getIndividuals().length) { STORE.set('cg_onb', '1'); go = ''; } } catch (e) {}
+    this.reopen(go);
+  },
   again() { loadWelcome().then(() => { if (this.start()) this.reopen(); }).catch(() => {}); },
 };
 
@@ -637,7 +642,7 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.20';
+const APP_VERSION = '1.9.21';
 const APP_PATCHED = '2026-09-28';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -2217,8 +2222,8 @@ function publicSnapshot(gecko, allInds, allEvs) {
     morph: String(gecko.morph || '').trim(),
     hatchDate: gecko.hatchDate || '',
     avatar: avatarSrc(gecko, evs) || '',
-    sire: nameOf(gecko.sireId),
-    dam: nameOf(gecko.damId),
+    sire: nameOf(gecko.sireId) || (gecko.adoptFrom && gecko.adoptFrom.sire ? gecko.adoptFrom.sire.name : ''),   // v1.9.21 입양으로 받은 아이는 받을 때 적힌 부모 이름
+    dam: nameOf(gecko.damId) || (gecko.adoptFrom && gecko.adoptFrom.dam ? gecko.adoptFrom.dam.name : ''),
     litter: sibs,
     fromUs: !!gecko.isFromCreGunseol,
     summary: publicSummary(mine, evs.filter(e => e.individualId === gecko.id).map(e => e.date)),
@@ -3784,6 +3789,21 @@ function planAppChat(text, target, names) {
   if (!target) return null;
   const g = DB.getIndividuals().find(i => i.id === target.id) || target;
 
+  /* v1.9.21 분양 카드 · 입양 보내기 · 시즌 노트 — 화면과 같은 기능을 대화로도(v1.9.17 원칙) */
+  if (/분양\s*카드|카드\s*(?:만들|뽑|이미지|로\s*만들)|분양\s*(?:이미지|홍보\s*사진)/.test(t)) return { kind: 'card', g };
+  if (/입양\s*(?:보내|링크|넘겨|보낼)|(?:새\s*주인|입양자|분양자)\s*(?:한테|에게|께)\s*(?:기록|넘겨|보내)|기록\s*(?:을\s*)?(?:넘겨|이어\s*받게)/.test(t)) return { kind: 'adoptSend', g };
+  if (/시즌\s*(?:노트|정리|결산|요약)|이번\s*시즌\s*(?:어땠|정리)/.test(t) && !/닫|끝났|열어/.test(t)) return { kind: 'note', g, year: (t.match(/(20\d\d)/) || [])[1] || '' };
+  if (/다음\s*시즌|내년\s*(?:시즌|에는|엔)/.test(t)) {
+    const dir = /쉬|휴식|휴지/.test(t) ? 'rest' : /은퇴/.test(t) ? 'retire' : /바꿔|바꿀|다른\s*(?:수컷|암컷|짝)|교체/.test(t) ? 'change' : /같은\s*짝|계속|그대로|또\s*붙/.test(t) ? 'keep' : '';
+    if (dir) return { kind: 'noteDir', g, dir };
+  }
+  {
+    const TR = [[/색\s*(?:이|은|감)?\s*(?:진하|진해|짙|찐하|찐해)/, '색 진함'], [/패턴\s*(?:이|은)?\s*(?:좋|예쁘|이쁘|예뻐|이뻐)/, '패턴 좋음'],
+      [/크레스트\s*(?:가|는)?\s*(?:풍성|좋|진하|많|빵빵)/, '크레스트 풍성'], [/체형\s*(?:이|은)?\s*(?:좋|예쁘|이쁘|예뻐)/, '체형 좋음'],
+      [/(?:성장|크는\s*(?:게|속도))\s*(?:이|가)?\s*(?:빠르|빨라|빠름|빠른)/, '성장 빠름'], [/(?:성장|크는\s*(?:게|속도))\s*(?:이|가)?\s*(?:느리|느려|느림|더뎌|더디)/, '성장 느림']];
+    const hit = TR.find(([re]) => re.test(t));
+    if (hit && !/\d+\s*(?:g|그램|cm)/i.test(t)) return { kind: 'trait', g, tag: hit[1], on: !(RE_OFF.test(t) || /아니|아냐|빼|지워/.test(t)) };
+  }
   // 공유 — "크범이 공유하고 싶어" · "공유 링크 줘" · "공유 꺼줘" · "새 주소로"
   if (/공유|링크|기록\s*(?:한\s*장|보내)|분양\s*(?:카드|페이지)/.test(t) && !/가계부/.test(t)) {
     if (/새\s*주소|주소\s*(?:바꿔|새로)|링크\s*(?:바꿔|새로)|새\s*링크/.test(t)) return { kind: 'share', op: 'rotate', g };
@@ -4823,6 +4843,16 @@ function App() {
   /* 화면 이동 기록 — 안드로이드 뒤로가기(◁)로 앱이 꺼지지 않고 이전 화면으로 가게 합니다.
      화면을 옮길 때마다 브라우저 방문기록에 한 칸을 쌓고, 뒤로가기가 오면 한 칸 되돌립니다.
      홈에서 한 번 더 누르면 그때는 정상적으로 앱이 닫힙니다. */
+  /* v1.9.21 처음 시작(내 아이 1마리 등록) — cg_onb 가 숫자면 진행 중 */
+  const onbNow = () => { try { return /^\d+$/.test(localStorage.getItem('cg_onb') || ''); } catch (e) { return false; } };
+  const [onb, setOnb] = useState(onbNow);
+  useEffect(() => {
+    const f = () => setOnb(onbNow());
+    window.addEventListener('cg-onb', f);
+    return () => window.removeEventListener('cg-onb', f);
+  }, []);
+  /* v1.9.21 입양 링크로 들어온 분 — 받기 화면을 맨 앞에 */
+  const [adoptCode, setAdoptCode] = useState(() => { try { return new URLSearchParams(location.search).get('adopt') || ''; } catch (e) { return ''; } });
   const stackRef = useRef([{ name: 'home', props: {} }]);
   const navigate = (name, props = {}) => {
     stackRef.current.push({ name, props });
@@ -4881,6 +4911,10 @@ function App() {
         </div>
       ) : null}
       {DEMO.on() && <Welcome part="Tutorial" />}
+      {adoptCode && !DEMO.on() && <Extra part="AdoptReceive" code={adoptCode} navigate={navigate} refreshIndividuals={refreshIndividuals}
+        onDone={() => { setAdoptCode(''); if (!DB.getIndividuals().length) { STORE.set('cg_onb', '0'); setOnb(true); } }} />}
+      {onb && !adoptCode && !DEMO.on() && <Welcome part="Onboard" navigate={navigate} refreshIndividuals={refreshIndividuals}
+        onClose={() => { setOnb(false); refreshIndividuals(); }} />}
       {screen.name === 'home' && needsOpenHint() && <Welcome part="OpenHint" />}
       {needsOpenHint() && <Welcome part="InstallGate" />}
 
@@ -4970,6 +5004,43 @@ try {
 
 /* 안내 화면 두 개는 welcome.min.js 에 따로 있습니다(첫 화면 크기 한도 때문).
    필요한 사람에게만 불러옵니다 — 설치 전 폰, 또는 예시로 구경하는 중. */
+/* v1.9.21 실험 기능(분양 카드 · 입양 보내기) — 대표님 폰에서만 먼저 켭니다.
+   주소에 ?labs=1 을 붙여 한 번 열면 이 기기에서 켜지고, ?labs=0 이면 꺼집니다.
+   ★ 입양 '받기'는 누구나 됩니다(받는 분은 일반 사용자이므로). 켜고 끄는 건 '보내기'와 '카드'뿐입니다. */
+const LABS = {
+  on() { try { return localStorage.getItem('cg_labs') === '1'; } catch (e) { return false; } },
+  boot() {
+    try {
+      const v = new URLSearchParams(location.search).get('labs');
+      if (v === '1') STORE.set('cg_labs', '1');
+      if (v === '0') STORE.drop('cg_labs');
+    } catch (e) {}
+  },
+};
+LABS.boot();
+function loadScriptOnce(src, key) {
+  if (window[key]) return Promise.resolve(window[key]);
+  loadScriptOnce.p = loadScriptOnce.p || {};
+  if (loadScriptOnce.p[src]) return loadScriptOnce.p[src];
+  loadScriptOnce.p[src] = new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = () => (window[key] ? res(window[key]) : rej(new Error(key)));
+    s.onerror = () => { loadScriptOnce.p[src] = null; rej(new Error(key)); };
+    document.head.appendChild(s);
+  });
+  return loadScriptOnce.p[src];
+}
+/* v1.9.21 시즌 노트 · 분양 카드 · 입양 화면은 extras.min.js 에 따로 있습니다(첫 화면 크기 한도) */
+const loadExtras = () => loadScriptOnce('./extras.min.js', 'CREG_EXTRAS');
+function Extra({ part, ...props }) {
+  const [mod, setMod] = useState(() => window.CREG_EXTRAS || null);
+  useEffect(() => { if (!mod) loadExtras().then(setMod).catch(() => {}); }, []);
+  const C = mod && mod[part];
+  return C ? <C {...props} /> : null;
+}
+/* 브리딩 기록(산란·메이팅·자식)이 있는 아이인지 — 시즌 노트 버튼을 보일지 */
+const hasBreeding = (g) => !!g && DB.getEvents().some(e => (e.type === 'laying' && e.individualId === g.id) || (e.type === 'mating' && (e.individualId === g.id || (e.data && e.data.partnerId === g.id))));
 function loadWelcome() {
   if (window.CREG_WELCOME) return Promise.resolve(window.CREG_WELCOME);
   if (loadWelcome.p) return loadWelcome.p;
@@ -5131,6 +5202,12 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
               <div className="empty">
                 <div className="empty-icon">{favOnly ? '⭐' : <DotGecko size={46} />}</div>
                 <p>{favOnly ? '즐겨찾기한 아이가 없어요.\n개체 카드의 ☆ 를 눌러 즐겨찾기에 추가해보세요.' : (individuals.length === 0 ? '아직 등록된 개체가 없어요.\n아래 💬 대화 버튼을 누르고 말씀해보세요.\n예) "크한이 12그램"' : '검색 결과가 없어요.')}</p>
+                {!favOnly && individuals.length === 0 && !DEMO.on() && (
+                  <button className="btn btn-primary" data-testid="home-first" style={{maxWidth:280, marginBottom:8}}
+                    onClick={() => { STORE.set('cg_onb', '1'); try { window.dispatchEvent(new Event('cg-onb')); } catch (e) {} }}>
+                    🦎 우리 아이 첫 등록하기
+                  </button>
+                )}
                 {!favOnly && individuals.length === 0 && (
                   <button className="btn btn-secondary" data-testid="home-import" style={{maxWidth:280}} onClick={() => navigate('import')}>
                     📥 쓰던 엑셀이 있으면 한 번에 가져오기
@@ -7495,6 +7572,11 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     }
     const g = p.g;
     if (p.kind === 'share') { shareRun(p.op, g); return; }
+    // v1.9.21 분양 카드 · 입양 보내기 · 시즌 노트 · 자식 특징 — extras.min.js 의 같은 함수로
+    if (['card', 'adoptSend', 'note', 'noteDir', 'trait'].indexOf(p.kind) >= 0) {
+      loadExtras().then(X => X.chat(p, { bot, refreshIndividuals })).catch(() => missBot('잠깐 연결이 안 됐어요. 한 번 더 말씀해 주세요 🙂'));
+      return;
+    }
     if (p.kind === 'flag') {
       if (p.what === 'favorite') {
         DB.updateIndividual(g.id, { favorite: p.on });
@@ -7516,7 +7598,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       return;
     }
     if (p.kind === 'season') {
-      if (p.op === 'end') { recordSeasonCheck(g.id, 'ended'); bot(`🌙 ${g.name} 이번 산란 시즌을 닫아뒀어요. 산란 예정일 알림은 이제 안 떠요.\n다시 낳으면 저절로 열려요.`); }
+      if (p.op === 'end') { recordSeasonCheck(g.id, 'ended'); bot(`🌙 ${g.name} 이번 산란 시즌을 닫아뒀어요. 산란 예정일 알림은 이제 안 떠요.\n다시 낳으면 저절로 열려요.\n시즌 노트도 정리해 둘까요?`, [{ label: '📒 시즌 노트 정리하기', kind: 'go', value: { name: 'profile', geckoId: g.id, openNote: true } }]); }
       else { const n = reopenSeason(g.id); bot(n ? `🌱 ${g.name} 산란 시즌을 다시 열었어요. 예정일 알림이 다시 떠요.` : `${eunneun(g.name)} 닫힌 시즌이 없어요 🙂`); }
       refreshIndividuals();
       return;
@@ -7829,7 +7911,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       }
       if (value.name === 'profile') {
         const g = DB.getIndividuals().find(i => i.id === value.geckoId);
-        if (g) navigate('profile', { gecko: g, openShare: !!value.openShare });
+        if (g) navigate('profile', { gecko: g, openShare: !!value.openShare, openNote: !!value.openNote, noteYear: value.noteYear || '', openCard: !!value.openCard, openAdopt: !!value.openAdopt });
       } else if (value.name === 'home') navigate('home', { view: value.view || 'own' });
       else navigate(value.name);
     } else if (kind === 'copy' && value) {
@@ -9058,7 +9140,7 @@ function ProfileEditSheet({ gecko, onClose, onSaved, onMerged, showToast }) {
   );
 }
 
-function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndividuals, individuals, openEdit, openShare }) {
+function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndividuals, individuals, openEdit, openShare, openNote, noteYear, openCard, openAdopt }) {
   const [gecko, setGecko] = useState(() => DB.getIndividuals().find(i => i.id === initialGecko.id) || initialGecko);
   const [events, setEvents] = useState(() => DB.getEventsFor(initialGecko.id).filter(e => e.type !== 'ledger'));
   const [showShare, setShowShare] = useState(false);
@@ -9066,6 +9148,9 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
   const [shareOpen, setShareOpen] = useState(!!openShare);   // v1.9.9 기록 공유하기 펼침 · v1.9.17 대화의 [공유 화면 열기]로 오면 펼친 채로
   const [pubPreview, setPubPreview] = useState(false); // v1.9.12 공유 한 장 미리 보기
   const [seasonAsk, setSeasonAsk] = useState(false);   // 산란 시즌 확인 열기
+  const [noteOpen, setNoteOpen] = useState(!!openNote);   // v1.9.21 시즌 노트
+  const [cardOpen, setCardOpen] = useState(!!openCard && LABS.on());   // v1.9.21 분양 카드(실험)
+  const [adoptOpen, setAdoptOpen] = useState(!!openAdopt && LABS.on()); // v1.9.21 입양 보내기(실험)
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [editVals, setEditVals] = useState({});
@@ -9276,6 +9361,13 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
                   {fmtDate(gecko.hatchDate)} 출생 ({age}일)
                 </div>
               )}
+              {/* v1.9.21 입양으로 받은 아이 — 어디서 왔는지 */}
+              {gecko.adoptFrom && (
+                <div style={{fontSize:12, color:'var(--accent2)', marginTop:3, lineHeight:1.5}} data-testid="adopt-from">
+                  🎁 {gecko.adoptFrom.breeder ? gecko.adoptFrom.breeder + '에서 ' : ''}입양{gecko.adoptFrom.at ? ` (${fmtDateShort(gecko.adoptFrom.at)})` : ''}
+                  {gecko.adoptFrom.parents ? <span style={{color:'var(--text3)'}}> · {gecko.adoptFrom.parents}</span> : null}
+                </div>
+              )}
             </div>
           </div>
 
@@ -9341,6 +9433,7 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
                       showToast(r.ends ? '🌙 시즌을 닫아뒀어요. 예정일은 이제 안 뜹니다'
                         : r.issue ? `⚠️ ${r.issue}로 이상 기록도 함께 남겼어요`
                         : '알겠어요. 며칠 뒤에 다시 여쭤볼게요');
+                      if (r.ends) setNoteOpen(true);   // v1.9.21 시즌을 닫으면 노트 정리로 이어 갑니다
                     }}>
                     {r.emoji} {r.label}
                   </button>
@@ -9480,6 +9573,26 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
           💬 {gecko.name} 기록하기
         </button>
       </div>
+
+      {/* v1.9.21 시즌 노트 — 브리딩 기록이 있는 아이만 */}
+      {hasBreeding(gecko) && (
+        <div style={{padding:'0 16px 10px'}}>
+          <button className="btn btn-secondary" data-testid="season-note-open" onClick={() => setNoteOpen(true)}>📒 시즌 노트</button>
+        </div>
+      )}
+      {LABS.on() && !gecko.isExternal && (
+        <div style={{padding:'0 16px 10px', display:'flex', gap:6}}>
+          <button className="btn btn-secondary" style={{flex:1}} data-testid="card-open" onClick={() => setCardOpen(true)}>🖼 분양 카드</button>
+          <button className="btn btn-secondary" style={{flex:1}} data-testid="adopt-open" onClick={() => setAdoptOpen(true)}>🎁 입양 보내기</button>
+        </div>
+      )}
+      {adoptOpen && <Extra part="AdoptSendSheet" gecko={gecko} showToast={showToast} navigate={navigate} onClose={() => setAdoptOpen(false)}
+        refresh={() => { refreshIndividuals(); refreshLocal(); }} />}
+      {cardOpen && <Extra part="SaleCardSheet" gecko={gecko} showToast={showToast} onClose={() => setCardOpen(false)}
+        onMakeShare={() => { togglePublic(); }} />}
+      {noteOpen && <Extra part="SeasonNoteSheet" gecko={gecko} year={noteYear} navigate={navigate} showToast={showToast}
+        refreshIndividuals={() => { refreshIndividuals(); setGecko(DB.getIndividuals().find(i => i.id === gecko.id) || gecko); }}
+        onClose={() => setNoteOpen(false)} />}
 
       {/* ── 기록 공유하기 (v1.9.9) ──
           위아래 버튼과 같은 모양의 버튼 하나. 누르면 링크를 만들고(처음이면) 바로 아래에 펼칩니다.
@@ -11626,7 +11739,9 @@ applyTheme(currentThemeKey());
 const bootRender = () => ReactDOM.createRoot(document.getElementById('root')).render(<App />);
 let firstVisit = false;
 try { firstVisit = DEMO.fresh(); } catch (e) {}
-if (firstVisit) loadWelcome().then(() => { try { DEMO.start(); } catch (e) {} }, () => {}).then(bootRender);
+/* v1.9.21 — 처음 온 기기는 예시 대신 '내 아이 1마리 등록'으로 시작합니다. 입양 링크로 온 분은 받기 화면이 먼저입니다 */
+const adoptLink = (() => { try { return new URLSearchParams(location.search).get('adopt') || ''; } catch (e) { return ''; } })();
+if (firstVisit && !adoptLink) { STORE.set('cg_onb', '0'); STORE.set('cg_demo_seen', '1'); loadWelcome().then(bootRender, bootRender); }
 else bootRender();
 
 if ('serviceWorker' in navigator) {

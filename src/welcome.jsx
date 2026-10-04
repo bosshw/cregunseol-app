@@ -267,6 +267,193 @@ function Tutorial() {
 }
 
 /* ══════════════════════════════════════════
+   v1.9.21 처음 시작 — 예시 대신 "내 아이 1마리"를 진짜로 등록합니다 (대표님 2026-10-04)
+   예전 튜토리얼은 예시(하늘이·루나)로 연습만 하고 끝나면 다 지워져서, 끝까지 해도 실제 기록이 0건이었습니다.
+   · 한 화면에 할 일 하나, 큰 버튼 하나. 모든 단계에 작은 [건너뛰기]
+   · 이름 → 성별 → 모프 → 해칭일 → 사진(선택) → 등록 → 첫 밥 기록 → 대화 소개
+   · [아직 아이가 없어요 — 구경만] → 예시 아이들 둘러보기(연습 모드)
+   · 진행 칸: cg_onb = '0'(처음)… 숫자 / 'done' / 'skip'.  쓰다 만 내용은 cg_onb_draft
+   ══════════════════════════════════════════ */
+(function injectOnbCss() {   // 첫 등록 화면 모양 — 첫 화면 크기 한도 때문에 index.html 이 아니라 여기서 넣습니다
+  try {
+    if (document.getElementById('cg-onb-css')) return;
+    const st = document.createElement('style');
+    st.id = 'cg-onb-css';
+    st.textContent = `.onb { position: fixed; inset: 0; z-index: 1000; background: var(--bg); display: flex; align-items: flex-start; justify-content: center; overflow-y: auto; padding: calc(28px + var(--safe-top)) 18px calc(24px + var(--safe-bottom)); } .onb-card { position: relative; width: 100%; max-width: 420px; display: flex; flex-direction: column; align-items: stretch; text-align: center; padding-top: 18px; } .onb-card h2 { font-size: 23px; line-height: 1.38; margin: 18px 0 8px; color: var(--text); word-break: keep-all; } .onb-card p { font-size: 14.5px; line-height: 1.6; color: var(--text2); margin: 0 0 14px; word-break: keep-all; } .onb-hero { align-self: center; margin-top: 18px; } .onb-bar { height: 5px; border-radius: 3px; background: var(--border); overflow: hidden; margin: 0 34px 0 44px; } .onb-bar i { display: block; height: 100%; background: var(--accent); border-radius: 3px; transition: width .25s; } .onb-back { position: absolute; left: -4px; top: 2px; background: none; border: none; font-size: 30px; line-height: 1; color: var(--text3); cursor: pointer; padding: 0 8px; } .onb-input { width: 100%; font-size: 19px; padding: 14px 16px; border-radius: 14px; border: 1.5px solid var(--border); background: var(--card); color: var(--text); margin: 8px 0 4px; text-align: center; } .onb-input:focus { outline: none; border-color: var(--accent); } .onb-err { color: var(--accent2); font-size: 13px; margin: 4px 0; } .onb-main { margin-top: 18px; background: var(--accent); color: var(--on-accent); border: none; border-radius: 16px; padding: 16px; font-size: 17px; font-weight: 800; cursor: pointer; } .onb-main:disabled { opacity: .55; } .onb-sub { margin-top: 12px; background: none; border: none; color: var(--text2); font-size: 14px; text-decoration: underline; cursor: pointer; padding: 6px; } .onb-sub.strong { color: var(--accent2); font-weight: 700; } .onb-skip { margin-top: 26px; align-self: center; background: none; border: none; color: var(--text3); font-size: 12.5px; text-decoration: underline; cursor: pointer; padding: 6px 10px; } .onb-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; } .onb-grid.two { grid-template-columns: repeat(2, 1fr); } .onb-opt { background: var(--card); border: 1.5px solid var(--border); border-radius: 14px; padding: 15px 6px; font-size: 15px; font-weight: 700; color: var(--text); cursor: pointer; word-break: keep-all; } .onb-opt.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent2); } .onb-or { font-size: 12.5px; color: var(--text3); margin-top: 14px; } .onb-done { font-size: 48px; margin-top: 18px; } .onb-say { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 12px; font-size: 15px; line-height: 1.8; color: var(--accent2); font-weight: 700; } .onb-warn { font-size: 12.5px !important; color: var(--accent2) !important; background: var(--accent-soft); border-radius: 10px; padding: 8px 10px; margin-top: 12px !important; text-align: left; } .onb-link { background: none; border: none; color: var(--accent2); text-decoration: underline; font-weight: 700; padding: 0; cursor: pointer; font-size: inherit; }`;
+    document.head.appendChild(st);
+  } catch (e) {}
+})();
+const ONB_MORPHS = ['노말', '할리퀸', '핀스트라이프', '달마시안', '릴리화이트', '트라이컬러'];
+const ONB_FOODS = ['슈푸', '충식', '기타'];
+const onbGet = () => { try { return localStorage.getItem('cg_onb') || ''; } catch (e) { return ''; } };
+const onbSet = (v) => { try { STORE.set('cg_onb', String(v)); } catch (e) {} };
+const onbDraft = () => { try { return JSON.parse(localStorage.getItem('cg_onb_draft') || '{}') || {}; } catch (e) { return {}; } };
+const onbKeep = (d) => { try { STORE.set('cg_onb_draft', JSON.stringify(d)); } catch (e) {} };
+const onbStep = (k) => { try { TRACK.step('onb_' + k); } catch (e) {} };
+const ageToDate = (k) => addDaysISO(todayStr(), k === 'baby' ? -120 : k === 'young' ? -540 : -900);
+
+function Onboard({ onClose, navigate, refreshIndividuals }) {
+  const [n, setN] = useState(() => { const v = parseInt(onbGet(), 10); return v >= 0 ? v : 0; });
+  const [d, setD] = useState(onbDraft);
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+  const fileRef = useRef(null);
+  useEffect(() => { onbStep(n === 0 ? 'start' : 'step' + n); }, [n]);
+  const go = (k) => { setErr(''); onbSet(k); setN(k); };
+  const put = (o) => { const x = { ...d, ...o }; setD(x); onbKeep(x); };
+  const finish = (how) => {
+    onbSet(how); try { localStorage.removeItem('cg_onb_draft'); } catch (e) {}
+    onbStep(how); onClose && onClose(how);
+  };
+  const skip = () => finish(d.savedId ? 'done' : 'skip');
+  const browse = () => { onbStep('browse'); try { localStorage.removeItem('cg_onb_draft'); } catch (e) {} onbSet('skip'); if (DEMO.start()) { STORE.set('cg_tut', 'done'); DEMO.reopen(); } };
+  const name = String(d.name || '').trim();
+
+  const register = (photo) => {
+    if (d.savedId) { go(6); return; }
+    setBusy(true);
+    try {
+      const saved = DB.addIndividual({
+        name, gender: d.gender || 'unknown', morph: d.morph || '', hatchDate: d.hatch || '',
+        isFromCreGunseol: false, isExternal: false, sireId: null, damId: null, status: 'own',
+        shareCode: newShareCode(),
+      });
+      if (photo) DB.addEvent({ individualId: saved.id, type: 'photo', date: todayStr(), data: { photo } });
+      put({ savedId: saved.id });
+      refreshIndividuals && refreshIndividuals();
+      onbStep('registered');
+      go(6);
+    } catch (e) { setErr('저장하지 못했어요. 한 번 더 눌러 주세요.'); }
+    setBusy(false);
+  };
+  const feed = (food) => {
+    try {
+      if (food) DB.addEvent({ individualId: d.savedId, type: 'feeding', date: todayStr(), data: { foodType: food, notes: '' } });
+      onbStep(food ? 'fed' : 'notfed');
+      refreshIndividuals && refreshIndividuals();
+    } catch (e) {}
+    put({ fed: food || 'no' });
+    go(8);
+  };
+  const nextName = () => {
+    if (!name) { setErr('이름을 적어 주세요'); return; }
+    if (isBadName(name)) { setErr('예쁜 이름으로 다시 적어 주세요 🙂'); return; }
+    if (name.length > 20) { setErr('이름은 20자까지 적을 수 있어요'); return; }
+    if (DB.getIndividuals().some(i => i.name === name)) { setErr('이미 같은 이름의 아이가 있어요'); return; }
+    onbStep('named'); go(2);
+  };
+
+  const Btn = ({ on, k, children, ...p }) => <button className={'onb-opt' + (on ? ' on' : '')} data-testid={k} {...p}>{children}</button>;
+  let body = null;
+  if (n === 0) body = (
+    <>
+      <img className="onb-hero" src="./assets/brand/gecko-transparent.webp" alt="" width="120" height="120" />
+      <h2>우리 아이 한 마리부터<br />등록해 볼까요?</h2>
+      <p>이름만 알려주시면 돼요. 30초면 끝나요.</p>
+      {INAPP && <p className="onb-warn">지금 {INAPP} 안에서 열려 있어요. 여기서 적은 건 {TRACK.device() === 'ios' ? '사파리' : '크롬'}에서 안 보이니, 밖으로 열어서 하시는 게 좋아요. <button className="onb-link" onClick={openOutside}>{TRACK.device() === 'ios' ? '사파리로' : '크롬으로'} 열기</button></p>}
+      <button className="onb-main" onClick={() => go(1)} data-testid="onb-start">시작하기</button>
+      <button className="onb-sub" onClick={browse} data-testid="onb-browse">아직 아이가 없어요 — 구경만 할게요</button>
+    </>
+  );
+  else if (n === 1) body = (
+    <>
+      <h2>아이 이름이 뭐예요?</h2>
+      <input className="onb-input" autoFocus maxLength={20} placeholder="예: 크범이" value={d.name || ''} data-testid="onb-name"
+        onChange={e => { setErr(''); put({ name: e.target.value }); }} onKeyDown={e => { if (e.key === 'Enter') nextName(); }} />
+      {err && <div className="onb-err">{err}</div>}
+      <button className="onb-main" onClick={nextName} data-testid="onb-next">다음</button>
+      <button className="onb-sub" onClick={() => navigate && (finish('skip'), navigate('import'))}>마리가 많으면 — 엑셀로 한 번에 가져오기</button>
+    </>
+  );
+  else if (n === 2) body = (
+    <>
+      <h2>{eunneun(name)} 암컷인가요, 수컷인가요?</h2>
+      <div className="onb-grid">
+        <Btn k="onb-female" on={d.gender === 'female'} onClick={() => { put({ gender: 'female' }); go(3); }}>♀ 암컷</Btn>
+        <Btn k="onb-male" on={d.gender === 'male'} onClick={() => { put({ gender: 'male' }); go(3); }}>♂ 수컷</Btn>
+        <Btn k="onb-unknown" on={d.gender === 'unknown'} onClick={() => { put({ gender: 'unknown' }); go(3); }}>아직 몰라요</Btn>
+      </div>
+    </>
+  );
+  else if (n === 3) body = (
+    <>
+      <h2>모프는 뭐예요?</h2>
+      <div className="onb-grid">
+        {ONB_MORPHS.map(m => <Btn key={m} k={'onb-morph-' + m} on={d.morph === m} onClick={() => { put({ morph: m }); go(4); }}>{m}</Btn>)}
+      </div>
+      <input className="onb-input" placeholder="직접 적기" value={ONB_MORPHS.indexOf(d.morph) >= 0 ? '' : (d.morph || '')} data-testid="onb-morph"
+        onChange={e => put({ morph: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') go(4); }} />
+      <button className="onb-main" onClick={() => go(4)} data-testid="onb-next">{d.morph ? '다음' : '잘 몰라요'}</button>
+    </>
+  );
+  else if (n === 4) body = (
+    <>
+      <h2>언제 태어났어요?</h2>
+      <input className="onb-input" type="date" max={todayStr()} value={d.hatch || ''} data-testid="onb-hatch" onChange={e => put({ hatch: e.target.value })} />
+      <div className="onb-or">날짜를 모르면 대략으로</div>
+      <div className="onb-grid">
+        <Btn k="onb-age-baby" onClick={() => { put({ hatch: ageToDate('baby') }); go(5); }}>1살 미만</Btn>
+        <Btn k="onb-age-young" onClick={() => { put({ hatch: ageToDate('young') }); go(5); }}>1~2살</Btn>
+        <Btn k="onb-age-adult" onClick={() => { put({ hatch: ageToDate('adult') }); go(5); }}>2살 이상</Btn>
+      </div>
+      <button className="onb-main" onClick={() => go(5)} data-testid="onb-next">{d.hatch ? '다음' : '몰라요'}</button>
+    </>
+  );
+  else if (n === 5) body = (
+    <>
+      <h2>{name} 사진도 한 장 넣을까요?</h2>
+      <p>홈 목록과 공유할 때 대표 사진이 돼요. 나중에 넣어도 돼요.</p>
+      <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} data-testid="onb-file"
+        onChange={e => { const f = e.target.files && e.target.files[0]; if (!f) return; setBusy(true); takePhoto(f, (src) => { setBusy(false); register(src); }); }} />
+      {err && <div className="onb-err">{err}</div>}
+      <button className="onb-main" disabled={busy} onClick={() => fileRef.current && fileRef.current.click()} data-testid="onb-photo">📷 사진 고르기</button>
+      <button className="onb-sub strong" disabled={busy} onClick={() => register(null)} data-testid="onb-nophoto">나중에 넣을게요 — 등록하기</button>
+    </>
+  );
+  else if (n === 6) body = (
+    <>
+      <div className="onb-done">🎉</div>
+      <h2>{name}, 우리 식구가 됐어요!</h2>
+      <p>이제 첫 기록을 남겨 볼게요.<br /><b>오늘 {name} 밥 줬나요?</b></p>
+      <div className="onb-grid two">
+        <Btn k="onb-fed" onClick={() => go(7)}>🍽 줬어요</Btn>
+        <Btn k="onb-notfed" onClick={() => feed(null)}>아직이요</Btn>
+      </div>
+    </>
+  );
+  else if (n === 7) body = (
+    <>
+      <h2>무엇을 줬어요?</h2>
+      <div className="onb-grid">
+        {ONB_FOODS.map(f => <Btn key={f} k={'onb-food-' + f} onClick={() => feed(f)}>{f}</Btn>)}
+      </div>
+    </>
+  );
+  else body = (
+    <>
+      <div className="onb-done">{d.fed && d.fed !== 'no' ? '✅' : '🗓'}</div>
+      <h2>{d.fed && d.fed !== 'no' ? '첫 기록 완료!' : '좋아요, 밥 줄 날은 챙겨 드릴게요'}</h2>
+      <p>다음부터는 대화창에 말만 하면 돼요.</p>
+      <div className="onb-say">"{name} 밥 먹었어"<br />"{name} 몸무게 45g"<br />"{name} 탈피했어"</div>
+      {TRACK.device() === 'ios' && !TRACK.standalone() && <p className="onb-warn">아이폰은 사파리와 홈 화면 앱의 저장 칸이 달라요. 앱으로 설치해 쓰실 거면 설정에서 로그인을 먼저 해 두세요.</p>}
+      <button className="onb-main" onClick={() => { finish('done'); navigate && navigate('chat'); }} data-testid="onb-chat">대화창 열어 보기</button>
+      <button className="onb-sub" onClick={() => finish('done')} data-testid="onb-home">홈으로</button>
+    </>
+  );
+  const total = 8;
+  return (
+    <div className="onb" data-testid="onboard" data-step={n}>
+      <div className="onb-card">
+        {n > 0 && n < 8 && <div className="onb-bar"><i style={{ width: Math.round(n / total * 100) + '%' }} /></div>}
+        {n > 0 && n < 6 && <button className="onb-back" onClick={() => go(n - 1)} aria-label="이전">‹</button>}
+        {body}
+        {n < 8 && <button className="onb-skip" onClick={skip} data-testid="onb-skip">건너뛰기</button>}
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════
    v1.9.5 앱 먼저 받기 (InstallGate) — 대표님: "요새 누가 웹으로 해. 앱을 먼저 다운받게"
    설치하지 않은 폰으로 처음 들어오면, 앱보다 먼저 가운데 크한이 + 큰 [앱 받기] 화면을 보여 드립니다.
    · 안드로이드 크롬: 버튼 한 번 → 크롬의 설치 창(beforeinstallprompt) → 앱 목록·홈 화면에 아이콘
@@ -379,5 +566,5 @@ function InstallGate() {
   );
 }
 
-window.CREG_WELCOME = { demoData, OpenHint, DemoGuide, Tutorial, InstallGate };
+window.CREG_WELCOME = { demoData, OpenHint, DemoGuide, Tutorial, InstallGate, Onboard };
 })();
