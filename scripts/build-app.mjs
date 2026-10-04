@@ -71,3 +71,38 @@ await build({
 });
 const wel = await stat(welcomeOut);
 console.log(`welcome.min.js ${wel.size} bytes`);
+
+/* v1.9.21 — 분양 카드 그리기(QR 포함)는 누를 때만 불러옵니다(card.min.js).
+   QR 만드는 부분은 qrcode-generator(MIT)를 함께 묶습니다. */
+const cardOut = path.join(root, "card.min.js");
+await build({
+  absWorkingDir: root,
+  entryPoints: ["src/card.js"],
+  outfile: cardOut,
+  bundle: true,
+  format: "iife",
+  minify: true,
+  legalComments: "none",
+  charset: "utf8",
+  target: ["es2018"],
+});
+const crd = await stat(cardOut);
+console.log(`card.min.js ${crd.size} bytes`);
+
+/* v1.9.21 — 시즌 노트 · 분양 카드 · 입양 화면(extras.min.js). 누를 때·입양 링크로 왔을 때만 불러옵니다. */
+const extrasOut = path.join(root, "extras.min.js");
+await build({
+  absWorkingDir: root,
+  entryPoints: ["src/extras.jsx"],
+  outfile: extrasOut,
+  bundle: false,
+  minify: true,
+  legalComments: "none",
+  charset: "utf8",
+  jsx: "transform",
+  jsxFactory: "BrandElement",
+  jsxFragment: "React.Fragment",
+  target: ["es2018"],
+});
+const ext = await stat(extrasOut);
+console.log(`extras.min.js ${ext.size} bytes`);
