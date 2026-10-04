@@ -642,7 +642,7 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.22';
+const APP_VERSION = '1.9.23';
 const APP_PATCHED = '2026-09-28';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -5129,8 +5129,13 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
               value={search}
               onChange={e => setSearch(e.target.value)}
             />
-            <button className="btn btn-primary" data-testid="home-add" style={{flex:1, width:'auto', minWidth:0, padding:'0 10px', whiteSpace:'nowrap'}}
-              onClick={() => setAddOpen(true)}>＋ 개체 추가</button>
+            {/* v1.9.23 대표님: 잘 안 보이던 + 대신 크한이(전신, 배경 없음)를 글자 옆에 */}
+            <button className="btn btn-primary" data-testid="home-add" style={{flex:1, width:'auto', minWidth:0, padding:'0 8px 0 12px', whiteSpace:'nowrap',
+                display:'flex', alignItems:'center', justifyContent:'center', gap:6, overflow:'visible'}}
+              onClick={() => setAddOpen(true)}>
+              <span>개체 추가</span>
+              <img src="./assets/brand/khan-full.webp" alt="" width="38" height="40" style={{height:40, width:'auto', flexShrink:0, filter:'drop-shadow(0 0 1.5px rgba(255,246,238,.9))'}} />
+            </button>
           </div>
         )}
         {addOpen && <Extra part="AddGeckoSheet" navigate={navigate} showToast={showToast} refreshIndividuals={refreshIndividuals} onClose={() => setAddOpen(false)} />}
