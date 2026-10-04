@@ -637,7 +637,7 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.17';
+const APP_VERSION = '1.9.18';
 const APP_PATCHED = '2026-09-28';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -2126,12 +2126,13 @@ function publicBreeding(gecko, list, evs) {
   return {
     clutches,
     eggs: mineRows.reduce((a, r) => a + (parseInt(r.eggs, 10) || 0), 0),
+    eggsUnknown: mineRows.filter(r => !(parseInt(r.eggs, 10) > 0)).length,   // v1.9.18 알 개수를 안 적은 산란 수
     hatched: mineRows.reduce((a, r) => a + hatchedOf(r), 0),
     matings: matingEvs.length,
     mates: mates.slice(0, 8),
     first: mineRows.length ? mineRows[0].e.date : '',
     recent: mineRows.slice(-6).reverse().map(r => ({
-      date: r.e.date, mate: (male ? r.momName : r.dadName) || '', eggs: parseInt(r.eggs, 10) || 0, result: word(r),
+      date: r.e.date, mate: (male ? r.momName : r.dadName) || '', eggs: parseInt(r.eggs, 10) || null, result: word(r),   // null = 안 적음 ("0개"로 보이지 않게)
     })),
     kids,
   };
@@ -2510,6 +2511,23 @@ function nudgeCandidates(individuals, events) {
     });
   });
 
+  /* ⑪ v1.9.18 알 개수 빈칸 — 초창기엔 알 개수를 따로 적지 않아서, 공유 기록에 "알 0개 · 1마리 부화"처럼 나왔습니다
+     (대표님 발견 2026-10-04). 이미 부화한 산란이라도 몇 개였는지 적게 합니다. 최근 산란부터. */
+  {
+    const holes = clutchRows(individuals || DB.getIndividuals(), evs).filter(r => !(parseInt(r.e.data && r.e.data.eggCount, 10) > 0));
+    holes.slice().reverse().forEach((r, k) => {
+      if (k > 0) return;                         // 하루에 하나만 권하면 되므로 가장 최근 것 하나만 후보로
+      const nm = r.momName;
+      const more = holes.length > 1 ? ` (빈 곳 ${holes.length}개)` : '';
+      out.push({
+        key: 'eggs', prio: 0, indId: r.e.individualId, layingId: r.e.id, weight: holes.length, emoji: '🥚', go: 'clutch',
+        text: say(`${nm} ${r.nth}차(${fmtDateShort(r.e.date)} 산란) 알 개수가 비어 있어요${more}.\n몇 개였는지 적어두면 공유 기록에도 바르게 나와요.`,
+                  `${nm} ${r.nth}차 알이 몇 개였는지 비어 있어요${more}!\n적어두면 공유 기록에도 바르게 나와요.`,
+                  `${nm} ${r.nth}차 알 개수 미기재${more}`),
+      });
+    });
+  }
+
   return out.sort((a, b) => a.prio - b.prio || b.weight - a.weight);
 }
 
@@ -2531,6 +2549,9 @@ function todayNudge(individuals, events) {
   }
   const recentKeys = log.map(x => x.key);
   const lastInd = log[0] ? log[0].indId : null;
+  /* v1.9.18 — 알 개수 빈칸은 빈칸이 남아 있는 동안 매일 권합니다(돌려 막지 않음 — 채우면 저절로 사라집니다) */
+  const eggs = cands.find(c => c.key === 'eggs');
+  if (eggs) return eggs;
   const fresh = cands.filter(c => recentKeys.indexOf(c.key) < 0 && (!lastInd || c.indId !== lastInd));
   return fresh[0] || cands.filter(c => recentKeys.indexOf(c.key) < 0)[0] || cands[0];
 }
@@ -2540,6 +2561,7 @@ function nudgeAction(n, navigate) {
   if (!n || !navigate) return null;
   const ind = n.indId ? DB.getIndividuals().find(i => i.id === n.indId) : null;
   if (n.go === 'ledger') return { label: '가계부', go: () => navigate('ledger') };
+  if (n.go === 'clutch' && n.layingId) return { label: '알 개수 적기', go: () => navigate('clutch', { layingId: n.layingId, editEggs: true }) };
   if (n.go === 'chat') return { label: '기록하기', go: () => navigate('chat', ind ? { presetGecko: ind } : {}) };
   if (ind) return { label: '프로필', go: () => navigate('profile', { gecko: ind }) };
   return null;
@@ -5877,7 +5899,7 @@ function EggHatchSheet({ layingId, egg, room, onClose, onDone, showToast }) {
 
 /* ── 클러치(알) 상세 — 알 묶음을 개체처럼 들여다보는 화면 ──
    알 사진 · 부/모 · 산란일 · 해칭 예정일, 그리고 [해칭했어요] 한 번으로 베이비 등록까지. ── */
-function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals, back }) {
+function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals, back, editEggs }) {
   // v1.9.6 프로필의 산란 기록에서 왔으면 그 프로필로 돌아갑니다
   const goBack = () => back ? navigate(back.name, back.props || {}) : navigate('home', { view: 'laying' });
   const [ver, setVer] = useState(0);
@@ -5887,7 +5909,7 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals, back 
   const [hDate, setHDate] = useState(todayStr());   // 부화한 날 — 오늘 확인했다고 오늘로 잡지 않습니다
   const [dateEdit, setDateEdit] = useState(false);  // 이미 적은 부화일 고치기
   const [dateVal, setDateVal] = useState('');
-  const [eggEdit, setEggEdit] = useState(false);
+  const [eggEdit, setEggEdit] = useState(!!editEggs);   // v1.9.18 오늘의 제안 [알 개수 적기]로 오면 바로 열림
   const [eggVal, setEggVal] = useState('');
   const [morph, setMorph] = useState('');           // 부화한 아이들 모프
   const [morphUnknown, setMorphUnknown] = useState(false);
@@ -5897,6 +5919,7 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals, back 
   const [eggSheet, setEggSheet] = useState(null);   // v1.9.15 알 부화·아기 잇기 창 — { egg: i } 또는 { room: true }
   const [layEdit, setLayEdit] = useState(false);    // v1.9.15 산란 정보(산란일·알 개수·아빠·메모) 고치기
   const [orphanAsk, setOrphanAsk] = useState(null); // v1.9.16 부화를 거둔 뒤 남은 아기 — 같이 지울지 여쭙니다
+  const [restAsk, setRestAsk] = useState(0);        // v1.9.18 알 개수를 채운 뒤 남은 알(부화 안 한 것) 수
   const fileRef = useRef(null);
   const bump = () => { setVer(v => v + 1); refreshIndividuals(); };
 
@@ -6081,12 +6104,51 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals, back 
           </div>
           {notes && <div style={{fontSize:12, color:'var(--accent2)', marginTop:4}}>{notes}</div>}
 
-          {eggEdit ? (
-            <div style={{display:'flex', gap:6, marginTop:10}}>
-              <input className="input" type="number" min="0" placeholder="알 개수" value={eggVal}
-                onChange={e => setEggVal(e.target.value)} style={{padding:'8px 10px', fontSize:13}} />
-              <button className="btn btn-primary btn-sm" style={{width:'auto'}}
-                onClick={() => { patch({ eggCount: parseInt(eggVal || '0', 10) || undefined }); setEggEdit(false); showToast('알 개수 저장'); }}>저장</button>
+          {eggEdit ? (() => {
+            /* v1.9.18 — 이미 부화한 산란이라도 몇 개였는지 적습니다. 부화한 수보다 적게는 못 적게 합니다 */
+            const hatchedN = units.filter(u => u.status === 'hatched').length;
+            const saveEggs = (v) => {
+              const n = parseInt(v || '0', 10) || 0;
+              if (!n) return showToast('⚠️ 알 개수를 적어 주세요');
+              if (n > 20) return showToast('⚠️ 20개까지 적을 수 있어요');
+              if (n < hatchedN) return showToast(`⚠️ 이미 ${hatchedN}마리가 부화해서 ${hatchedN}개 이상이어야 해요`);
+              patch({ eggCount: n }); setEggEdit(false); showToast(`🥚 알 ${n}개로 적었어요`);
+              // 이미 부화가 있던 산란이면, 나머지 알은 어떻게 됐는지 바로 여쭙니다(안 그러면 '대기'로 남습니다)
+              if (hatchedN && n > hatchedN) setRestAsk(n - hatchedN);
+            };
+            return (
+              <div style={{marginTop:10}} data-testid="egg-count-edit">
+                {!eggs && <div style={{fontSize:12, color:'var(--accent2)', marginBottom:7, lineHeight:1.5}}>
+                  이 산란은 알 개수가 비어 있어요. 몇 개였는지 적어두면 공유 기록에도 바르게 나와요.
+                  {hatchedN ? ` (부화 ${hatchedN}마리)` : ''}
+                </div>}
+                <div style={{display:'flex', gap:6, marginBottom:6}}>
+                  {[1, 2, 3].map(k => (
+                    <button key={k} className="btn btn-secondary btn-sm" style={{flex:1}} disabled={k < hatchedN}
+                      data-testid={'egg-count-' + k} onClick={() => saveEggs(k)}>{k}개</button>
+                  ))}
+                </div>
+                <div style={{display:'flex', gap:6}}>
+                  <input className="input" type="number" min={Math.max(1, hatchedN)} max="20" placeholder="직접 입력" value={eggVal} autoFocus
+                    onChange={e => setEggVal(e.target.value)} style={{padding:'8px 10px', fontSize:13}} />
+                  <button className="btn btn-primary btn-sm" style={{width:'auto'}} onClick={() => saveEggs(eggVal)}>저장</button>
+                  <button className="btn btn-secondary btn-sm" style={{width:'auto'}} onClick={() => setEggEdit(false)}>취소</button>
+                </div>
+              </div>
+            );
+          })() : restAsk > 0 ? (
+            <div style={{marginTop:10}} data-testid="egg-rest-ask">
+              <div style={{fontSize:12.5, color:'var(--text2)', marginBottom:7}}>부화하지 않은 나머지 알 <b>{restAsk}개</b>는 어떻게 됐나요?</div>
+              <div style={{display:'flex', gap:6}}>
+                {[['infertile', '무정란'], ['problem', '⚠️ 문제'], ['pending', '아직 품는 중']].map(([k, l]) => (
+                  <button key={k} className="btn btn-secondary btn-sm" style={{flex:1}} data-testid={'egg-rest-' + k} onClick={() => {
+                    const fresh = EGG.row(ev.id);
+                    if (fresh && k !== 'pending') DB.setEggUnits(ev.id, fresh.units.map(u => u.status === 'pending' ? { ...u, status: k, reason: k === 'problem' ? '기타' : '' } : u));
+                    setRestAsk(0); bump();
+                    showToast(k === 'pending' ? '네, 품는 중으로 둘게요' : `남은 알 ${restAsk}개를 ${k === 'infertile' ? '무정란' : '문제'}으로 적었어요`);
+                  }}>{l}</button>
+                ))}
+              </div>
             </div>
           ) : (
             <div style={{display:'flex', gap:6, marginTop:10}}>
