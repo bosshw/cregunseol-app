@@ -237,14 +237,15 @@
     if (br && (br.clutches || br.matings || (br.kids && br.kids.length))) {
       h += '<div class="card"><div class="sec">🥚 브리딩 이력</div><div class="stats">';
       h += stat(br.clutches + '번', '산란');
-      h += stat(br.eggs + '개', '알');
+      /* v1.9.18 — 알 개수를 안 적은 산란이 있으면 "0개"로 보이지 않게 */
+      h += stat(br.eggsUnknown ? (br.eggs ? br.eggs + '개+' : '—') : br.eggs + '개', br.eggsUnknown && br.eggs ? '알 (일부 미기록)' : '알');
       h += stat(br.hatched + '마리', '부화');
       h += '</div><div class="facts">';
       if (br.mates && br.mates.length) h += row('짝', br.mates.join(' · '));
       if (br.first) h += row('첫 산란', fmt(br.first));
       (br.recent || []).forEach(function (c) {
         h += '<div class="log"><span class="d">' + esc(fmt(c.date)) + '</span><span class="t">' +
-             (c.mate ? esc(c.mate) + ' · ' : '') + '알 ' + esc(c.eggs) + '개 · ' + esc(c.result) + '</span></div>';
+             (c.mate ? esc(c.mate) + ' · ' : '') + (c.eggs ? '알 ' + esc(c.eggs) + '개 · ' : '') + esc(c.result) + '</span></div>';
       });
       h += '</div></div>';
     }
