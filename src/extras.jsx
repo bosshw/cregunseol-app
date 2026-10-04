@@ -781,6 +781,97 @@ function SeasonNoteSheet({ gecko, year: y0, onClose, navigate, showToast, refres
 }
 
 
+/* v1.9.22 개체 직접 추가 (대표님 2026-10-05: "개체 등록도 수기로 할 수 있게, 축양 화면 검색란 옆에")
+   대화로 등록하던 것과 같은 개체 한 마리를 만듭니다(DB.addIndividual 한 곳). 같은 이름·비속어는 막습니다. */
+const ADD_MORPHS = ['노말', '할리퀸', '핀스트라이프', '달마시안', '릴리화이트', '트라이컬러'];
+function AddGeckoSheet({ onClose, navigate, showToast, refreshIndividuals }) {
+  const all = DB.getIndividuals();
+  const [v, setV] = useState({ name: '', gender: 'unknown', morph: '', hatchDate: '', status: 'own', sireId: '', damId: '', mine: false, source: '', price: '' });
+  const [photo, setPhoto] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const fileRef = useRef(null);
+  const put = (k, val) => { setErr(''); setV(x => ({ ...x, [k]: val })); };
+  const byName = (a, b) => (a.name || '').localeCompare(b.name || '', 'ko');
+  const males = all.filter(i => i.gender !== 'female').sort(byName);
+  const females = all.filter(i => i.gender !== 'male').sort(byName);
+  const save = (open) => {
+    const nm = v.name.trim();
+    if (!nm) return setErr('이름을 적어 주세요');
+    if (nm.length > 20) return setErr('이름은 20자까지 적을 수 있어요');
+    if (isBadName(nm)) return setErr('예쁜 이름으로 다시 적어 주세요 🙂');
+    if (all.some(i => i.name === nm)) return setErr(`"${nm}"는 이미 있는 이름이에요`);
+    if (v.hatchDate && v.hatchDate > todayStr()) return setErr('아직 오지 않은 날짜예요');
+    if (v.sireId && v.sireId === v.damId) return setErr('아빠와 엄마를 같은 아이로 고를 수 없어요');
+    const price = String(v.price || '').replace(/,/g, '').trim();
+    if (price && !/^\d+(\.\d+)?$/.test(price)) return setErr('입양가는 숫자(만원)로 적어 주세요');
+    setBusy(true);
+    try {
+      const saved = DB.addIndividual({
+        name: nm, gender: v.gender, morph: v.morph.trim(), hatchDate: v.hatchDate || '', status: v.status,
+        isFromCreGunseol: !!v.mine, isExternal: false, sireId: v.sireId || null, damId: v.damId || null,
+        shareCode: newShareCode(),
+      });
+      if (photo) DB.addEvent({ individualId: saved.id, type: 'photo', date: todayStr(), data: { photo } });
+      if (v.source.trim() || price) setAdoptMemo(saved.id, v.source.trim(), price);
+      refreshIndividuals && refreshIndividuals();
+      showToast && showToast(`🦎 ${nm}, 우리 식구가 됐어요!`);
+      onClose && onClose();
+      if (open && navigate) navigate('profile', { gecko: DB.getIndividuals().find(i => i.id === saved.id) || saved });
+    } catch (e) { setErr('저장하지 못했어요. 한 번 더 눌러 주세요'); }
+    setBusy(false);
+  };
+  const G = [['female', '♀ 암컷'], ['male', '♂ 수컷'], ['unknown', '미구분']];
+  const S = [['own', '보유중'], ['available', '분양가능'], ['reserved', '예약중']];
+  return (
+    <div className="pe-bg" onClick={onClose} data-testid="add-gecko">
+      <div className="pe-sheet" onClick={e => e.stopPropagation()}>
+        <div className="pe-head"><b>🦎 개체 추가</b><button onClick={onClose} aria-label="닫기">×</button></div>
+        <div className="pe-body">
+          <label className="pe-row"><span>이름 *</span><input className="input" autoFocus maxLength={20} placeholder="예: 크범이" value={v.name} onChange={e => put('name', e.target.value)} data-testid="add-name" /></label>
+          <div className="pe-row"><span>성별</span>
+            <div className="pe-seg">{G.map(([k, l]) => <button key={k} className={v.gender === k ? 'on' : ''} onClick={() => put('gender', k)} data-testid={'add-g-' + k}>{l}</button>)}</div>
+          </div>
+          <label className="pe-row"><span>모프</span><input className="input" placeholder="예: 릴리화이트" value={v.morph} onChange={e => put('morph', e.target.value)} data-testid="add-morph" /></label>
+          <div className="sn-dirs" style={{marginLeft:68, marginTop:-4}}>{ADD_MORPHS.map(m => <button key={m} className={v.morph === m ? 'on' : ''} onClick={() => put('morph', v.morph === m ? '' : m)}>{m}</button>)}</div>
+          <label className="pe-row"><span>해칭일</span><input className="input" type="date" max={todayStr()} value={v.hatchDate} onChange={e => put('hatchDate', e.target.value)} data-testid="add-hatch" /></label>
+          <div className="pe-row"><span>상태</span>
+            <div className="pe-seg">{S.map(([k, l]) => <button key={k} className={v.status === k ? 'on' : ''} onClick={() => put('status', k)} data-testid={'add-s-' + k}>{l}</button>)}</div>
+          </div>
+          <label className="pe-row"><span>아빠</span>
+            <select className="input" value={v.sireId} onChange={e => put('sireId', e.target.value)} data-testid="add-sire">
+              <option value="">없음 · 모름</option>{males.map(i => <option key={i.id} value={i.id}>{i.name}{i.gender === 'male' ? ' (수)' : ''}</option>)}
+            </select></label>
+          <label className="pe-row"><span>엄마</span>
+            <select className="input" value={v.damId} onChange={e => put('damId', e.target.value)} data-testid="add-dam">
+              <option value="">없음 · 모름</option>{females.map(i => <option key={i.id} value={i.id}>{i.name}{i.gender === 'female' ? ' (암)' : ''}</option>)}
+            </select></label>
+          <label style={{display:'flex', alignItems:'center', gap:8, fontSize:13.5}}>
+            <input type="checkbox" checked={v.mine} onChange={e => put('mine', e.target.checked)} data-testid="add-mine" /> 우리 집에서 태어난 아이(MY)
+          </label>
+          {!v.mine && (
+            <>
+              <label className="pe-row"><span>데려온 곳</span><input className="input" placeholder="선택 · 예: OO브리더" value={v.source} onChange={e => put('source', e.target.value)} /></label>
+              <label className="pe-row"><span>입양가</span><input className="input" inputMode="decimal" placeholder="선택 · 만원" value={v.price} onChange={e => put('price', e.target.value)} /></label>
+            </>
+          )}
+          <div className="pe-row"><span>사진</span>
+            <input ref={fileRef} type="file" accept="image/*" style={{display:'none'}} data-testid="add-file"
+              onChange={e => { const f = e.target.files && e.target.files[0]; if (!f) return; setBusy(true); takePhoto(f, (src) => { setPhoto(src); setBusy(false); }); }} />
+            {photo ? <img src={photo} alt="" style={{width:56, height:56, borderRadius:'50%', objectFit:'cover'}} /> : null}
+            <button className="btn btn-secondary btn-sm" style={{width:'auto'}} disabled={busy} onClick={() => fileRef.current && fileRef.current.click()}>{photo ? '바꾸기' : '📷 고르기 (선택)'}</button>
+          </div>
+          {err && <div className="onb-err" style={{textAlign:'left'}} data-testid="add-err">{err}</div>}
+          <div style={{display:'flex', gap:6, marginTop:4}}>
+            <button className="btn btn-primary" style={{flex:1}} disabled={busy} onClick={() => save(false)} data-testid="add-save">등록하기</button>
+            <button className="btn btn-secondary" style={{flex:1}} disabled={busy} onClick={() => save(true)} data-testid="add-save-open">등록 후 프로필</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* 대화에서 온 부탁 — planAppChat 이 알아들은 것을 여기서 처리합니다(화면과 같은 함수) */
 function chat(p, ctx) {
   const { bot, refreshIndividuals } = ctx;
@@ -818,7 +909,7 @@ function chat(p, ctx) {
 }
 
 window.CREG_EXTRAS = {
-  SeasonNoteSheet, SaleCardSheet, AdoptSendSheet, AdoptReceive, chat,
+  SeasonNoteSheet, SaleCardSheet, AdoptSendSheet, AdoptReceive, AddGeckoSheet, chat,
   // 시험(node)에서 쓰는 순수 함수들
   seasonYears, seasonNoteStats, seasonSummaryText, saveSeasonNote, toggleTrait, SEASON_TRAITS, SEASON_DIRS,
   adoptSnapshot, adoptMemos, adoptImport, adoptCounts, looksPrivate, ADOPT, ADOPT_KINDS, ADOPT_NEVER, saleCardData,
