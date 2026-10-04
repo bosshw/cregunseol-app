@@ -637,7 +637,7 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.18';
+const APP_VERSION = '1.9.19';
 const APP_PATCHED = '2026-09-28';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -7142,6 +7142,8 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
   const heldExternalRef = useRef(false);             // 외부 개체 등록 플래그
   const heldProfileRef = useRef(null);               // v1.9.10 새 아이 등록 뒤에 적을 입양처·입양가·점
   const pendingNameRef = useRef(null);               // 새 이름 등록 확인 대기
+  const hatchAskRef = useRef(null);                  // v1.9.19 부화 마릿수 답 대기 ("2마리"라고 적으셔도 됩니다)
+  const layAskRef = useRef(null);                    // v1.9.19 알 개수 답 대기 (칩 대신 "2개"라고 적으셔도 됩니다)
   const pendingRetargetRef = useRef(null);           // 등록 후 옮길 기록 (주인 정정 대기)
   const pendingBabyRef = useRef(null);               // 해칭 베이비 이름 답변 대기
   const pendingRef = useRef([]);                     // 담긴 기록 (ref 미러)
@@ -7200,7 +7202,17 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     const chips = [];
     for (let n = 1; n <= max; n++) chips.push({ label: `🐣 ${n}마리`, kind: 'hatch-count', value: { fact, count: n } });
     chips.push({ label: '아직 안 나왔어요', kind: 'memo-skip' });
+    hatchAskRef.current = { fact, max: Math.max(max, eggs || 0) };
     bot(`축하드려요! 🐣 몇 마리가 나왔나요?\n마릿수를 알려주시면 아기들을 바로 등록해둘게요.`, chips);
+  };
+
+  /* ── v1.9.19 알 몇 개 낳았는지 여쭙니다 (부화 마릿수를 묻는 askHatchCount 와 같은 모양) ── */
+  const askLayCount = (fact, rest, target, head) => {
+    if (rest && rest.length) pushPending(rest, target, head);
+    const chips = [1, 2, 3].map(n => ({ label: `🥚 ${n}개`, kind: 'lay-count', value: { fact, count: n } }));
+    chips.push({ label: '아직 몰라요', kind: 'lay-count', value: { fact, count: 0 } });
+    layAskRef.current = fact;
+    bot(`${target.name} 알을 낳았군요! 🥚 몇 개 낳았나요?\n개수를 적어두면 부화·공유 기록이 정확해져요.`, chips);
   };
 
   /* ── 알별 결과 적용 ── 한 곳에서만 고칩니다(직접 말했을 때·어느 산란인지 고르셨을 때 공용)
@@ -7834,15 +7846,53 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       else askHatchCount(f, value.eggs, value.rest, t);
     } else if (kind === 'hatch-count' && value) {
       // 몇 마리 나왔는지 고르시면 그때 담습니다 (마릿수를 알아야 베이비가 등록됩니다)
+      if (!hatchAskRef.current || hatchAskRef.current.fact !== value.fact) { bot('그 부화는 이미 담아뒀어요 🐣'); return; }
+      hatchAskRef.current = null;
       const f = { ...value.fact, data: { ...value.fact.data, count: String(value.count) } };
       pushPending([f], { name: value.fact.targetName });
+    } else if (kind === 'lay-count' && value) {
+      // 고르시면 그때 담습니다. "아직 몰라요"면 개수 없이 담고, 나중에 오늘의 제안이 다시 여쭙니다
+      // 이미 글로 답하셨거나 한 번 고르셨으면 두 번 담지 않습니다
+      if (layAskRef.current !== value.fact) { bot('그 산란은 이미 담아뒀어요 🥚'); return; }
+      layAskRef.current = null;
+      const f = value.count ? { ...value.fact, data: { ...value.fact.data, eggCount: String(value.count) } } : value.fact;
+      pushPending([f], { name: value.fact.targetName });
     } else if (kind === 'memo-skip') {
+      hatchAskRef.current = null;
       bot('네, 기록 없이 넘어갈게요 🙂 다른 이야기 들려주세요.');
     }
   };
 
   /* ── 문장 해석 본체 ── */
   const process = (text) => {
+    /* v1.9.19 알 개수를 여쭌 뒤 — "2개", "두 개요", "몰라" 같은 짧은 답을 받습니다.
+       다른 말씀이면 산란은 개수 없이 담아두고, 새 문장을 그대로 해석합니다(기록이 사라지지 않게). */
+    if (hatchAskRef.current) {
+      const { fact: f, max } = hatchAskRef.current; hatchAskRef.current = null;
+      const t = String(text).trim();
+      const KN = { 한: 1, 하나: 1, 두: 2, 둘: 2, 세: 3, 셋: 3, 네: 4, 넷: 4 };
+      const m = t.match(/^(\d{1,2})\s*(마리|명|개)?/) || t.match(/^(한|하나|두|둘|세|셋|네|넷)\s*(마리|명|개)/);
+      const n = m ? (KN[m[1]] || parseInt(m[1], 10)) : 0;
+      if (n > 0 && n <= Math.max(max || 2, 9) && t.length <= 14) {
+        pushPending([{ ...f, data: { ...f.data, count: String(n) } }], { name: f.targetName });
+        return;
+      }
+      if (/^(아직|안\s*나|아니|없어|0\s*마리)/.test(t)) { bot('네, 기록 없이 넘어갈게요 🙂 나오면 다시 말씀해주세요.'); return; }
+      // 다른 말씀이면 새 문장으로 해석합니다 (마릿수 없는 부화는 아기가 등록되지 않아 담지 않습니다)
+    }
+    if (layAskRef.current) {
+      const f = layAskRef.current; layAskRef.current = null;
+      const t = String(text).trim();
+      const KN = { 한: 1, 하나: 1, 두: 2, 둘: 2, 세: 3, 셋: 3, 네: 4, 넷: 4 };
+      const m = t.match(/^(\d{1,2})\s*(개|알)?/) || t.match(/^(한|하나|두|둘|세|셋|네|넷)\s*(개|알)/);
+      const n = m ? (KN[m[1]] || parseInt(m[1], 10)) : 0;
+      if (n > 0 && n <= 9 && t.length <= 14) {
+        pushPending([{ ...f, data: { ...f.data, eggCount: String(n) } }], { name: f.targetName });
+        return;
+      }
+      if (/^(몰라|모르|아직|글쎄|나중|패스|건너)/.test(t)) { pushPending([f], { name: f.targetName }); return; }
+      pushPending([f], { name: f.targetName });
+    }
     // 1) 새 이름 등록 확인에 글로 답한 경우
     if (pendingNameRef.current) {
       if (/^(응|네|넵|예|어|그래|맞아|등록|ㅇㅇ|ㅇ)/.test(text)) { doRegister(pendingNameRef.current); return; }
@@ -8444,6 +8494,14 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
         askHatchCount(hatchFact, 2, mapped.filter(f => f !== hatchFact), target);
         return;
       }
+    }
+
+    /* v1.9.19 — 산란을 말씀하셨는데 알 개수가 없으면 몇 개인지 여쭙니다
+       (대표님 지시 2026-10-04: 초창기 산란은 개수가 비어서 공유 기록에 "알 0개"로 나왔습니다) */
+    const layFact = mapped.find(f => f.type === 'laying');
+    if (layFact && !(parseInt(layFact.data && layFact.data.eggCount, 10) > 0)) {
+      askLayCount(layFact, mapped.filter(f => f !== layFact), target, [mateWarnLine, morphLine].filter(Boolean).join('\n'));
+      return;
     }
 
     pushPending(mapped, target, [mateWarnLine, morphLine].filter(Boolean).join('\n'));
