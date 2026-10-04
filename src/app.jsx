@@ -637,7 +637,7 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.19';
+const APP_VERSION = '1.9.20';
 const APP_PATCHED = '2026-09-28';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -910,7 +910,16 @@ const SYNC = {
       if (!res.ok) throw new Error(await this.parseErr(res));
     }
     if (tombs.length) this.clearTombstones(tombs);
-    this.clearDirty([...wanted]);   // 올린 것 + 이미 삭제된 잔여 항목 정리 (전송 중 생긴 새 변경은 남음)
+    /* v1.9.20 — 보내는 사이에 같은 기록을 또 고치셨으면(예: 알 개수 저장 직후 [문제] 누름) 그 표시는 남겨 둡니다.
+       예전엔 보낸 목록을 통째로 지워서, 바로 뒤 pull 이 서버의 옛 값으로 방금 고친 것을 덮었습니다. */
+    const nowRecs = new Map(this.localRecords().map(r => [r.kind + '|' + r.id, r]));
+    const sentSig = new Map(rows.filter(r => !r.deleted).map(r => [r.kind + '|' + r.id, JSON.stringify(r.data)]));
+    this.clearDirty([...wanted].filter(k => {
+      const cur = nowRecs.get(k);
+      if (!cur) return true;                                   // 지워진 기록은 툼스톤이 맡습니다
+      if (!sentSig.has(k)) return true;
+      return JSON.stringify(cur.data) === sentSig.get(k);       // 보낸 그대로일 때만 '올림 완료'
+    }));
     this.saveSt({ pushedAt: now() });
     return sentKeys.length + tombs.length;
   },
@@ -944,10 +953,12 @@ const SYNC = {
     let settings = DB.getSettings();
     let changed = 0, settingsChanged = false;
     const dirty = new Set();
+    const pending = new Set(this.dirty());
 
     rows.forEach(row => {
       if (row.kind === 'settings') {
         if (row.deleted) return;
+        if (pending.has('settings|main')) return;   // v1.9.20 이 기기 설정을 아직 못 올렸으면 덮지 않습니다
         const incoming = row.data || {};
         let same = false;
         try { same = JSON.stringify(settings) === JSON.stringify(incoming); } catch {}
@@ -964,6 +975,8 @@ const SYNC = {
       const incoming = row.data || {};
       if (!incoming.id) incoming.id = row.id;
       if (idx < 0) { list.push(incoming); dirty.add(row.kind); changed++; return; }
+      // v1.9.20 — 이 기기에서 고치고 아직 못 올린 기록은 서버 사본으로 덮지 않습니다(다음 올리기 때 이 기기 것이 올라갑니다)
+      if (pending.has(row.kind + '|' + row.id)) return;
       let same = false;
       try { same = JSON.stringify(list[idx]) === JSON.stringify(incoming); } catch {}
       if (!same) { list[idx] = incoming; dirty.add(row.kind); changed++; }
