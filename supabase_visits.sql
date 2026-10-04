@@ -12,7 +12,7 @@ create table if not exists public.cg_visits (
   id        bigserial primary key,
   at        timestamptz not null default now(),
   day       date not null default ((now() at time zone 'Asia/Seoul')::date),
-  step      text not null check (step in ('open', 'record', 'signup', 'push')),
+  step      text not null check (step in ('open', 'record', 'signup', 'push', 'adopt_in') or step ~ '^onb_[a-z0-9]{1,16}$'),
   device    text check (device in ('ios', 'android', 'pc')),
   standalone boolean,          -- 홈 화면에 추가해서 열었는가
   visit_no  int check (visit_no >= 0 and visit_no < 100000),  -- 이 기기의 몇 번째 방문인지
@@ -61,3 +61,8 @@ create policy cg_visits_insert on public.cg_visits
 --             when visit_no <= 10 then '4~10번째' else '10번 넘게' end as 방문차수,
 --        count(*) as 건수
 -- from cg_visits where step = 'open' group by 1 order by 2 desc;
+
+-- v1.9.21 처음 시작 단계(onb_start·onb_named·onb_registered·onb_fed·onb_skip·onb_browse …)와 입양 받기(adopt_in)도 셉니다.
+-- 이미 만든 표라면 아래 두 줄만 실행하세요.
+-- alter table public.cg_visits drop constraint if exists cg_visits_step_check;
+-- alter table public.cg_visits add constraint cg_visits_step_check check (step in ('open', 'record', 'signup', 'push', 'adopt_in') or step ~ '^onb_[a-z0-9]{1,16}$');

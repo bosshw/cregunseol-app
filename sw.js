@@ -1,7 +1,7 @@
 // ★ 이 번호는 화면 버전과 따로 갑니다. 화면 버전은 1.7 → 1.0 으로 되돌렸지만
 //    캐시 이름은 올라가기만 합니다(v17 → v18). 옛 이름을 다시 쓰면 폰에 남아 있던
 //    헌 파일 묶음을 새것으로 착각해서 화면이 안 바뀝니다.
-const CACHE = 'creg-v50';
+const CACHE = 'creg-v51';
 
 // 화면을 그리는 데 꼭 필요한 파일 — 이것도 폰에 저장해둬야 인터넷 없이 열립니다
 const ASSETS = [
@@ -89,6 +89,8 @@ const ASSETS = [
   './app.min.js',
   './importer.min.js',
   './welcome.min.js',
+  './card.min.js',
+  './extras.min.js',
   './vendor/preact-shim.min.js',
   './manifest.json',
   './icon-192.png',
@@ -194,3 +196,4 @@ self.addEventListener('notificationclick', e => {
 // v1.9.18 deploy 2026-10-04 (알 개수 빈칸 — 공유 기록에 '알 0개'로 안 보이게, 오늘의 제안에서 채우기, 남은 알 결과 묻기)
 // v1.9.19 deploy 2026-10-04 (대화에서 산란하면 알 몇 개, 부화하면 몇 마리인지 묻기 — 칩 또는 글로 답)
 // v1.9.20 deploy 2026-10-04 (동기화 경합 — 올리는 사이 고친 기록이 서버 옛 값으로 덮이던 것 고침)
+// v1.9.21 deploy 2026-10-04 (처음 시작=내 아이 1마리 등록·첫 밥 · 시즌 노트 · 분양 카드/입양 보내기(실험, ?labs=1) · 입양 받기 · card.min.js/extras.min.js 는 필요할 때만)

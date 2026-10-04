@@ -1,6 +1,6 @@
 {
   "name": "cre_construct-breeding-assistant",
-  "version": "1.9.20",
+  "version": "1.9.21",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,6 +9,7 @@
   },
   "devDependencies": {
     "esbuild": "0.28.2",
-    "playwright": "^1.63.0"
+    "playwright": "^1.63.0",
+    "qrcode-generator": "^1.4.4"
   }
 }
