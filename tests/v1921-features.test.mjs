@@ -177,3 +177,17 @@ test("처음 시작·실험 깃발·서버 규칙·캐시 목록 계약", async 
   assert.match(ex, /const ADOPT_DAYS = 7;/);
   assert.match(ex, /randomCode\(16\)/, "받아가는 링크는 추측할 수 없게 길게");
 });
+
+test("v1.9.22 축양 화면 검색란 옆 [개체 추가] — 직접 입력으로 등록", async () => {
+  const app = await read("src/app.jsx");
+  assert.match(app, /data-testid="home-add"/, "검색란 옆 버튼");
+  assert.match(app, /className="input brand-search"\s+style=\{\{flex:1, minWidth:0\}\}/, "검색란은 반만");
+  assert.match(app, /<Extra part="AddGeckoSheet"/);
+  const ex = await read("src/extras.jsx");
+  assert.match(ex, /function AddGeckoSheet\(/);
+  assert.match(ex, /isBadName\(nm\)/, "비속어 막기");
+  assert.match(ex, /all\.some\(i => i\.name === nm\)/, "같은 이름 막기");
+  assert.match(ex, /DB\.addIndividual\(\{/, "대화와 같은 등록 자리");
+  const { json } = await loadApp(SEED);
+  assert.equal(json("typeof window.CREG_EXTRAS.AddGeckoSheet"), "function");
+});
