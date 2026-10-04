@@ -33,7 +33,9 @@ async function loadApp(seed = {}) {
 
 test("a first visit gets example geckos that never touch real records or the server", async () => {
   const { run, store, sent } = await loadApp();
-  assert.equal(run("DEMO.fresh()"), true, "빈 기기는 처음 온 기기입니다");
+  // v1.9.21 처음 온 기기는 예시 대신 '내 아이 1마리 등록'(cg_onb)으로 시작합니다. 예시는 [구경만 할게요]를 눌렀을 때만
+  assert.equal(store.get("cg_onb"), "0", "빈 기기는 첫 등록 화면부터");
+  assert.equal(run("DEMO.on()"), false, "예시가 저절로 깔리지 않습니다");
   assert.equal(run("DEMO.start()"), true);
   assert.equal(run("DEMO.on()"), true);
   assert.equal(store.get("cg_tut"), "0", "연습과 함께 튜토리얼이 처음부터 시작됩니다");
