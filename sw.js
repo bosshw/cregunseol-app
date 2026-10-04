@@ -1,7 +1,7 @@
 // ★ 이 번호는 화면 버전과 따로 갑니다. 화면 버전은 1.7 → 1.0 으로 되돌렸지만
 //    캐시 이름은 올라가기만 합니다(v17 → v18). 옛 이름을 다시 쓰면 폰에 남아 있던
 //    헌 파일 묶음을 새것으로 착각해서 화면이 안 바뀝니다.
-const CACHE = 'creg-v52';
+const CACHE = 'creg-v53';
 
 // 화면을 그리는 데 꼭 필요한 파일 — 이것도 폰에 저장해둬야 인터넷 없이 열립니다
 const ASSETS = [
@@ -42,6 +42,7 @@ const ASSETS = [
   './assets/brand/feedingPlan.svg',
   './assets/brand/female.svg',
   './assets/brand/gecko-transparent.webp',
+  './assets/brand/khan-full.webp',
   './assets/brand/gift.svg',
   './assets/brand/good.webp',
   './assets/brand/growth.svg',
@@ -198,3 +199,4 @@ self.addEventListener('notificationclick', e => {
 // v1.9.20 deploy 2026-10-04 (동기화 경합 — 올리는 사이 고친 기록이 서버 옛 값으로 덮이던 것 고침)
 // v1.9.21 deploy 2026-10-04 (처음 시작=내 아이 1마리 등록·첫 밥 · 시즌 노트 · 분양 카드/입양 보내기(실험, ?labs=1) · 입양 받기 · card.min.js/extras.min.js 는 필요할 때만)
 // v1.9.22 deploy 2026-10-05 (축양 화면 검색란 옆 [개체 추가] — 직접 입력 등록)
+// v1.9.23 deploy 2026-10-05 ([개체 추가] 버튼 — + 대신 크한이 전신(배경 없음) khan-full.webp)
