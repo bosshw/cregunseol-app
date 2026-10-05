@@ -1,7 +1,7 @@
 // ★ 이 번호는 화면 버전과 따로 갑니다. 화면 버전은 1.7 → 1.0 으로 되돌렸지만
 //    캐시 이름은 올라가기만 합니다(v17 → v18). 옛 이름을 다시 쓰면 폰에 남아 있던
 //    헌 파일 묶음을 새것으로 착각해서 화면이 안 바뀝니다.
-const CACHE = 'creg-v55';
+const CACHE = 'creg-v56';
 
 // 화면을 그리는 데 꼭 필요한 파일 — 이것도 폰에 저장해둬야 인터넷 없이 열립니다
 const ASSETS = [
@@ -43,6 +43,7 @@ const ASSETS = [
   './assets/brand/female.svg',
   './assets/brand/gecko-transparent.webp',
   './assets/brand/khan-full.webp',
+  './assets/brand/click-pixel.png',
   './assets/brand/gift.svg',
   './assets/brand/good.webp',
   './assets/brand/growth.svg',
@@ -202,3 +203,4 @@ self.addEventListener('notificationclick', e => {
 // v1.9.23 deploy 2026-10-05 ([개체 추가] 버튼 — + 대신 크한이 전신(배경 없음) khan-full.webp)
 // v1.9.24 deploy 2026-10-05 (사용법 배우기 — 화면 여는 단계가 멈추지 않게: 열기 버튼은 바로 다음으로, 6초 뒤 [다음], 단계 집계 onb_tutN)
 // v1.9.25 deploy 2026-10-05 (사용법 배우기에서 캘린더·브리핑 단계 뺌 — 폴드5 프로필 화면에서 멈추던 것)
+// v1.9.26 deploy 2026-10-05 (빈 홈 — '직접 입력해서 추가' 뺌, 첫 등록하기 위에 픽셀 '클릭!' 글씨 click-pixel.png)

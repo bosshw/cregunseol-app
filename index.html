@@ -187,6 +187,8 @@
     .empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 60px 20px; color: var(--text3); text-align: center; }
     .empty-icon { font-size: 52px; opacity: .6; }
     .empty p { font-size: 14px; line-height: 1.6; white-space: pre-line; }
+    .click-px { width: 98px; height: 78px; image-rendering: pixelated; margin: 4px 0 -10px; cursor: pointer; animation: gateArrow 1s ease-in-out infinite; }
+    @media (prefers-reduced-motion: reduce) { .click-px { animation: none; } }
 
     /* 뒤로가기 버튼 */
     .back-btn { background: none; border: none; color: var(--accent2); font-size: 15px; cursor: pointer; display: flex; align-items: center; gap: 4px; padding: 0; }
