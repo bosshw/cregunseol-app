@@ -131,8 +131,8 @@ test("app-first gate: phones that haven't installed see a big 'get the app' scre
 test("iPhone: the tutorial never gets stuck on a tab it can't show (calendar step report 2026-09-28)", async () => {
   const [source, welcome] = await Promise.all([read("src/app.jsx"), read("src/welcome.jsx")]);
   assert.match(source, /if \(!typing && window\.scrollY\) window\.scrollTo\(0, 0\);/, "키보드가 내려가면 밀린 창을 맨 위로");
-  assert.match(welcome, /tap: '캘린더 열기'/);
-  assert.match(welcome, /tap: '브리핑 열기'/);
+  // v1.9.25 — 캘린더·브리핑 단계는 사용법에서 뺐습니다(같은 멈춤이 폴드5에서도 재발 → 대표님 결정)
+  assert.doesNotMatch(welcome, /tap: '캘린더 열기'|tap: '브리핑 열기'/);
   assert.match(welcome, /tap: '대화 열기'/);
   assert.match(welcome, /if \(!\(r\.width > 0 && r\.top >= -2 && r\.bottom <= vh \+ 2\)\) \{ setRect\(null\); return; \}/, "안 보이는 자리에 구멍을 뚫지 않습니다");
   assert.doesNotMatch(welcome, /scrollIntoView\(\{ block: 'center' \}\)/, "창 전체를 굴리지 않습니다");

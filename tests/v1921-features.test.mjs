@@ -200,3 +200,11 @@ test("v1.9.24 사용법 배우기가 화면 여는 단계에서 멈추지 않는
   assert.match(w, /data-testid="tut-force"/);
   assert.match(w, /TRACK\.step\('onb_tut' \+ n\)/, "어느 단계까지 갔는지 셈");
 });
+
+test("v1.9.25 사용법 배우기에서 캘린더·브리핑 단계를 뺀다(대표님 결정)", async () => {
+  const w = await read("src/welcome.jsx");
+  const tut = w.slice(w.indexOf("const TUT = ["), w.indexOf("const PAD = 6;"));
+  assert.doesNotMatch(tut, /data-tut=calendar|data-tut=reminders|data-tut=cal\]/, "캘린더·브리핑으로 이동하는 단계 없음");
+  assert.match(tut, /캘린더와 브리핑에 저절로 모여요/, "마지막에 한 줄로만 알림");
+  assert.match(w, /v >= TUT\.length \? TUT\.length - 1 : v/, "옛 진행 칸이 남아 있어도 멈추지 않음");
+});
