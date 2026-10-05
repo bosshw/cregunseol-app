@@ -124,7 +124,7 @@ function DemoGuide() {
       <div className="dg-t">🦎 연습용 예시 아이들이에요</div>
       <div className="dg-s">마음껏 눌러 보고 적어 보세요. 다 해 보셨으면 맨 위 '내 것으로 시작'을 누르면 깨끗하게 비워져요.</div>
       <button className="dg-b" onClick={again} data-testid="tut-again">
-        <span className="dg-i">▶</span><span><b>사용법 다시 보기</b><small>아이 등록 → 기록 → 저장 → 캘린더 → 브리핑</small></span><span className="dg-a">›</span>
+        <span className="dg-i">▶</span><span><b>사용법 다시 보기</b><small>아이 등록 → 기록 → 저장</small></span><span className="dg-a">›</span>
       </button>
     </div>
   );
@@ -173,17 +173,13 @@ const TUT = [
   { at: () => Q('[data-tut=save-final]'), text: '저장하기 전에 한 번 더 보여 드려요.\n맞으면 눌러 주세요.',
     until: onHome, need: () => Q('[data-tut=save-final]') || onHome(), back: 1 },
   { at: () => lastWith('.gecko-card', new RegExp(NEWBIE)), text: '홈에 하늘이가 생겼어요.\n누르면 프로필과 기록이 한곳에 모여 있어요.', next: '다음' },
-  // ── 저절로 챙겨 주는 것 ──
-  { at: () => Q('[data-tut=calendar]'), text: '알을 적으면 부화 예정일이 저절로 잡혀요.\n아래 [캘린더]를 눌러 보세요.', until: () => Q('[data-tut=calendar].active'), tap: '캘린더 열기' },
-  { at: () => Q('[data-tut=cal]'), text: '알 모양은 산란, 아기 모양은 부화예요.\n방금 적은 알의 부화 예정일도 저절로 들어갔어요.\n› 로 달을 넘겨 보면 보여요.', next: '다음' },
-  { at: () => Q('[data-tut=reminders]'), text: '매일 챙길 일은 [브리핑]에 모여요.\n아래 [브리핑]을 눌러 보세요.', until: () => Q('[data-tut=reminders].active'), tap: '브리핑 열기' },
-  { text: '산란 예정일, 부화 임박, 밥 줄 날을\n알아서 챙겨 드려요.\n홈 화면에 설치하면 알림으로도 와요.', next: '다음' },
-  { modal: true, title: '이제 끝이에요!', text: '연습으로 적은 건 지우고\n내 아이로 시작해 볼까요?', final: true },
+  // v1.9.25 대표님: 캘린더·브리핑은 보면 아는 화면이라 사용법에서 뺍니다(폴드5에서 프로필로 들어간 뒤 아래 탭이 없어 멈추던 단계)
+  { modal: true, title: '이제 끝이에요!', text: '부화 예정일·밥 줄 날은 캘린더와 브리핑에 저절로 모여요.\n\n연습으로 적은 건 지우고\n내 아이로 시작해 볼까요?', final: true },
 ];
 const PAD = 6;
 
 function Tutorial() {
-  const [n, setN] = useState(tutGet);
+  const [n, setN] = useState(() => { const v = tutGet(); return v >= TUT.length ? TUT.length - 1 : v; });   // 단계를 줄였으니 옛 진행 칸은 마지막으로
   const [rect, setRect] = useState(null);
   const miss = useRef(0);
   const go = (k) => { tutSet(k); setN(k); setRect(null); miss.current = 0; setStall(false); };
