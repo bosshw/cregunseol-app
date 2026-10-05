@@ -642,7 +642,7 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.25';
+const APP_VERSION = '1.9.26';
 const APP_PATCHED = '2026-09-28';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -5213,17 +5213,18 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
               <div className="empty">
                 <div className="empty-icon">{favOnly ? '⭐' : <DotGecko size={46} />}</div>
                 <p>{favOnly ? '즐겨찾기한 아이가 없어요.\n개체 카드의 ☆ 를 눌러 즐겨찾기에 추가해보세요.' : (individuals.length === 0 ? '아직 등록된 개체가 없어요.\n아래 💬 대화 버튼을 누르고 말씀해보세요.\n예) "크한이 12그램"' : '검색 결과가 없어요.')}</p>
-                {!favOnly && individuals.length === 0 && !DEMO.on() && (
-                  <button className="btn btn-primary" data-testid="home-first" style={{maxWidth:280, marginBottom:8}}
-                    onClick={() => { STORE.set('cg_onb', '1'); try { window.dispatchEvent(new Event('cg-onb')); } catch (e) {} }}>
-                    🦎 우리 아이 첫 등록하기
-                  </button>
-                )}
-                {!favOnly && individuals.length === 0 && !DEMO.on() && (
-                  <button className="btn btn-secondary" data-testid="home-add-empty" style={{maxWidth:280, marginBottom:8}} onClick={() => setAddOpen(true)}>
-                    ＋ 직접 입력해서 추가
-                  </button>
-                )}
+                {!favOnly && individuals.length === 0 && !DEMO.on() && (() => {
+                  const first = () => { STORE.set('cg_onb', '1'); try { window.dispatchEvent(new Event('cg-onb')); } catch (e) {} };
+                  return (
+                    <>
+                      {/* v1.9.26 '클릭!' 픽셀 글씨 — 첫 등록하기가 버튼이라는 걸 바로 알게 */}
+                      <img src="./assets/brand/click-pixel.png" alt="" aria-hidden="true" className="click-px" data-testid="home-first-click" width="98" height="78" onClick={first} />
+                      <button className="btn btn-primary" data-testid="home-first" style={{maxWidth:280, marginBottom:8}} onClick={first}>
+                        🦎 우리 아이 첫 등록하기
+                      </button>
+                    </>
+                  );
+                })()}
                 {!favOnly && individuals.length === 0 && (
                   <button className="btn btn-secondary" data-testid="home-import" style={{maxWidth:280}} onClick={() => navigate('import')}>
                     📥 쓰던 엑셀이 있으면 한 번에 가져오기
