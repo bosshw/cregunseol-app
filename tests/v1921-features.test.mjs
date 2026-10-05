@@ -191,3 +191,12 @@ test("v1.9.22 축양 화면 검색란 옆 [개체 추가] — 직접 입력으�
   const { json } = await loadApp(SEED);
   assert.equal(json("typeof window.CREG_EXTRAS.AddGeckoSheet"), "function");
 });
+
+test("v1.9.24 사용법 배우기가 화면 여는 단계에서 멈추지 않는다", async () => {
+  const w = await read("src/welcome.jsx");
+  assert.match(w, /const openAndGo = \(\) =>/, "[캘린더 열기] 등은 열고 바로 다음으로");
+  assert.match(w, /onClick=\{openAndGo\} data-testid="tut-tap"/);
+  assert.match(w, /setTimeout\(\(\) => setStall\(true\), 6000\)/, "6초 뒤 [다음 ›]");
+  assert.match(w, /data-testid="tut-force"/);
+  assert.match(w, /TRACK\.step\('onb_tut' \+ n\)/, "어느 단계까지 갔는지 셈");
+});
