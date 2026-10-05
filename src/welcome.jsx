@@ -186,7 +186,26 @@ function Tutorial() {
   const [n, setN] = useState(tutGet);
   const [rect, setRect] = useState(null);
   const miss = useRef(0);
-  const go = (k) => { tutSet(k); setN(k); setRect(null); miss.current = 0; };
+  const go = (k) => { tutSet(k); setN(k); setRect(null); miss.current = 0; setStall(false); };
+  /* v1.9.24 대표님 제보 "사용법 배우기 — 캘린더로 가기에서 멈춘다" — 폰마다(앱 안 브라우저·주소창·글자 크기) 화면이 달라
+     밝힌 곳을 눌러도 다음으로 안 넘어가는 경우가 있었습니다. 어느 폰에서든 절대 멈추지 않게:
+     ① [캘린더 열기]·[브리핑 열기]·[대화 열기] 버튼은 화면을 열고 곧바로 다음 단계로 넘깁니다
+     ② 화면을 여는 단계에서 6초가 지나도 그대로면 [다음 ›]을 크게 보여 줍니다
+     ③ 몇 번째 단계까지 갔는지 셉니다(onb_tutN) — 어디서 나가는지 숫자로 봅니다 */
+  const [stall, setStall] = useState(false);
+  useEffect(() => {
+    if (n >= 0) { try { TRACK.step('onb_tut' + n); } catch (e) {} }
+    const s0 = TUT[n];
+    if (!s0 || !s0.tap) return;
+    const t = setTimeout(() => setStall(true), 6000);
+    return () => clearTimeout(t);
+  }, [n]);
+  const openAndGo = () => {
+    const s0 = TUT[n]; const el = s0 && s0.at && s0.at();
+    if (el) el.click();
+    const at = n;
+    setTimeout(() => { if (tutGet() === at) go(at + 1); }, 700);
+  };
   useEffect(() => {   // '사용법 다시 보기'
     const f = () => go(0);
     window.addEventListener('cg-tut', f);
@@ -249,7 +268,8 @@ function Tutorial() {
           <div className="tut-row">
             {n === 0 && INAPP && <button className="ghost" onClick={openOutside}>{TRACK.device() === 'ios' ? '사파리로' : '크롬으로'} 열기</button>}
             {s.act && <button onClick={s.act[1]} data-testid="tut-act">{s.act[0]}</button>}
-            {s.tap && <button className={rect ? 'ghost' : ''} onClick={() => { const el = s.at && s.at(); if (el) el.click(); }} data-testid="tut-tap">{s.tap} ›</button>}
+            {s.tap && <button className={rect && !stall ? 'ghost' : ''} onClick={openAndGo} data-testid="tut-tap">{s.tap} ›</button>}
+            {s.tap && stall && <button onClick={() => go(n + 1)} data-testid="tut-force">다음 ›</button>}
             {s.next && <button onClick={() => go(n + 1)} data-testid="tut-next">{s.next}</button>}
             {s.final && <button onClick={() => { tutSet(-1); DEMO.exit('chat'); }} data-testid="tut-start">내 아이 등록하기</button>}
             {s.final && <button className="ghost" onClick={end}>조금 더 둘러볼게요</button>}
