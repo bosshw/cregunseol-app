@@ -208,3 +208,17 @@ test("v1.9.25 사용법 배우기에서 캘린더·브리핑 단계를 뺀다(�
   assert.match(tut, /캘린더와 브리핑에 저절로 모여요/, "마지막에 한 줄로만 알림");
   assert.match(w, /v >= TUT\.length \? TUT\.length - 1 : v/, "옛 진행 칸이 남아 있어도 멈추지 않음");
 });
+
+test("v1.9.26 빈 홈 — '직접 입력해서 추가'를 빼고 첫 등록하기 위에 픽셀 '클릭!'을 단다", async () => {
+  const s = await read("src/app.jsx");
+  assert.doesNotMatch(s, /home-add-empty/, "직접 입력 버튼이 첫 등록하기를 묻지 않게");
+  const i = s.indexOf('data-testid="home-first-click"'), j = s.indexOf('data-testid="home-first"');
+  assert.ok(i > 0 && j > i, "클릭 글씨가 첫 등록하기 바로 위");
+  assert.match(s, /className="click-px"[^>]*onClick=\{first\}/, "글씨를 눌러도 첫 등록이 열림");
+  assert.match(s, /data-testid="home-add"/, "검색란 옆 [개체 추가]는 그대로");
+  const html = await read("index.html");
+  assert.match(html, /\.click-px \{[^}]*image-rendering: pixelated/);
+  assert.match(await read("sw.js"), /'\.\/assets\/brand\/click-pixel\.png'/);
+  const png = await readFile(new URL("assets/brand/click-pixel.png", root));
+  assert.equal(png.readUInt32BE(16), 196); assert.equal(png.readUInt32BE(20), 156);
+});
