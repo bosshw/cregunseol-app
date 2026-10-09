@@ -46,7 +46,8 @@ test("keeps service worker and release metadata aligned", async () => {
   assert.equal(version.app, "1.9.26");
   assert.equal(version.schema, 1);
   assert.equal(version.minSchema, 1);
-  assert.match(worker, /const CACHE = 'creg-v58'/);
+  assert.match(worker, /const CACHE = 'creg-v59'/);
+  assert.match(worker, /'\.\/crevalue\.min\.js'/, 'CREVALUE must revalidate its HTTP cache when the service worker updates');
 
   for (const asset of [
     "./index.html",
