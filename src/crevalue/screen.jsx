@@ -1,8 +1,8 @@
 import {VERSION,PROFILES,TRAITS,SOURCES,profileFor,compareAssessments,scoreObservation,validateObservation,morphKeys} from './engine.js';
 import {CSV_HEADER,parseCSV,validateTransactions,estimatePrice} from './market.js';
 import {summarizeFeedback} from './feedback.js';
+import {createWorkerClient} from './transport.js';
 const {useState,useEffect}=React;
-const PORT='http://127.0.0.1:4264';
 const uid=()=>crypto.randomUUID();
 const date=v=>v?new Date(v).toLocaleString('ko-KR'):'';
 const statuses={queued:'PC 분석 대기',claiming:'분석 준비 중',analyzing:'사진 분석 중',waiting:'다른 PC 분석 대기',completed:'분석 완료',error:'분석 실패',blocked:'사용 한도 보호'};
@@ -70,10 +70,10 @@ function Comparison({jobs,bridge,report}){
 function Screen({bridge,navigate,gecko}){
  installStyle();const [tab,setTab]=useState('analyze'),[animals]=useState(()=>bridge.animals()),[animalId,setAnimal]=useState(gecko?.id||''),[name,setName]=useState(gecko?.name||''),[morphs,setMorphs]=useState(morphKeys(gecko?.morph)),[photos,setPhotos]=useState([]),[jobs,setJobs]=useState([]),[selected,setSelected]=useState(null),[status,setStatus]=useState(null),[message,setMessage]=useState(''),[busy,setBusy]=useState(false),[connected,setConnected]=useState(false),[forceReanalysis,setForceReanalysis]=useState(false),[photoUrl,setPhotoUrl]=useState(''),[blindMode,setBlindMode]=useState(false);
  const profile=profileFor(morphs.length?morphs:['normal']);
- const worker=async(route,body)=>{await bridge.ensure();const r=await fetch(PORT+'/api/'+route,{method:body?'POST':'GET',headers:{Authorization:'Bearer '+bridge.token(),'Content-Type':'application/json','X-Crevalue-Request':'1'},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(12000)});const d=await r.json();if(!r.ok)throw new Error(d.error||'PC 연결 오류');return d;};
+ const [client]=useState(()=>createWorkerClient(bridge));const worker=client.request;
  async function reload(){if(!bridge.isOwner())return;const rows=await bridge.list('crevalue',true);try{const live=await worker('status');setStatus(live);setConnected(true);}catch{setConnected(false);}setJobs(rows.sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt))));}
- async function connect(){setMessage('PC·Codex 연결을 확인하고 있습니다.');try{const s=await worker('status');setStatus(s);setConnected(true);setMessage(s.cloudError||s.quota.message);await reload();}catch{setConnected(false);setMessage('PC 분석 프로그램에 연결되지 않았습니다. PC에서 크레밸류 실행을 열어 주세요. 사진 요청은 서버에 대기시킬 수 있습니다.');}}
- useEffect(()=>{void reload().catch(e=>setMessage(e.message));void connect();const t=setInterval(()=>void reload().catch(()=>{}),6000);return()=>clearInterval(t);},[]);
+ async function connect(openWindow=false){setMessage('PC·Codex 연결을 확인하고 있습니다.');try{if(openWindow)await client.open();const s=await worker('status');setStatus(s);setConnected(true);setMessage(s.cloudError||s.quota.message);await reload();}catch(e){setConnected(false);setMessage('PC 분석 프로그램에 연결되지 않았습니다. 크레밸류 실행 후 위의 PC 연결 버튼을 눌러 주세요. 사진 요청은 서버에 대기시킬 수 있습니다. '+e.message);}}
+ useEffect(()=>{void reload().catch(e=>setMessage(e.message));void connect();const t=setInterval(()=>void reload().catch(()=>{}),6000);return()=>{clearInterval(t);client.dispose();};},[]);
  async function pick(files){setBusy(true);try{if(photos.length+files.length>6)throw new Error('사진은 최대 6장입니다.');const next=await Promise.all(Array.from(files).map(resizePhoto));setPhotos(old=>old.concat(next));setSelected(null);setMessage('사진을 준비했습니다. 모프를 확인하고 분석해 주세요.');}catch(e){setMessage(e.message);}finally{setBusy(false);}}
  async function submit(manual){setBusy(true);try{
   if(!photos.length)throw new Error('사진을 먼저 추가해 주세요.');if(!morphs.length)throw new Error('모프 기준을 선택해 주세요.');
@@ -86,7 +86,7 @@ function Screen({bridge,navigate,gecko}){
  const current=jobs.find(j=>j.id===selected);
  if(!bridge.isOwner())return <div className="screen cv"><div className="cv-main"><p>대표님 전용 기능입니다.</p><button className="btn btn-secondary" onClick={()=>navigate('home')}>홈으로</button></div></div>;
  return <div className="screen cv"><div className="header"><div className="header-row"><button className="back-btn" onClick={()=>navigate('home')}>‹ 브리딩비서</button><h1 style={{fontSize:17}}>크레밸류</h1></div></div><main className="cv-main">
- <div className="card cv-hero"><small>CREVALUE · 대표님 전용 시험판</small><h2 style={{marginTop:8}}>사진으로 살펴보는 우리 개체의 특징</h2><div className="cv-muted">{connected?'PC 연결됨':'PC 연결 대기'} · {status?.quota?.remaining!=null?`구독 잔여 ${status.quota.remaining}%`:'구독 한도 확인 필요'} · 10% 보호</div><button className="btn btn-secondary" style={{marginTop:10}} onClick={connect}>PC 연결·사용 한도 확인</button></div>
+ <div className="card cv-hero"><small>CREVALUE · 대표님 전용 시험판</small><h2 style={{marginTop:8}}>사진으로 살펴보는 우리 개체의 특징</h2><div className="cv-muted">{connected?'PC 연결됨':'PC 연결 대기'} · {status?.quota?.remaining!=null?`구독 잔여 ${status.quota.remaining}%`:'구독 한도 확인 필요'} · 10% 보호</div><button className="btn btn-secondary" style={{marginTop:10}} onClick={()=>connect(true)}>PC 연결·사용 한도 확인</button><p className="cv-muted">PC 연결 창이 열리면 그대로 두고 이 화면에서 평가해 주세요.</p></div>
  <nav className="cv-nav" aria-label="크레밸류 메뉴">{[['analyze','사진 평가'],['history','평가 기록'],['compare','비교·성장'],['market','거래·가격'],['criteria','평가 기준']].map(([k,l])=><button className={'chip-btn '+(tab===k?'active':'')} aria-pressed={tab===k} key={k} onClick={()=>setTab(k)}>{l}</button>)}</nav>
  {message&&<p className="cv-notice" role="status" aria-atomic="true">{message}</p>}
  {tab==='analyze'&&<><section className="card"><h2>1. 개체와 사진</h2><label>등록된 개체<select className="input" value={animalId} disabled={busy} onChange={e=>{setPhotos([]);setSelected(null);setMessage('개체를 바꾸어 사진 선택을 초기화했습니다.');const a=animals.find(x=>x.id===e.target.value);setAnimal(a?.id||'');setName(a?.name||'');if(a?.morph)setMorphs(morphKeys(a.morph));}}><option value="">사진만으로 새 평가</option>{animals.map(a=><option value={a.id} key={a.id}>{a.name} · {a.morph||'모프 미입력'}</option>)}</select></label><label>평가 이름<input className="input" value={name} maxLength="100" onChange={e=>setName(e.target.value)} placeholder="개체 이름 또는 구분할 이름"/></label>

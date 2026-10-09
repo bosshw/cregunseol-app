@@ -125,7 +125,8 @@ export async function createServer({port=4264,dataDir=path.join(process.env.LOCA
     if(req.method!=='GET')return send(405,{error:'GET only'});
     const rel=decodeURIComponent(pathname==='/'?'/index.html':pathname).slice(1);
     // Only public application assets are served; never repository, scripts, data or credentials.
-    if(!/^(index\.html|app\.min\.js|crevalue\.min\.js|brand-art\.(js|css)|welcome\.min\.js|extras\.min\.js|card\.min\.js|importer\.min\.js|manifest\.json|version\.json|icon-\d+\.png|g\.html|vendor\/[\w.-]+\.js|assets\/brand\/[\w.-]+\.(svg|webp|png))$/.test(rel))return send(404,{error:'Not found'});
+    if(!/^(index\.html|app\.min\.js|crevalue\.min\.js|crevalue-connect\.(html|js|css)|brand-art\.(js|css)|welcome\.min\.js|extras\.min\.js|card\.min\.js|importer\.min\.js|manifest\.json|version\.json|icon-\d+\.png|g\.html|vendor\/[\w.-]+\.js|assets\/brand\/[\w.-]+\.(svg|webp|png))$/.test(rel))return send(404,{error:'Not found'});
+    if(rel.startsWith('crevalue-connect.'))res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
     const data=await readFile(path.join(ROOT,rel));const ext=path.extname(rel);res.writeHead(200,{'Content-Type':({'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css','.svg':'image/svg+xml','.webp':'image/webp','.png':'image/png','.json':'application/json'})[ext]||'application/octet-stream','Cache-Control':'no-store'});res.end(data);return;
    }
    await auth(String(req.headers.authorization||'').match(/^Bearer\s+(\S+)$/i)?.[1]||'');
