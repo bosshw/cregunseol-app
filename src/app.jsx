@@ -4948,6 +4948,7 @@ function App() {
       {screen.name === 'settings' && (
         <SettingsScreen navigate={navigate} showToast={showToast} refreshIndividuals={refreshIndividuals} />
       )}
+      {screen.name === 'crevalue' && <CrevalueHost {...screen.props} navigate={navigate} />}
 
       {/* 하단 탭바 */}
       {[...TAB_SCREENS, 'settings'].includes(screen.name) && (
@@ -5033,6 +5034,68 @@ function loadScriptOnce(src, key) {
 }
 /* v1.9.21 시즌 노트 · 분양 카드 · 입양 화면은 extras.min.js 에 따로 있습니다(첫 화면 크기 한도) */
 const loadExtras = () => loadScriptOnce('./extras.min.js', 'CREG_EXTRAS');
+// CREVALUE stays lazy-loaded and outside the existing animal/sync data stores.
+const canUseCrevalue = () => !DEMO.on() && SYNC.userId() === OWNER_UID;
+const CREVALUE_BRIDGE = {
+  isOwner: canUseCrevalue,
+  async ensure() {
+    if (!canUseCrevalue()) throw new Error('대표님 전용 기능입니다.');
+    await SYNC.ensureSession();
+  },
+  token: () => SYNC.ses()?.access_token || '',
+  animals: () => DB.getIndividuals().map(g => {
+    const sale = DB.getEvents().find(e => e.individualId === g.id && e.type === 'distribution');
+    return { id:g.id, name:g.name, morph:g.morph, gender:g.gender, hatchDate:g.hatchDate, weight:lastWeightOf(g.id, DB.getEvents()), sireId:g.sireId, damId:g.damId, salePrice:g.salePrice, saleStatus:g.status, soldAt:sale?.date, finalPrice:sale?.data?.price };
+  }),
+  photos: id => DB.getEvents().filter(e => e.individualId === id && e.data?.photo).map(e => e.data.photo).reverse(),
+  async list(kind, summary = false) {
+    await this.ensure();
+    if (!['crevalue', 'crevalue_market', 'crevalue_feedback'].includes(kind)) throw new Error('기록 종류 오류');
+    const fields = summary ? 'id,name:data->name,status:data->status,createdAt:data->createdAt,animalId:data->animalId,result:data->result,error:data->error,morphs:data->morphs,blindMode:data->blindMode' : 'id,data';
+    const rows = [];
+    for(let offset=0;;offset+=500) {
+      const q = new URLSearchParams({ kind:'eq.'+kind, deleted:'eq.false', select:fields, order:'id.asc', limit:'500', offset:String(offset) });
+      const res = await SYNC.api('/rest/v1/cg_records?' + q);
+      if (!res.ok) throw new Error('평가 기록을 읽지 못했습니다. (' + res.status + ')');
+      const batch = await res.json(); rows.push(...batch); if(batch.length<500) break;
+    }
+    return summary ? rows : rows.map(r => ({ ...r.data, id: r.id }));
+  },
+  async get(kind, id) {
+    await this.ensure();
+    if (!['crevalue', 'crevalue_market', 'crevalue_feedback'].includes(kind)) throw new Error('기록 종류 오류');
+    const q = new URLSearchParams({ kind: 'eq.' + kind, id: 'eq.' + id, deleted: 'eq.false', select: 'id,data', limit: '1' });
+    const res = await SYNC.api('/rest/v1/cg_records?' + q);
+    if (!res.ok) throw new Error('사진 기록을 읽지 못했습니다.');
+    const rows = await res.json(); return rows[0]?.data || null;
+  },
+  async save(kind, data, deleted = false) {
+    await this.ensure();
+    if (!['crevalue', 'crevalue_market', 'crevalue_feedback'].includes(kind)) throw new Error('기록 종류 오류');
+    const res = await SYNC.api('/rest/v1/cg_records?on_conflict=user_id,kind,id', {
+      method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+      body: JSON.stringify({ user_id: OWNER_UID, kind, id: data.id, data, deleted }),
+    });
+    if (!res.ok) throw new Error('서버 저장에 실패했습니다. (' + res.status + ')');
+  },
+  remove(kind, data) { return this.save(kind, { ...data, deletedAt: now() }, true); },
+  async saveMany(kind, rows) {
+    await this.ensure();
+    if(kind!=='crevalue_market'||!Array.isArray(rows)||!rows.length||rows.length>5000) throw new Error('거래는 한 번에 1~5,000건 저장할 수 있습니다.');
+    const res = await SYNC.api('/rest/v1/cg_records?on_conflict=user_id,kind,id', { method:'POST', headers:{Prefer:'resolution=merge-duplicates,return=minimal'}, body:JSON.stringify(rows.map(data=>({user_id:OWNER_UID,kind,id:data.id,data,deleted:false}))) });
+    if(!res.ok) throw new Error('거래 일괄 저장 실패: 반영 여부를 확인하고 다시 시도해 주세요. ('+res.status+')');
+  },
+};
+function CrevalueHost(props) {
+  const [mod, setMod] = useState(() => window.CREG_VALUE || null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    if (!canUseCrevalue()) return;
+    loadScriptOnce('./crevalue.min.js', 'CREG_VALUE').then(setMod).catch(() => setError('크레밸류를 불러오지 못했습니다. 새로고침해 주세요.'));
+  }, []);
+  if (!canUseCrevalue()) return <div className="screen" style={{padding:24}}>대표님 전용 기능입니다.<button className="btn btn-secondary" onClick={() => props.navigate('home')}>홈으로</button></div>;
+  return mod ? <mod.Screen {...props} bridge={CREVALUE_BRIDGE} /> : <div className="screen" style={{padding:24}} role="status">{error || '크레밸류를 불러오고 있습니다…'}</div>;
+}
 function Extra({ part, ...props }) {
   const [mod, setMod] = useState(() => window.CREG_EXTRAS || null);
   useEffect(() => { if (!mod) loadExtras().then(setMod).catch(() => {}); }, []);
@@ -5114,6 +5177,7 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
             </div>
             {/* 설정은 v3.8부터 여기(예전 CG 배지 자리)로 올라왔습니다. 그 자리의 탭은 가계부가 씁니다 */}
             <div style={{display:'flex', alignItems:'center', gap:7, flexShrink:0}}>
+              {canUseCrevalue() && <button className="chip-btn" data-testid="crevalue-open" onClick={() => navigate('crevalue')}>크레밸류</button>}
               <GearBtn navigate={navigate} />
             </div>
           </div>
@@ -9585,6 +9649,7 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
       )}
 
       {/* 기록 추가 → 동일한 대화형 화면으로 */}
+      {canUseCrevalue() && <div style={{padding:'8px 16px'}}><button className="btn btn-secondary" data-testid="crevalue-animal" onClick={() => navigate('crevalue', { gecko })}>AI 퀄리티 분석 · 크레밸류</button></div>}
       <div style={{padding:'8px 16px 10px'}}>
         <button className="btn btn-primary" onClick={() => navigate('chat', { presetGecko: gecko })}>
           💬 {gecko.name} 기록하기
