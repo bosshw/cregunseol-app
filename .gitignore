@@ -1,1 +1,4 @@
 node_modules/
+.crevalue-data/
+.crevalue-qa/
+*.log

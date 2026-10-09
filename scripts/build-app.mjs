@@ -106,3 +106,11 @@ await build({
 });
 const ext = await stat(extrasOut);
 console.log(`extras.min.js ${ext.size} bytes`);
+
+// Owner-only preview: not part of the public first-load bundle.
+await build({
+  absWorkingDir: root, entryPoints: ['src/crevalue/screen.jsx'],
+  outfile: path.join(root, 'crevalue.min.js'), bundle: true, format: 'iife',
+  minify: true, legalComments: 'none', charset: 'utf8',
+  jsxFactory: 'React.createElement', jsxFragment: 'React.Fragment', target: ['es2020'],
+});
