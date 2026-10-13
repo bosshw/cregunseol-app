@@ -642,7 +642,7 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.26';
+const APP_VERSION = '1.9.27';
 const APP_PATCHED = '2026-09-28';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -1225,6 +1225,29 @@ function contactLinks(settings) {
 
 /* 하루에 하나면 충분한 기록 — 같은 날 두 번 적으면 덮어씁니다 */
 const ONE_PER_DAY = ['feeding', 'shed'];
+
+/* v1.9.27 — 먹이에 섞어 주는 첨가제(유산균·칼슘·해치랩). 대표님 요청.
+   저장은 급여 기록 data.supplements 에 key 배열로만 둡니다(['calcium','probiotic']). 없으면 칸 자체를 안 만듭니다.
+   ★ 화면·대화·공유 글자는 전부 suppText() 한 곳에서 뽑습니다.
+   femaleOnly — 해치랩은 암컷용이라 '전부 먹었어요'·✅ 로 찍을 때 암컷에게만 붙습니다. */
+const SUPPLEMENTS = [
+  { key: 'probiotic', label: '유산균', re: /유산균|프로바이오/ },
+  { key: 'calcium',   label: '칼슘',   re: /칼슘/ },
+  { key: 'hatchlab',  label: '해치랩', re: /해치\s*랩|hatch\s*lab/i, femaleOnly: true },
+];
+/* 순서는 늘 SUPPLEMENTS 순서 · 모르는 key 는 버립니다. sel 을 주면 그 조건에 맞는 것만 */
+const suppPick = (arr, sel) => SUPPLEMENTS.filter(x => (arr || []).indexOf(x.key) >= 0 && (!sel || sel(x)));
+const suppNorm = (arr) => suppPick(arr).map(x => x.key);
+/* "＋유산균·칼슘" — 없으면 빈 글자 */
+const suppText = (d, lead = ' ＋') => { const l = suppPick(d && d.supplements).map(x => x.label); return l.length ? lead + l.join('·') : ''; };
+/* 이 아이에게 실제로 붙일 첨가제 — 암컷용은 암컷에게만 */
+const suppFor = (ind, keys) => suppPick(keys, x => !x.femaleOnly || ind.gender === 'female').map(x => x.key);
+/* 급여 data 에 첨가제를 얹습니다 — 비면 칸을 지웁니다(옛 기록과 모양이 같게) */
+const withSupp = (data, keys) => {
+  const { supplements, ...out } = data;
+  const k = suppNorm(keys);
+  return k.length ? { ...out, supplements: k } : out;
+};
 
 /* 분양 상태 중 "내놓은" 상태 — KEEP과 함께 둘 수 없는 것들 */
 const SALE_STATUS = ['available', 'reserved', 'sold'];
@@ -2165,6 +2188,10 @@ function publicSummary(mine, allDates) {
   const foods = {};
   f30.forEach(e => { const f = String((e.data && e.data.foodType) || '').trim(); if (f) foods[f] = (foods[f] || 0) + 1; });
   const food = Object.keys(foods).sort((a, b) => foods[b] - foods[a]).slice(0, 2);
+  /* v1.9.27 — 최근 30일 첨가제 횟수(먹은 날만). 이름과 횟수만 나갑니다 */
+  const supp30 = SUPPLEMENTS.map(x => ({ label: x.label,
+    n: f30.filter(e => e.data && e.data.ate !== false && (e.data.supplements || []).indexOf(x.key) >= 0).length }))
+    .filter(x => x.n > 0);
   const sheds = mine.filter(e => e.type === 'shed').sort((a, b) => (a.date < b.date ? 1 : -1));
   const lastFeed = feeds.map(e => e.date).sort().pop() || '';
   const all = (allDates || mine.map(e => e.date)).filter(Boolean).sort();   // 날짜만 봅니다(내용은 안 나감)
@@ -2172,6 +2199,7 @@ function publicSummary(mine, allDates) {
     feed30: f30.length,
     refused30: f30.filter(e => e.data && e.data.ate === false).length,
     food,
+    supp30,
     lastFeed,
     feeds: feeds.length,
     sheds: sheds.length,
@@ -3483,6 +3511,11 @@ const RE_MATE  = /메이팅|교배|합사|짝짓기|붙였|붙여\s*놨|합방|�
 const RE_SHED  = /탈피|허물|각질\s*벗|껍질\s*벗/;
 const RE_FEED  = /피딩|먹이|밥|먹였|먹었|먹임|먹여|급여|사료|줬어|줬음|줬고|줬다|주었|급식/;
 const RE_NOFEED = /안\s*먹|못\s*먹|먹지\s*않|거식|남겼|안먹|입질\s*없/;
+/* 그날 이미 먹이 종류가 적힌 급여가 있는지 */
+const sameDayFoodType = (indId, d) => DB.getEvents().some(x => x.individualId === indId && x.type === 'feeding'
+  && x.date === (d || todayStr()) && x.data && x.data.foodType);
+/* 첨가제를 '줬다'는 말 — 섞어/타서/뿌려/넣어/더스팅 */
+const RE_SUPP_GIVE = /섞|타서|탔|뿌|넣|더스팅|줌|줬|주었|급여|먹/;
 /* 개체 이상 — 말한 그대로 항목을 잡습니다.
    ⚠️ '죽었'처럼 다른 뜻으로도 쓰는 말(귀뚜라미가 죽었어)은 일부러 넣지 않았습니다. */
 /* 컨디션 말 — 이상(HEALTH_RULES)보다 뒤에서 봅니다. "거식"은 이상이지 컨디션이 아닙니다 */
@@ -3563,12 +3596,16 @@ function extractFacts(text) {
   if (cond) push('condition', { level: cond[1] });
 
   // 먹이: 충식(귀뚜라미 계열)과 일반식(슈퍼푸드) 구분
-  const feedTrigger = RE_FEED.test(text) || CRICKET_RE.test(text) || SUPU_RE.test(text);
+  // v1.9.27 — "칼슘 섞어줌", "유산균 타서 줬어" 처럼 첨가제를 말하면 함께 적습니다.
+  //   첨가제 낱말만으로는 먹이 기록을 만들지 않습니다("칼슘 부족한가?"는 급여가 아님) — 주는 말이 같이 있어야 합니다.
+  const supps = SUPPLEMENTS.filter(x => x.re.test(text)).map(x => x.key);
+  const suppGive = supps.length && RE_SUPP_GIVE.test(text);
+  const feedTrigger = RE_FEED.test(text) || CRICKET_RE.test(text) || SUPU_RE.test(text) || suppGive;
   if (feedTrigger) {
     const foodType = CRICKET_RE.test(text) ? '충식' : SUPU_RE.test(text) ? '슈푸' : '';
     // 안 먹었다는 말도 기록으로 남깁니다 — 며칠째 안 먹는지 세는 데 씁니다
-    if (RE_NOFEED.test(text)) push('feeding', { ate: false, foodType, notes: '안 먹음' });
-    else push('feeding', { foodType, notes: text });
+    if (RE_NOFEED.test(text)) push('feeding', withSupp({ ate: false, foodType, notes: '안 먹음' }, supps));
+    else push('feeding', withSupp({ foodType, notes: text }, supps));
   }
 
   return facts;
@@ -4372,7 +4409,7 @@ function factLabel(f) {
     case 'laying':       d = f.data.eggCount ? '알 ' + f.data.eggCount + '개' : ''; break;
     case 'hatching':     d = f.data.count ? f.data.count + '마리' : ''; break;
     case 'distribution': d = f.data.price ? Number(f.data.price).toLocaleString() + '원' : ''; break;
-    case 'feeding':      d = f.data.foodType === '충식' ? '🦗 충식' : f.data.foodType === '슈푸' ? '🥣 슈푸' : ''; break;
+    case 'feeding':      d = (f.data.foodType === '충식' ? '🦗 충식' : f.data.foodType === '슈푸' ? '🥣 슈푸' : '') + suppText(f.data, f.data.foodType ? ' ＋' : ''); break;
     case 'health':       d = f.data.issue || ''; break;
     case 'eggphoto':     return '🥚 알 사진';
     case 'env':          d = [f.data.temp ? f.data.temp + '°C' : '', f.data.humid ? '습도 ' + f.data.humid + '%' : ''].filter(Boolean).join(' · '); break;
@@ -4469,7 +4506,7 @@ function answerQuery(target, text) {
     const e = last('feeding');
     if (!e) return none('먹이', '🍽️');
     const ft = e.data?.foodType === '충식' ? ' · 🦗 충식' : e.data?.foodType === '슈푸' ? ' · 🥣 슈푸' : '';
-    return `${target.name}가 마지막으로 밥 먹은 건 ${fmtDate(e.date)} (${ago(e)})이에요 🍽️${ft}`;
+    return `${target.name}가 마지막으로 밥 먹은 건 ${fmtDate(e.date)} (${ago(e)})이에요 🍽️${ft}${suppText(e.data)}`;
   }
   if (/해칭|부화/.test(text)) {
     const e = last('hatching');
@@ -4551,7 +4588,7 @@ function recordSummary(target) {
   if (sire || dam) L.push(`· 혈통 부 ${sire ? sire.name : '미등록'} · 모 ${dam ? dam.name : '미등록'}`);
   { const lm = littermatesOf(target, all); if (lm.length) L.push(`· 동배 ${lm.map(x => x.name).join(', ')}`); }
   if (w) L.push(`· 몸무게 ${w.data.weight}g (${fmtDate(w.date)})`);
-  if (feed) L.push(`· 마지막 밥 ${fmtDate(feed.date)}${feed.data && feed.data.foodType ? ` · ${feed.data.foodType}` : ''}`);
+  if (feed) L.push(`· 마지막 밥 ${fmtDate(feed.date)}${feed.data && feed.data.foodType ? ` · ${feed.data.foodType}` : ''}${suppText(feed.data)}`);
   if (shed) L.push(`· 마지막 탈피 ${fmtDate(shed.date)}`);
   if (mate) L.push(`· 마지막 메이팅 ${fmtDate(mate.date)}${mate.data && mate.data.partnerName ? ` · ${mate.data.partnerName}` : ''}`);
   if (lay) {
@@ -8628,7 +8665,8 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     }
 
     const withTarget = f => ({ ...f, date, targetId: target.id, targetName: target.name });
-    const unknownFeed = facts.find(f => f.type === 'feeding' && !f.data.foodType);
+    const unknownFeed = facts.find(f => f.type === 'feeding' && !f.data.foodType
+      && !(f.data.supplements && sameDayFoodType(target.id, f.date || date)));
     if (unknownFeed) {
       const rest = facts.filter(f => f !== unknownFeed);
       const head0 = [mateWarnLine, morphLine].filter(Boolean).join('\n');
@@ -8805,6 +8843,13 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       const fDate = f.date || todayStr();
       if (ONE_PER_DAY.includes(f.type)) {
         const dup = DB.getEvents().find(e => e.individualId === f.targetId && e.type === f.type && e.date === fDate);
+        /* v1.9.27 — 밥 주기 화면에서 '슈푸 먹음'을 찍은 뒤 "칼슘도 넣었어"라고 하면
+           먹이 종류는 살리고 첨가제는 합칩니다(그냥 바꿔 끼우면 슈푸가 지워집니다) */
+        if (dup && f.type === 'feeding' && dup.data && !dup.data.skipped) {
+          const pd = dup.data;
+          f.data = withSupp({ ...f.data, foodType: f.data.foodType || pd.foodType || '' },
+            [...(pd.supplements || []), ...(f.data.supplements || [])]);
+        }
         if (dup) DB.deleteEvent(dup.id);
       }
       /* 분양은 상태·분양가·분양처를 한 번에 맞춥니다 (분양가 입력창과 같은 길) */
@@ -9952,8 +9997,9 @@ function formatEventDetail(ev) {
     case 'feeding': {
       if (d.skipped) return '⏭️ 오늘은 안 줌';
       const f = d.foodType ? `${d.foodType === '충식' ? '🦗 충식' : '🥣 슈푸(일반식)'}` : '먹이';
-      if (d.ate === false) return `🚫 ${f} 안 먹음`;
-      return d.foodType ? `${f} 급여` : (d.notes || '먹이 급여');
+      const sp = suppText(d);
+      if (d.ate === false) return `🚫 ${f}${sp} 안 먹음`;
+      return d.foodType ? `${f}${sp} 급여` : sp ? `먹이${sp} 급여` : (d.notes || '먹이 급여');
     }
     case 'photo':        return '사진 기록';
     case 'memo':         return d.notes || '메모';
@@ -10466,6 +10512,9 @@ function FeedingScreen({ navigate, showToast, refreshIndividuals }) {
   const [ver, setVer] = useState(0);
   const [search, setSearch] = useState('');            // 53마리 중 한 마리 찾기
   const [foodType, setFoodType] = useState(() => (DB.getSettings() || {}).lastFoodType || '슈푸');
+  /* v1.9.27 — 이번에 섞어 준 첨가제. 늘 넣는 게 아니라서 화면을 열 때마다 비어서 시작합니다 */
+  const [supps, setSupps] = useState([]);
+  const toggleSupp = (k) => setSupps(a => (a.indexOf(k) >= 0 ? a.filter(x => x !== k) : [...a, k]));
   const bump = () => { setVer(v => v + 1); refreshIndividuals && refreshIndividuals(); };
   const fp = useMemo(() => feedPlan(), [ver]);
   // 밥 준 날 — 자정을 넘겨 체크하는 일이 많아서 날짜를 고를 수 있게 합니다
@@ -10478,23 +10527,32 @@ function FeedingScreen({ navigate, showToast, refreshIndividuals }) {
   const mark = (ind, kind) => {
     const prev = todayBy[ind.id];
     if (prev) DB.deleteEvent(prev.id);
-    const data = kind === 'ate' ? { ate: true, foodType }
-      : kind === 'left' ? { ate: false, foodType, notes: '안 먹음' }
+    const data = kind === 'ate' ? withSupp({ ate: true, foodType }, suppFor(ind, supps))
+      : kind === 'left' ? withSupp({ ate: false, foodType, notes: '안 먹음' }, suppFor(ind, supps))
       : { skipped: true, notes: '건너뜀' };
     DB.addEvent({ individualId: ind.id, type: 'feeding', date: today, data });
     bump();
   };
   const undo = (ind) => { const prev = todayBy[ind.id]; if (prev) { DB.deleteEvent(prev.id); bump(); } };
+  /* 찍은 뒤 한 마리만 첨가제를 고칠 때 (예: 이 아이만 칼슘 뺐어요) */
+  const toggleOne = (ind, k) => {
+    const prev = todayBy[ind.id];
+    if (!prev || !prev.data || prev.data.skipped) return;
+    const cur = prev.data.supplements || [];
+    DB.updateEvent(prev.id, { data: withSupp(prev.data, cur.indexOf(k) >= 0 ? cur.filter(x => x !== k) : [...cur, k]) });
+    bump();
+  };
 
   const allAte = () => {
     const additions = fp.inds
       .filter(i => !todayBy[i.id])
-      .map(i => ({ individualId: i.id, type: 'feeding', date: today, data: { ate: true, foodType } }));
+      .map(i => ({ individualId: i.id, type: 'feeding', date: today, data: withSupp({ ate: true, foodType }, suppFor(i, supps)) }));
     DB.addEvents(additions);
     const n = additions.length;
     DB.saveSettings({ ...DB.getSettings(), lastFoodType: foodType });
     bump();
-    showToast(n ? `🦗 ${n}마리 급여 기록 완료` : '이미 다 체크했어요');
+    const sp = suppText({ supplements: supps });
+    showToast(n ? `🦗 ${n}마리 급여 기록 완료${sp}` : '이미 다 체크했어요');
   };
 
   const doneCnt = fp.inds.filter(i => todayBy[i.id]).length;
@@ -10550,6 +10608,20 @@ function FeedingScreen({ navigate, showToast, refreshIndividuals }) {
                 onClick={() => setFoodType(t)}>{t}</button>
             ))}
           </div>
+          {/* v1.9.27 — 섞어 준 것 (여러 개 고를 수 있어요). 고른 뒤 ✅·전부 먹었어요를 누르면 같이 적힙니다 */}
+          <div style={{display:'flex', alignItems:'center', flexWrap:'wrap', gap:6, marginTop:8}}>
+            <span style={{fontSize:12, color:'var(--text3)'}}>섞어 준 것</span>
+            {SUPPLEMENTS.map(x => {
+              const on = supps.indexOf(x.key) >= 0;
+              return (
+                <button key={x.key} className="filter-chip" aria-pressed={on}
+                  style={on ? CHIP_ON : CHIP_OFF} onClick={() => toggleSupp(x.key)}>
+                  {on ? '✓ ' : ''}{x.label}{x.femaleOnly ? ' (암컷)' : ''}
+                </button>
+              );
+            })}
+          </div>
+
           <button className="btn btn-primary btn-sm" style={{marginTop:10}} onClick={allAte}>
             남은 {fp.inds.length - doneCnt}마리 전부 "먹었어요"로
           </button>
@@ -10593,6 +10665,19 @@ function FeedingScreen({ navigate, showToast, refreshIndividuals }) {
                   <div style={{fontSize:11, color:'var(--text3)', marginTop:2}}>
                     {fp.ateBy[i.id] ? `마지막 섭취 ${fmtDate(fp.ateBy[i.id])}` : '섭취 기록 없음'}
                   </div>
+                  {(k === 'ate' || k === 'left') && (
+                    <div style={{display:'flex', flexWrap:'wrap', gap:4, marginTop:6}}>
+                      {SUPPLEMENTS.filter(x => !x.femaleOnly || i.gender === 'female').map(x => {
+                        const on = (todayBy[i.id].data.supplements || []).indexOf(x.key) >= 0;
+                        return (
+                          <button key={x.key} className="filter-chip" aria-pressed={on} onClick={() => toggleOne(i, x.key)}
+                            style={{...(on ? CHIP_ON : CHIP_OFF), fontSize:11, padding:'3px 8px'}}>
+                            {on ? '✓ ' : '＋'}{x.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
                 {k ? (
                   <button className="btn btn-secondary btn-sm" style={{width:'auto', whiteSpace:'nowrap'}} onClick={() => undo(i)}>
@@ -10612,6 +10697,7 @@ function FeedingScreen({ navigate, showToast, refreshIndividuals }) {
         <div style={{fontSize:11, color:'var(--text3)', textAlign:'center', padding:'8px 0'}}>
           ✅ 먹었어요 · 🚫 안 먹었어요 · ⏭️ 오늘은 안 줬어요
         </div>
+
         <div style={{fontSize:11, color:'var(--text3)', textAlign:'center'}}>
           {feedWarn()}일 넘게 안 먹은 아이는 브리핑에서 따로 알려드려요<br/>
           (설정에서 조절할 수 있어요)
