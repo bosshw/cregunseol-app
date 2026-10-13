@@ -219,6 +219,8 @@
       h += '</div><div class="facts">';
       if (sm.lastFeed) h += row('마지막 먹이', fmt(sm.lastFeed) + (daysAgo(sm.lastFeed) ? ' (' + daysAgo(sm.lastFeed) + ')' : ''));
       if (sm.food && sm.food.length) h += row('주로 먹는 것', sm.food.join(' · '));
+      /* v1.9.27 — 최근 30일 먹이에 섞어 준 것(유산균·칼슘·해치랩) */
+      if (sm.supp30 && sm.supp30.length) h += row('30일 첨가제', sm.supp30.map(function (x) { return x.label + ' ' + (+x.n || 0) + '번'; }).join(' · '));
       if (sm.feed30) h += row('최근 30일 거식', sm.refused30 ? sm.refused30 + '번' : '없음');
       if (sm.lastShed) h += row('마지막 탈피', fmt(sm.lastShed));
       if (sm.since) h += row('기록한 지', fmt(sm.since) + '부터');
