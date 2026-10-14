@@ -101,3 +101,15 @@ test("생일 — 화면 연결(홈 팝업·브리핑 맨 위·설정)과 중복 
   assert.match(ex, /function DupMergeCard/);
   assert.match(app, /DB\.findDuplicateNames\(\)\.length > 0 && <Extra part="DupMergeCard"/);
 });
+
+test("v1.9.29 생일 팝업 — 등록한 사진이 있으면 그 아이 사진, 못 불러오면 크한이", async () => {
+  const ex = await readFile(new URL("src/extras.jsx", root), "utf8");
+  const pop = ex.slice(ex.indexOf("function BirthdayPopup"), ex.indexOf("function BirthdayPopup") + 4000);
+  assert.match(pop, /avatarSrc\(b\.g\)/, "앱 카드와 같은 사진 고르기(대표 사진 → 프로필 → 첫 사진)");
+  assert.match(pop, /\.slice\(0, 3\)/, "여러 마리면 3장까지");
+  assert.match(pop, /onError=\{\(\) => setBad/, "못 불러온 사진은 빼고");
+  assert.match(pop, /pics\.length \? \([\s\S]*?\) : <img className="bday-hero"/, "사진이 하나도 없으면 크한이");
+  const { json } = await loadApp({ cg_individuals: [I("a", "크한이", { hatchDate: "2025-10-14", avatar: "data:image/jpeg;base64,AAAA" }), I("b", "크범이", { hatchDate: "2025-10-14" })] });
+  assert.equal(json(`avatarSrc(DB.getIndividuals()[0])`), "data:image/jpeg;base64,AAAA");
+  assert.equal(json(`avatarSrc(DB.getIndividuals()[1])`), null);
+});
