@@ -642,7 +642,7 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.27';
+const APP_VERSION = '1.9.28';
 const APP_PATCHED = '2026-09-28';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -4889,6 +4889,7 @@ function App() {
     return () => window.removeEventListener('cg-onb', f);
   }, []);
   /* v1.9.21 입양 링크로 들어온 분 — 받기 화면을 맨 앞에 */
+  const [bdayPop, setBdayPop] = useState(bdayPopList);   // v1.9.28 생일 팝업
   const [adoptCode, setAdoptCode] = useState(() => { try { return new URLSearchParams(location.search).get('adopt') || ''; } catch (e) { return ''; } });
   const stackRef = useRef([{ name: 'home', props: {} }]);
   const navigate = (name, props = {}) => {
@@ -4954,6 +4955,7 @@ function App() {
         onClose={() => { setOnb(false); refreshIndividuals(); }} />}
       {screen.name === 'home' && needsOpenHint() && <Welcome part="OpenHint" />}
       {needsOpenHint() && <Welcome part="InstallGate" />}
+      {screen.name === 'home' && bdayPop && !onb && !adoptCode && !DEMO.on() && !needsOpenHint() && <Extra part="BirthdayPopup" list={bdayPop} navigate={navigate} showToast={showToast} onClose={() => setBdayPop(null)} />}
 
       {screen.name === 'home' && (
         <HomeScreen key={screen.props.view || 'own'} {...screen.props} individuals={individuals} navigate={navigate} showToast={showToast} refreshIndividuals={refreshIndividuals} />
@@ -5139,6 +5141,17 @@ function Extra({ part, ...props }) {
   const C = mod && mod[part];
   return C ? <C {...props} /> : null;
 }
+/* v1.9.28 아기들 생일 — 부화일(생일)과 오늘의 달·날이 같은 아이. 부화한 해는 빼고 1살부터 셉니다.
+   곁에 있는 아이만(분양 간 아이·무지개다리 건넌 아이·남의 아이는 빼요). 2월 29일생은 평년엔 2월 28일에. */
+const birthdaysToday = (list, today) => {
+  const t = today || todayStr(), y = +t.slice(0, 4), md = t.slice(5, 10), leap = (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+  return (list || DB.getIndividuals()).filter(g => isHere(g) && /^\d{4}-\d\d-\d\d/.test(g.hatchDate || '') && +g.hatchDate.slice(0, 4) < y
+    && (g.hatchDate.slice(5, 10) === md || (!leap && md === '02-28' && g.hatchDate.slice(5, 10) === '02-29')))
+    .map(g => ({ g, age: y - +g.hatchDate.slice(0, 4) }));
+};
+const bdayLine = (b) => '🎂 오늘은 ' + b.map(x => x.g.name + ' ' + x.age + '살').join(' · ') + ' 생일이에요!';
+/* 홈 팝업은 하루 한 번 — 끄셨거나(설정·팝업 체크) 오늘 이미 보셨으면 안 띄웁니다 */
+const bdayPopList = () => { try { if ((DB.getSettings() || {}).bdayPopupOff || localStorage.getItem('cg_bday_seen') === todayStr()) return null; const b = birthdaysToday(); return b.length ? b : null; } catch (e) { return null; } };
 /* 브리딩 기록(산란·메이팅·자식)이 있는 아이인지 — 시즌 노트 버튼을 보일지 */
 const hasBreeding = (g) => !!g && DB.getEvents().some(e => (e.type === 'laying' && e.individualId === g.id) || (e.type === 'mating' && (e.individualId === g.id || (e.data && e.data.partnerId === g.id))));
 function loadWelcome() {
@@ -10711,6 +10724,7 @@ function RemindersScreen({ navigate, onChanged }) {
   const [all, setAll] = useState(() => allAlerts());
   const todo = useMemo(() => buildTodo(all, navigate), [all, navigate]);
   const brief = useMemo(() => briefLines(), [all]);
+  const bdays = useMemo(() => birthdaysToday(), []);
   const nudge = useMemo(() => todayNudge(), [all]);
   const nudgeGo = nudgeAction(nudge, navigate);
   const thisWeek = all.filter(r => { const d = daysUntil(r.date); return d > 0 && d <= WEEK_WINDOW; });
@@ -10746,6 +10760,8 @@ function RemindersScreen({ navigate, onChanged }) {
         </div>
       </div>
 
+      {/* v1.9.28 생일 — 브리핑 맨 위에, 그날 하루만 */}
+      {bdays.length > 0 && <div className="card" data-testid="bday-brief" style={{background:'var(--gold-soft)', border:'1px solid var(--gold-edge)', fontSize:15, fontWeight:800, lineHeight:1.55}}>{bdayLine(bdays)}</div>}
       {/* 오늘의 브리핑 — 카드를 늘어놓기 전에 하루를 먼저 정리해 드립니다 */}
       {brief.length > 0 && (
         <div className="card" data-testid="today-brief"
@@ -11046,93 +11062,7 @@ function buildWorkbook(XLSX) {
    같은 이름이 두 개 이상일 때만 나타납니다.
    고르는 건 "프로필"뿐이고, 기록·사진은 어느 쪽을 골라도 전부 합쳐집니다.
    ══════════════════════════════════════════ */
-function DupMergeCard({ showToast, refreshIndividuals }) {
-  const [ver, setVer] = useState(0);
-  const [choice, setChoice] = useState({});
-  const [busy, setBusy] = useState(false);
-  const groups = DB.findDuplicateNames();
-  if (!groups.length) return null;
-
-  // 정보가 더 알찬 쪽을 기본 선택 (채워진 항목 수 → 기록 수 순)
-  const score = (i) => ['gender', 'morph', 'spots', 'hatchDate', 'avatar'].filter(k => {
-    const v = i[k]; return v && v !== 'unknown';
-  }).length;
-  const best = (items) => [...items].sort((a, b) =>
-    score(b) - score(a) || DB.getEventsFor(b.id).length - DB.getEventsFor(a.id).length)[0];
-
-  const summary = (i) => {
-    const bits = [];
-    bits.push(genderLabel(i.gender));
-    if (i.morph) bits.push(i.morph);
-    bits.push(i.hatchDate ? fmtDate(i.hatchDate) + ' 출생' : '출생일 없음');
-    if ((i.status || 'own') !== 'own') bits.push(STATUS[i.status].label);
-    return bits.join(' · ');
-  };
-
-  const mergeOne = (g) => {
-    const keep = choice[g.name] || best(g.items).id;
-    g.items.forEach(i => { if (i.id !== keep) DB.mergeIndividuals(keep, i.id, 'keep'); });
-    return g.items.length - 1;
-  };
-
-  const doOne = (g) => {
-    setBusy(true);
-    const n = mergeOne(g);
-    refreshIndividuals(); setVer(v => v + 1); setBusy(false);
-    showToast(`✅ ${g.name} 합쳤어요 (${n}건 정리)`);
-  };
-
-  const doAll = () => {
-    setBusy(true);
-    let n = 0;
-    groups.forEach(g => { n += mergeOne(g); });
-    refreshIndividuals(); setVer(v => v + 1); setBusy(false);
-    showToast(`✅ 중복 ${n}건 정리 완료`);
-  };
-
-  return (
-    <div className="card" style={{margin:0, border:'1px solid var(--accent-dim)'}}>
-      <div style={{fontSize:13, fontWeight:700, marginBottom:4, color:'var(--accent2)'}}>
-        🔀 같은 이름 개체 {groups.length}건
-      </div>
-      <div style={{fontSize:12, color:'var(--text3)', lineHeight:1.6, marginBottom:10}}>
-        기기마다 따로 등록돼서 같은 아이가 둘로 나뉘었어요.<br/>
-        <b>어느 정보를 쓸지만 고르시면 됩니다. 기록과 사진은 전부 합쳐져요.</b>
-      </div>
-
-      {groups.map(g => {
-        const sel = choice[g.name] || best(g.items).id;
-        const total = g.items.reduce((s, i) => s + DB.getEventsFor(i.id).length, 0);
-        return (
-          <div key={g.name} style={{background:'var(--bg3)', borderRadius:10, padding:12, marginBottom:10}}>
-            <div style={{fontSize:14, fontWeight:700, marginBottom:8}}>🦎 {g.name}</div>
-            <div style={{display:'flex', flexDirection:'column', gap:6}}>
-              {g.items.map(i => (
-                <button key={i.id}
-                  className={`option-btn ${sel === i.id ? 'selected' : ''}`}
-                  style={{textAlign:'left', fontSize:12, lineHeight:1.5}}
-                  onClick={() => setChoice(c => ({ ...c, [g.name]: i.id }))}>
-                  {sel === i.id ? '◉ ' : '○ '}{summary(i)}
-                  <span style={{color:'var(--text3)'}}> · 기록 {DB.getEventsFor(i.id).length}건</span>
-                </button>
-              ))}
-            </div>
-            <div style={{fontSize:11, color:'var(--text3)', margin:'8px 0 8px'}}>
-              → 기록 {total}건은 어느 쪽을 고르셔도 전부 남습니다
-            </div>
-            <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => doOne(g)}>합치기</button>
-          </div>
-        );
-      })}
-
-      {groups.length > 1 && (
-        <button className="btn btn-secondary" disabled={busy} onClick={doAll}>
-          전부 합치기 ({groups.length}건)
-        </button>
-      )}
-    </div>
-  );
-}
+/* 중복 개체 정리 카드는 extras.min.js 로 옮겼습니다(v1.9.28 — 첫 화면 크기 한도). 같은 이름이 있을 때만 불러옵니다 */
 
 /* ══════════════════════════════════════════
    설정 · 익명 방문 집계 안내
@@ -11687,7 +11617,11 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
             })}
           </div>
         </div>
-        <DupMergeCard showToast={showToast} refreshIndividuals={refreshIndividuals} />
+        <label className="card" data-testid="bday-set" style={{margin:0, display:'flex', alignItems:'center', gap:10, cursor:'pointer', fontSize:13, fontWeight:700, color:'var(--text2)'}}>
+          <input type="checkbox" checked={!settings.bdayPopupOff} onChange={e => { const n = { ...settings, bdayPopupOff: !e.target.checked }; DB.saveSettings(n); setSettings(n); }} />
+          🎂 아이 생일날 홈에 축하 팝업 띄우기
+        </label>
+        {DB.findDuplicateNames().length > 0 && <Extra part="DupMergeCard" showToast={showToast} refreshIndividuals={refreshIndividuals} />}
         <SyncCard showToast={showToast} refreshIndividuals={refreshIndividuals} />
         <PushCard showToast={showToast} />
         <TrackCard showToast={showToast} />

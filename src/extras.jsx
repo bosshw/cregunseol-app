@@ -10,7 +10,7 @@
     if (document.getElementById('cg-extras-css')) return;
     const st = document.createElement('style');
     st.id = 'cg-extras-css';
-    st.textContent = `.onb { position: fixed; inset: 0; z-index: 1000; background: var(--bg); display: flex; align-items: flex-start; justify-content: center; overflow-y: auto; padding: calc(28px + var(--safe-top)) 18px calc(24px + var(--safe-bottom)); } .onb-card { position: relative; width: 100%; max-width: 420px; display: flex; flex-direction: column; align-items: stretch; text-align: center; padding-top: 18px; } .onb-card h2 { font-size: 23px; line-height: 1.38; margin: 18px 0 8px; color: var(--text); word-break: keep-all; } .onb-card p { font-size: 14.5px; line-height: 1.6; color: var(--text2); margin: 0 0 14px; word-break: keep-all; } .onb-hero { align-self: center; margin-top: 18px; } .onb-bar { height: 5px; border-radius: 3px; background: var(--border); overflow: hidden; margin: 0 34px 0 44px; } .onb-bar i { display: block; height: 100%; background: var(--accent); border-radius: 3px; transition: width .25s; } .onb-back { position: absolute; left: -4px; top: 2px; background: none; border: none; font-size: 30px; line-height: 1; color: var(--text3); cursor: pointer; padding: 0 8px; } .onb-input { width: 100%; font-size: 19px; padding: 14px 16px; border-radius: 14px; border: 1.5px solid var(--border); background: var(--card); color: var(--text); margin: 8px 0 4px; text-align: center; } .onb-input:focus { outline: none; border-color: var(--accent); } .onb-err { color: var(--accent2); font-size: 13px; margin: 4px 0; } .onb-main { margin-top: 18px; background: var(--accent); color: var(--on-accent); border: none; border-radius: 16px; padding: 16px; font-size: 17px; font-weight: 800; cursor: pointer; } .onb-main:disabled { opacity: .55; } .onb-sub { margin-top: 12px; background: none; border: none; color: var(--text2); font-size: 14px; text-decoration: underline; cursor: pointer; padding: 6px; } .onb-sub.strong { color: var(--accent2); font-weight: 700; } .onb-skip { margin-top: 26px; align-self: center; background: none; border: none; color: var(--text3); font-size: 12.5px; text-decoration: underline; cursor: pointer; padding: 6px 10px; } .onb-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; } .onb-grid.two { grid-template-columns: repeat(2, 1fr); } .onb-opt { background: var(--card); border: 1.5px solid var(--border); border-radius: 14px; padding: 15px 6px; font-size: 15px; font-weight: 700; color: var(--text); cursor: pointer; word-break: keep-all; } .onb-opt.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent2); } .onb-or { font-size: 12.5px; color: var(--text3); margin-top: 14px; } .onb-done { font-size: 48px; margin-top: 18px; } .onb-say { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 12px; font-size: 15px; line-height: 1.8; color: var(--accent2); font-weight: 700; } .onb-warn { font-size: 12.5px !important; color: var(--accent2) !important; background: var(--accent-soft); border-radius: 10px; padding: 8px 10px; margin-top: 12px !important; text-align: left; } .onb-link { background: none; border: none; color: var(--accent2); text-decoration: underline; font-weight: 700; padding: 0; cursor: pointer; font-size: inherit; } .sn-years { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; } .sn-years button, .sn-dirs button, .sn-tags button { border: 1px solid var(--border); background: var(--card); color: var(--text2); border-radius: 16px; padding: 6px 12px; font-size: 13px; font-weight: 600; cursor: pointer; } .sn-years button.on, .sn-dirs button.on, .sn-tags button.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent2); } .sn-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 10px; } .sn-tile { background: var(--bg2); border-radius: 12px; padding: 9px 11px; display: flex; flex-direction: column; text-align: left; } .sn-tile span { font-size: 11.5px; color: var(--text3); } .sn-tile b { font-size: 18px; color: var(--text); margin-top: 2px; } .sn-tile small { font-size: 11.5px; color: var(--text2); } .sn-facts { background: var(--accent-soft); color: var(--accent2); border-radius: 10px; padding: 8px 10px; font-size: 12.5px; line-height: 1.6; margin-bottom: 10px; } .sn-sec { margin: 6px 0 12px; } .sn-h { font-size: 13px; font-weight: 800; margin-bottom: 6px; color: var(--text); } .sn-pair { display: flex; justify-content: space-between; font-size: 13px; padding: 5px 2px; border-bottom: 1px solid var(--border); color: var(--text2); } .sn-kid { border: 1px solid var(--border); border-radius: 12px; margin-bottom: 6px; overflow: hidden; } .sn-kid-top { width: 100%; background: none; border: none; text-align: left; padding: 9px 11px; display: flex; flex-wrap: wrap; gap: 2px 8px; align-items: baseline; cursor: pointer; color: var(--text); } .sn-kid-top b { font-size: 14px; } .sn-kid-top span { font-size: 12px; color: var(--text3); } .sn-kid-top i { font-style: normal; font-size: 12px; color: var(--accent2); width: 100%; } .sn-kid-body { padding: 0 11px 10px; } .sn-tags, .sn-dirs { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; } .sn-ta { min-height: 54px; margin-bottom: 6px; resize: vertical; font-size: 13.5px; } .sn-empty { font-size: 13px; color: var(--text3); padding: 10px 0; } .sn-empty.small { padding: 2px 0 6px; } .card-prev { border-radius: 14px; overflow: hidden; background: var(--bg2); aspect-ratio: 1 / 1; display: flex; align-items: center; justify-content: center; } .card-prev img { width: 100%; height: 100%; display: block; } .card-wait { font-size: 13px; color: var(--text3); } .adopt-cover { width: 180px; height: 180px; border-radius: 50%; overflow: hidden; align-self: center; margin-top: 14px; background: var(--bg2); display: flex; align-items: center; justify-content: center; font-size: 60px; border: 4px solid var(--accent-soft); } .adopt-cover img { width: 100%; height: 100%; object-fit: cover; } .adopt-info { display: flex; flex-direction: column; gap: 3px; background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 12px; margin: 4px 0 12px; } .adopt-info b { font-size: 22px; } .adopt-info span { font-size: 13.5px; color: var(--text2); } .adopt-info small { font-size: 12.5px; color: var(--accent2); margin-top: 4px; } .adopt-name { display: block; text-align: left; font-size: 12.5px; color: var(--text3); } .adopt-memo { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; padding: 7px 0; border-bottom: 1px solid var(--border); text-align: left; } .adopt-memo span { flex: 1; line-height: 1.5; word-break: break-all; } .adopt-memo small { display: block; font-size: 11px; color: var(--text3); }`;
+    st.textContent = `.onb { position: fixed; inset: 0; z-index: 1000; background: var(--bg); display: flex; align-items: flex-start; justify-content: center; overflow-y: auto; padding: calc(28px + var(--safe-top)) 18px calc(24px + var(--safe-bottom)); } .onb-card { position: relative; width: 100%; max-width: 420px; display: flex; flex-direction: column; align-items: stretch; text-align: center; padding-top: 18px; } .onb-card h2 { font-size: 23px; line-height: 1.38; margin: 18px 0 8px; color: var(--text); word-break: keep-all; } .onb-card p { font-size: 14.5px; line-height: 1.6; color: var(--text2); margin: 0 0 14px; word-break: keep-all; } .onb-hero { align-self: center; margin-top: 18px; } .onb-bar { height: 5px; border-radius: 3px; background: var(--border); overflow: hidden; margin: 0 34px 0 44px; } .onb-bar i { display: block; height: 100%; background: var(--accent); border-radius: 3px; transition: width .25s; } .onb-back { position: absolute; left: -4px; top: 2px; background: none; border: none; font-size: 30px; line-height: 1; color: var(--text3); cursor: pointer; padding: 0 8px; } .onb-input { width: 100%; font-size: 19px; padding: 14px 16px; border-radius: 14px; border: 1.5px solid var(--border); background: var(--card); color: var(--text); margin: 8px 0 4px; text-align: center; } .onb-input:focus { outline: none; border-color: var(--accent); } .onb-err { color: var(--accent2); font-size: 13px; margin: 4px 0; } .onb-main { margin-top: 18px; background: var(--accent); color: var(--on-accent); border: none; border-radius: 16px; padding: 16px; font-size: 17px; font-weight: 800; cursor: pointer; } .onb-main:disabled { opacity: .55; } .onb-sub { margin-top: 12px; background: none; border: none; color: var(--text2); font-size: 14px; text-decoration: underline; cursor: pointer; padding: 6px; } .onb-sub.strong { color: var(--accent2); font-weight: 700; } .onb-skip { margin-top: 26px; align-self: center; background: none; border: none; color: var(--text3); font-size: 12.5px; text-decoration: underline; cursor: pointer; padding: 6px 10px; } .onb-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; } .onb-grid.two { grid-template-columns: repeat(2, 1fr); } .onb-opt { background: var(--card); border: 1.5px solid var(--border); border-radius: 14px; padding: 15px 6px; font-size: 15px; font-weight: 700; color: var(--text); cursor: pointer; word-break: keep-all; } .onb-opt.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent2); } .onb-or { font-size: 12.5px; color: var(--text3); margin-top: 14px; } .onb-done { font-size: 48px; margin-top: 18px; } .onb-say { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 12px; font-size: 15px; line-height: 1.8; color: var(--accent2); font-weight: 700; } .onb-warn { font-size: 12.5px !important; color: var(--accent2) !important; background: var(--accent-soft); border-radius: 10px; padding: 8px 10px; margin-top: 12px !important; text-align: left; } .onb-link { background: none; border: none; color: var(--accent2); text-decoration: underline; font-weight: 700; padding: 0; cursor: pointer; font-size: inherit; } .sn-years { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; } .sn-years button, .sn-dirs button, .sn-tags button { border: 1px solid var(--border); background: var(--card); color: var(--text2); border-radius: 16px; padding: 6px 12px; font-size: 13px; font-weight: 600; cursor: pointer; } .sn-years button.on, .sn-dirs button.on, .sn-tags button.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent2); } .sn-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 10px; } .sn-tile { background: var(--bg2); border-radius: 12px; padding: 9px 11px; display: flex; flex-direction: column; text-align: left; } .sn-tile span { font-size: 11.5px; color: var(--text3); } .sn-tile b { font-size: 18px; color: var(--text); margin-top: 2px; } .sn-tile small { font-size: 11.5px; color: var(--text2); } .sn-facts { background: var(--accent-soft); color: var(--accent2); border-radius: 10px; padding: 8px 10px; font-size: 12.5px; line-height: 1.6; margin-bottom: 10px; } .sn-sec { margin: 6px 0 12px; } .sn-h { font-size: 13px; font-weight: 800; margin-bottom: 6px; color: var(--text); } .sn-pair { display: flex; justify-content: space-between; font-size: 13px; padding: 5px 2px; border-bottom: 1px solid var(--border); color: var(--text2); } .sn-kid { border: 1px solid var(--border); border-radius: 12px; margin-bottom: 6px; overflow: hidden; } .sn-kid-top { width: 100%; background: none; border: none; text-align: left; padding: 9px 11px; display: flex; flex-wrap: wrap; gap: 2px 8px; align-items: baseline; cursor: pointer; color: var(--text); } .sn-kid-top b { font-size: 14px; } .sn-kid-top span { font-size: 12px; color: var(--text3); } .sn-kid-top i { font-style: normal; font-size: 12px; color: var(--accent2); width: 100%; } .sn-kid-body { padding: 0 11px 10px; } .sn-tags, .sn-dirs { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; } .sn-ta { min-height: 54px; margin-bottom: 6px; resize: vertical; font-size: 13.5px; } .sn-empty { font-size: 13px; color: var(--text3); padding: 10px 0; } .sn-empty.small { padding: 2px 0 6px; } .card-prev { border-radius: 14px; overflow: hidden; background: var(--bg2); aspect-ratio: 1 / 1; display: flex; align-items: center; justify-content: center; } .card-prev img { width: 100%; height: 100%; display: block; } .card-wait { font-size: 13px; color: var(--text3); } .adopt-cover { width: 180px; height: 180px; border-radius: 50%; overflow: hidden; align-self: center; margin-top: 14px; background: var(--bg2); display: flex; align-items: center; justify-content: center; font-size: 60px; border: 4px solid var(--accent-soft); } .adopt-cover img { width: 100%; height: 100%; object-fit: cover; } .adopt-info { display: flex; flex-direction: column; gap: 3px; background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 12px; margin: 4px 0 12px; } .adopt-info b { font-size: 22px; } .adopt-info span { font-size: 13.5px; color: var(--text2); } .adopt-info small { font-size: 12.5px; color: var(--accent2); margin-top: 4px; } .adopt-name { display: block; text-align: left; font-size: 12.5px; color: var(--text3); } .adopt-memo { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; padding: 7px 0; border-bottom: 1px solid var(--border); text-align: left; } .adopt-memo span { flex: 1; line-height: 1.5; word-break: break-all; } .adopt-memo small { display: block; font-size: 11px; color: var(--text3); } .bday-bg { position: fixed; inset: 0; z-index: 950; background: rgba(24,16,13,.5); display: flex; align-items: center; justify-content: center; padding: 20px; } .bday-card { width: 100%; max-width: 360px; background: var(--card); border-radius: 24px; padding: 22px 20px 14px; text-align: center; box-shadow: 0 12px 36px rgba(0,0,0,.2); display: flex; flex-direction: column; align-items: center; } .bday-hero { width: 104px; height: 104px; image-rendering: pixelated; } .bday-card h2 { font-size: 21px; line-height: 1.4; margin: 8px 0 4px; color: var(--text); word-break: keep-all; } .bday-ages { font-size: 13.5px; color: var(--accent2); font-weight: 700; margin-bottom: 6px; word-break: keep-all; } .bday-say { font-size: 15.5px; line-height: 1.6; color: var(--text2); margin: 4px 0 16px; word-break: keep-all; } .bday-card .btn { width: 100%; margin-bottom: 8px; } .bday-off { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text3); margin-top: 6px; cursor: pointer; }`;
     document.head.appendChild(st);
   } catch (e) {}
 })();
@@ -908,8 +908,147 @@ function chat(p, ctx) {
   }
 }
 
+
+/* ══════════════════════════════════════════
+   v1.9.28 생일 축하 팝업 — 생일날 홈을 열면 하루 한 번 (대표님 2026-10-14)
+   ★ 멘트는 여러 개 중에서 고릅니다. 같은 날엔 같은 멘트(날짜+이름으로 고름) — 다시 열어도 바뀌지 않게.
+   ★ "앞으로 띄우지 않기"는 설정의 생일 팝업 켜기와 같은 값(bdayPopupOff)입니다. 브리핑 맨 위 생일 문구는 그대로 나옵니다.
+   ══════════════════════════════════════════ */
+const BDAY_LINES = [
+  '오늘은 특식 어떨까요? 🍽️',
+  '좋아하는 먹이로 한 끼 차려 주세요.',
+  '생일 기념 사진 한 장 남겨 두는 건 어떨까요? 📸',
+  '1년 동안 얼마나 컸는지, 오늘 몸무게를 재 봐도 좋아요. ⚖️',
+  '한 해 동안 건강하게 자라 줘서 고마운 날이에요.',
+  '사육장을 한 번 깨끗하게 정리해 주고, 상쾌하게 생일을 보내게 해 주세요. 🌿',
+  '오늘은 평소보다 조금 더 오래 눈 맞춰 주세요.',
+  '앞으로도 지금처럼 건강하게! 🎉',
+];
+function bdayPick(list, day) {
+  const key = (day || todayStr()) + list.map(b => b.g.name).join('');
+  let h = 0;
+  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) % 100003;
+  return BDAY_LINES[h % BDAY_LINES.length];
+}
+function BirthdayPopup({ list, navigate, showToast, onClose }) {
+  const [off, setOff] = useState(false);
+  const one = list.length === 1 ? list[0] : null;
+  const close = (go) => {
+    STORE.set('cg_bday_seen', todayStr());
+    if (off) {
+      DB.saveSettings({ ...(DB.getSettings() || {}), bdayPopupOff: true });
+      showToast && showToast('생일 팝업을 껐어요. 설정에서 다시 켤 수 있어요');
+    }
+    onClose && onClose();
+    if (go && one && navigate) navigate('profile', { gecko: one.g });
+  };
+  return (
+    <div className="bday-bg" data-testid="bday-pop" onClick={() => close()}>
+      <div className="bday-card" onClick={e => e.stopPropagation()}>
+        <img className="bday-hero" src="./assets/brand/gecko-transparent.webp" alt="" />
+        <h2>{one ? `🎂 ${one.g.name} ${one.age}살 생일이에요!` : `🎂 오늘 생일인 아이가 ${list.length}마리예요!`}</h2>
+        {!one && <div className="bday-ages">{list.map(b => `${b.g.name} ${b.age}살`).join(' · ')}</div>}
+        <div className="bday-say" data-testid="bday-say">{bdayPick(list)}</div>
+        <button className="btn btn-primary" data-testid="bday-ok" onClick={() => close()}>축하해요 🎉</button>
+        {one && <button className="btn btn-secondary" data-testid="bday-go" onClick={() => close(true)}>⚖️ 생일 기록 남기기</button>}
+        <label className="bday-off"><input type="checkbox" checked={off} onChange={e => setOff(e.target.checked)} data-testid="bday-off" /> 앞으로 생일 팝업 띄우지 않기</label>
+      </div>
+    </div>
+  );
+}
+
+/* v1.9.28 설정 · 중복 개체 정리 카드 — app.min.js 에서 옮겨 왔습니다(같은 이름이 있을 때만 불러옴) */
+function DupMergeCard({ showToast, refreshIndividuals }) {
+  const [ver, setVer] = useState(0);
+  const [choice, setChoice] = useState({});
+  const [busy, setBusy] = useState(false);
+  const groups = DB.findDuplicateNames();
+  if (!groups.length) return null;
+
+  // 정보가 더 알찬 쪽을 기본 선택 (채워진 항목 수 → 기록 수 순)
+  const score = (i) => ['gender', 'morph', 'spots', 'hatchDate', 'avatar'].filter(k => {
+    const v = i[k]; return v && v !== 'unknown';
+  }).length;
+  const best = (items) => [...items].sort((a, b) =>
+    score(b) - score(a) || DB.getEventsFor(b.id).length - DB.getEventsFor(a.id).length)[0];
+
+  const summary = (i) => {
+    const bits = [];
+    bits.push(genderLabel(i.gender));
+    if (i.morph) bits.push(i.morph);
+    bits.push(i.hatchDate ? fmtDate(i.hatchDate) + ' 출생' : '출생일 없음');
+    if ((i.status || 'own') !== 'own') bits.push(STATUS[i.status].label);
+    return bits.join(' · ');
+  };
+
+  const mergeOne = (g) => {
+    const keep = choice[g.name] || best(g.items).id;
+    g.items.forEach(i => { if (i.id !== keep) DB.mergeIndividuals(keep, i.id, 'keep'); });
+    return g.items.length - 1;
+  };
+
+  const doOne = (g) => {
+    setBusy(true);
+    const n = mergeOne(g);
+    refreshIndividuals(); setVer(v => v + 1); setBusy(false);
+    showToast(`✅ ${g.name} 합쳤어요 (${n}건 정리)`);
+  };
+
+  const doAll = () => {
+    setBusy(true);
+    let n = 0;
+    groups.forEach(g => { n += mergeOne(g); });
+    refreshIndividuals(); setVer(v => v + 1); setBusy(false);
+    showToast(`✅ 중복 ${n}건 정리 완료`);
+  };
+
+  return (
+    <div className="card" style={{margin:0, border:'1px solid var(--accent-dim)'}}>
+      <div style={{fontSize:13, fontWeight:700, marginBottom:4, color:'var(--accent2)'}}>
+        🔀 같은 이름 개체 {groups.length}건
+      </div>
+      <div style={{fontSize:12, color:'var(--text3)', lineHeight:1.6, marginBottom:10}}>
+        기기마다 따로 등록돼서 같은 아이가 둘로 나뉘었어요.<br/>
+        <b>어느 정보를 쓸지만 고르시면 됩니다. 기록과 사진은 전부 합쳐져요.</b>
+      </div>
+
+      {groups.map(g => {
+        const sel = choice[g.name] || best(g.items).id;
+        const total = g.items.reduce((s, i) => s + DB.getEventsFor(i.id).length, 0);
+        return (
+          <div key={g.name} style={{background:'var(--bg3)', borderRadius:10, padding:12, marginBottom:10}}>
+            <div style={{fontSize:14, fontWeight:700, marginBottom:8}}>🦎 {g.name}</div>
+            <div style={{display:'flex', flexDirection:'column', gap:6}}>
+              {g.items.map(i => (
+                <button key={i.id}
+                  className={`option-btn ${sel === i.id ? 'selected' : ''}`}
+                  style={{textAlign:'left', fontSize:12, lineHeight:1.5}}
+                  onClick={() => setChoice(c => ({ ...c, [g.name]: i.id }))}>
+                  {sel === i.id ? '◉ ' : '○ '}{summary(i)}
+                  <span style={{color:'var(--text3)'}}> · 기록 {DB.getEventsFor(i.id).length}건</span>
+                </button>
+              ))}
+            </div>
+            <div style={{fontSize:11, color:'var(--text3)', margin:'8px 0 8px'}}>
+              → 기록 {total}건은 어느 쪽을 고르셔도 전부 남습니다
+            </div>
+            <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => doOne(g)}>합치기</button>
+          </div>
+        );
+      })}
+
+      {groups.length > 1 && (
+        <button className="btn btn-secondary" disabled={busy} onClick={doAll}>
+          전부 합치기 ({groups.length}건)
+        </button>
+      )}
+    </div>
+  );
+}
+
+
 window.CREG_EXTRAS = {
-  SeasonNoteSheet, SaleCardSheet, AdoptSendSheet, AdoptReceive, AddGeckoSheet, chat,
+  SeasonNoteSheet, BirthdayPopup, DupMergeCard, BDAY_LINES, bdayPick, SaleCardSheet, AdoptSendSheet, AdoptReceive, AddGeckoSheet, chat,
   // 시험(node)에서 쓰는 순수 함수들
   seasonYears, seasonNoteStats, seasonSummaryText, saveSeasonNote, toggleTrait, SEASON_TRAITS, SEASON_DIRS,
   adoptSnapshot, adoptMemos, adoptImport, adoptCounts, looksPrivate, ADOPT, ADOPT_KINDS, ADOPT_NEVER, saleCardData,
