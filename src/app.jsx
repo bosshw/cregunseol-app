@@ -642,7 +642,7 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.29';
+const APP_VERSION = '1.9.30';
 const APP_PATCHED = '2026-09-28';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -1750,7 +1750,8 @@ function clutchRows(individuals, events) {
     const nth = seq[pairKey];
     const pairName = momName + (dadName ? ' × ' + dadName : '');
     const notes = (e.data && e.data.notes) || '';
-    const eggs = (e.data && e.data.eggCount) || 0;
+    // v1.9.30 알 개수는 숫자로 — 대화로 적은 건 글자("2")로 들어와, 더하면 12+"2" → "122" 처럼 이어 붙던 것
+    const eggs = parseInt(e.data && e.data.eggCount, 10) || 0;
     const hp = hatchPlan(e.individualId, momName);
     const etaISO = addDaysISO(e.date, hp.days);
     const d = daysUntil(etaISO);
@@ -5590,7 +5591,7 @@ function LayingView({ individuals, navigate, showToast }) {
   });
 
   const waitCnt = rows.filter(r => r.waiting).length;
-  const eggSum = rows.filter(r => r.waiting).reduce((s, r) => s + (r.eggs || 0), 0);
+  const eggSum = rows.filter(r => r.waiting).reduce((s, r) => s + (parseInt(r.eggs, 10) || 0), 0);
   const soon = rows.filter(r => r.waiting && r.d >= 0 && r.d <= 7).length;
 
   if (!all.length) return (
@@ -5625,7 +5626,7 @@ function LayingView({ individuals, navigate, showToast }) {
         </div>
         <div>
           <div style={{fontSize:20, fontWeight:800, color:'var(--accent2)'}}>{eggSum || '—'}</div>
-          <div style={{fontSize:11, color:'var(--text3)'}}>알 수(확인분)</div>
+          <div style={{fontSize:11, color:'var(--text3)'}}>품는 알(확인분)</div>
         </div>
         <div>
           <div style={{fontSize:20, fontWeight:800, color: soon ? '#B3261E' : 'var(--text3)'}}>{soon}</div>
@@ -8081,7 +8082,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       // 이미 글로 답하셨거나 한 번 고르셨으면 두 번 담지 않습니다
       if (layAskRef.current !== value.fact) { bot('그 산란은 이미 담아뒀어요 🥚'); return; }
       layAskRef.current = null;
-      const f = value.count ? { ...value.fact, data: { ...value.fact.data, eggCount: String(value.count) } } : value.fact;
+      const f = value.count ? { ...value.fact, data: { ...value.fact.data, eggCount: Number(value.count) } } : value.fact;
       pushPending([f], { name: value.fact.targetName });
     } else if (kind === 'memo-skip') {
       hatchAskRef.current = null;
@@ -8113,7 +8114,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       const m = t.match(/^(\d{1,2})\s*(개|알)?/) || t.match(/^(한|하나|두|둘|세|셋|네|넷)\s*(개|알)/);
       const n = m ? (KN[m[1]] || parseInt(m[1], 10)) : 0;
       if (n > 0 && n <= 9 && t.length <= 14) {
-        pushPending([{ ...f, data: { ...f.data, eggCount: String(n) } }], { name: f.targetName });
+        pushPending([{ ...f, data: { ...f.data, eggCount: Number(n) } }], { name: f.targetName });
         return;
       }
       if (/^(몰라|모르|아직|글쎄|나중|패스|건너)/.test(t)) { pushPending([f], { name: f.targetName }); return; }
