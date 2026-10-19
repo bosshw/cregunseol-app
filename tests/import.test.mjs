@@ -159,3 +159,19 @@ test("iPhone file picker: no type filter on iOS (files were greyed out / hidden)
   assert.match(src, /'파일에 저장'/);
   assert.match(src, /Numbers 파일은 바로 못 읽어요/);
 });
+
+/* v1.9.31 엑셀 오류 문의 (대표님 2026-10-19 — 손님 "모프 넣으니 엑셀을 못 읽어요") */
+test("excel help: failed or odd imports get an ask button that copies details and opens the contact chat", async () => {
+  const [src, importer] = await Promise.all([
+    readFile(new URL("src/import-screen.jsx", root), "utf8"),
+    readFile(new URL("importer.min.js", root), "utf8"),
+  ]);
+  assert.match(src, /testid="ask-help-error"/, "못 읽었을 때 문의 칸");
+  assert.match(src, /testid="ask-help-review"/, "읽은 결과가 이상할 때 문의 칸");
+  assert.match(src, /💬 엑셀 오류 문의하기/);
+  assert.match(src, /contactLinks\(\{\}\)/, "주소는 CONTACT 한 곳에서만");
+  assert.doesNotMatch(src, /open\.kakao\.com/, "오픈채팅 주소를 여기 따로 적지 않습니다");
+  assert.doesNotMatch(importer, /\bfetch\(|XMLHttpRequest|sendBeacon/, "파일은 폰 밖으로 보내지 않습니다");
+  assert.match(src, /navigator\.clipboard\.writeText\(text\)/, "누르는 순간 복사");
+  assert.match(src, /zipHas\(buf, 'Index\/Document\.iwa'\)/, "이름만 xlsx 인 Numbers 파일도 알아봅니다");
+});
