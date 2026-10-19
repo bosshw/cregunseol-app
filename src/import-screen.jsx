@@ -9,7 +9,7 @@
    ══════════════════════════════════════════ */
 (function () {
 const ENG = window.CREG_IMPORT_ENGINE;
-const { useState, useRef, useMemo } = React;
+const { useState, useRef, useMemo, useEffect } = React;
 
 const TYPE_WORD = { laying: '산란', mating: '메이팅', hatching: '해칭', distribution: '분양', growth: '무게', feeding: '먹이',
   shed: '탈피', health: '이상', condition: '컨디션', env: '온습도', memo: '메모', ledger: '가계부' };
@@ -32,6 +32,7 @@ async function readFileGrids(file) {
     catch (e) { try { text = new TextDecoder('euc-kr').decode(buf); } catch (e2) { text = new TextDecoder().decode(buf); } }
     return ENG.gridsFromText(text, name.replace(/\.[^.]+$/, ''));
   }
+  if (zipHas(buf, 'Index/Document.iwa')) throw new Error('Numbers 형식으로 저장된 파일이에요(이름은 엑셀이어도요). Numbers 앱에서 공유 → 사본 보내기 → Excel 로 바꿔서 올려 주세요');
   const XLSX = await loadXLSX();
   let wb;
   try { wb = XLSX.read(new Uint8Array(buf), { type: 'array', cellNF: true, cellText: true, cellDates: false }); }
@@ -40,6 +41,91 @@ async function readFileGrids(file) {
     throw new Error('엑셀 파일을 열지 못했어요. 파일이 깨졌거나 지원하지 않는 형식이에요');
   }
   return ENG.gridsFromWorkbook(XLSX, wb);
+}
+
+/* ══ v1.9.31 엑셀 오류 문의 (대표님 2026-10-19) ══
+   못 읽었거나 읽은 결과가 이상할 때, 무슨 일이 있었는지 글로 만들어 복사하고 문의 오픈채팅을 엽니다.
+   ★ 파일은 여기서 어디로도 보내지 않습니다. 손님이 채팅창에 글을 붙여넣고 파일을 직접 보냅니다.
+   ★ 주소는 앱 본체의 contactLinks()(CONTACT 한 곳)에서만 가져옵니다. */
+function zipHas(buf, name) {
+  try {
+    const u = new Uint8Array(buf);
+    if (u.length < 4 || u[0] !== 0x50 || u[1] !== 0x4B) return false;   // 'PK' = 압축 묶음(xlsx·Numbers·ods)
+    let t = '';
+    for (let i = 0; i < u.length; i += 65536) t += String.fromCharCode.apply(null, u.subarray(i, Math.min(u.length, i + 65536)));
+    return t.indexOf(name) >= 0;
+  } catch (e) { return false; }
+}
+async function sniffFile(f) {
+  const kb = f.size >= 1048576 ? (f.size / 1048576).toFixed(1) + 'MB' : Math.max(1, Math.round(f.size / 1024)) + 'KB';
+  let kind = '';
+  try {
+    if (!f.size) kind = '빈 파일(0바이트)';
+    else {
+      const buf = await f.arrayBuffer();
+      const u = new Uint8Array(buf, 0, Math.min(8, buf.byteLength));
+      if (u[0] === 0x50 && u[1] === 0x4B) kind = zipHas(buf, 'Index/Document.iwa') ? 'Numbers 형식' : zipHas(buf, 'xl/workbook') ? '엑셀(xlsx) 형식' : zipHas(buf, 'content.xml') ? 'ods 형식' : '압축 파일';
+      else if (u[0] === 0xD0 && u[1] === 0xCF) kind = '옛 엑셀(xls) 또는 암호 파일';
+      else if (u[0] === 0x3C || (u[0] === 0xEF && u[3] === 0x3C)) kind = '웹 문서(html) 형식';
+      else kind = '앞부분 ' + Array.from(u.slice(0, 4)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+    }
+  } catch (e) { kind = '내용을 못 열어 봄'; }
+  return { name: f.name || '(이름 없음)', size: kb, type: f.type || '', kind };
+}
+function deviceLine() {
+  let os = '', where = '', ver = '';
+  try { os = { ios: '아이폰', android: '안드로이드', pc: 'PC' }[TRACK.device()] || ''; } catch (e) {}
+  try {
+    const ua = navigator.userAgent || '';
+    const inapp = [[/Instagram/i, '인스타 안'], [/KAKAOTALK/i, '카카오톡 안'], [/NAVER\(inapp/i, '네이버 안'], [/FBAN|FBAV/, '페이스북 안']].find(([re]) => re.test(ua));
+    where = inapp ? inapp[1] : (TRACK.standalone() ? '홈 화면 앱' : /SamsungBrowser/.test(ua) ? '삼성 인터넷' : /CriOS|Chrome/.test(ua) ? '크롬' : /Safari/.test(ua) ? '사파리' : '브라우저');
+  } catch (e) {}
+  try { ver = '앱 ' + APP_VERSION; } catch (e) {}
+  return [os, where, ver].filter(Boolean).join(' · ');
+}
+function chatUrl() {
+  try { const c = contactLinks({}).find(x => x.key === 'chat'); return c ? c.url : ''; } catch (e) { return ''; }
+}
+function errorReport(err, info) {
+  return ['[엑셀 오류 문의]', '오류: ' + err,
+    info ? '파일: ' + [info.name, info.size, info.kind].filter(Boolean).join(' · ') : '',
+    '기기: ' + deviceLine(), '→ 이 글과 함께 엑셀 파일도 보내 드릴게요'].filter(Boolean).join('\n');
+}
+function reviewReport(plan, fileName, err) {
+  const bt = plan.byType || {};
+  const types = Object.keys(TYPE_WORD).filter(k => bt[k]).map(k => TYPE_WORD[k] + ' ' + bt[k]).join(' · ');
+  const sheets = (plan.blocks || []).map(b => {
+    const cols = b.fields.map(f => f.header + '→' + (ENG.FIELD_LABEL[f.field.split(':')[0]] || f.field) + (f.check ? '(?)' : '')).join(', ');
+    return '· ' + b.sheet + ' (' + (ENG.KIND_LABEL[b.kind] || b.kind) + ', ' + b.rows + '줄): ' + cols;
+  });
+  return ['[엑셀 가져오기 문의]', '파일: ' + fileName,
+    '읽은 결과: 새로 등록 ' + plan.newInds.length + '마리 · 빈 칸 채우기 ' + plan.patches.length + '마리 · 기록 ' + plan.events.length + '건' + (types ? ' (' + types + ')' : '') + (plan.dupSkipped ? ' · 겹쳐서 뺌 ' + plan.dupSkipped : ''),
+    ...sheets.slice(0, 6), plan.issues.length ? '제자리를 못 찾은 곳: ' + plan.issues.length + '군데' : '',
+    err ? '오류: ' + err : '', '기기: ' + deviceLine(),
+    '이상한 점: (여기에 적어 주세요)', '→ 이 글과 함께 엑셀 파일도 보내 드릴게요'].filter(Boolean).join('\n');
+}
+function AskHelp({ text, title, testid }) {
+  const [state, setState] = useState('');
+  const url = chatUrl();
+  const copy = () => {
+    try {
+      navigator.clipboard.writeText(text).then(() => setState('copied'), () => setState('manual'));
+    } catch (e) { setState('manual'); }
+  };
+  const btnStyle = { marginTop: 10, textAlign: 'center', textDecoration: 'none', display: 'block' };
+  return (
+    <div className="card" data-testid={testid || 'ask-help'} style={{ margin: 0 }}>
+      <div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 4 }}>{title}</div>
+      <div style={small}>누르면 아래 내용이 복사되고 <b>문의 오픈채팅</b>이 열려요. 채팅창에 붙여넣고 <b>엑셀 파일도 같이</b> 보내 주시면 바로 살펴볼게요.</div>
+      {url
+        ? <a className="btn btn-secondary" style={btnStyle} href={url} target="_blank" rel="noopener noreferrer" onClick={copy} data-testid="ask-help-btn">💬 엑셀 오류 문의하기</a>
+        : <button className="btn btn-secondary" style={{ marginTop: 10 }} onClick={copy} data-testid="ask-help-btn">📋 문의 내용 복사하기</button>}
+      {state === 'copied' && <div style={{ ...small, color: 'var(--accent2)', fontWeight: 700, marginTop: 6 }}>✅ 복사됐어요 — 채팅창을 길게 눌러 붙여넣어 주세요</div>}
+      {state === 'manual' && <div style={{ ...small, color: 'var(--accent2)', fontWeight: 700, marginTop: 6 }}>자동 복사가 막혔어요 — 아래 글을 길게 눌러 복사해 주세요</div>}
+      <textarea className="input" readOnly value={text} rows={4} onFocus={e => e.target.select()} data-testid="ask-help-text"
+        style={{ marginTop: 8, fontSize: 11.5, lineHeight: 1.5, minHeight: 0, color: 'var(--text3)' }} />
+    </div>
+  );
 }
 
 function ctxNow(overrides) {
@@ -64,6 +150,10 @@ function ImportScreen({ navigate, showToast, refreshIndividuals }) {
   const [showNew, setShowNew] = useState(false);
   const [result, setResult] = useState(null);
   const [last, setLast] = useState(() => ENG.lastImport());
+  const [fileInfo, setFileInfo] = useState(null);
+  const errRef = useRef(null);
+  // 오류가 나면 그 칸으로 내려갑니다 — 아이폰 안내 카드 때문에 오류가 화면 밖 아래에 떠서 못 보던 것
+  useEffect(() => { if (err && errRef.current) { try { errRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) {} } }, [err, fileInfo]);
   const fileRef = useRef(null);
 
   const plan = useMemo(() => {
@@ -81,9 +171,16 @@ function ImportScreen({ navigate, showToast, refreshIndividuals }) {
     const f = e.target.files && e.target.files[0];
     e.target.value = '';
     if (!f) return;
-    setBusy(true); setErr('');
-    try { start(await readFileGrids(f), f.name); }
-    catch (x) { setErr((x && x.message) || '파일을 읽지 못했어요'); }
+    setBusy(true); setErr(''); setFileInfo(null);
+    try {
+      const g = await readFileGrids(f);
+      if (!g.some(x => x.rows.length)) { setErr('비어 있는 파일이에요. 저장이 덜 됐거나(원드라이브·아이클라우드에서 아직 안 받아진 파일) 빈 시트만 있어요'); setFileInfo(await sniffFile(f)); }
+      else start(g, f.name);
+    }
+    catch (x) {
+      setErr((x && x.message) || '파일을 읽지 못했어요');
+      try { setFileInfo(await sniffFile(f)); } catch (e) {}
+    }
     setBusy(false);
   };
   const onPaste = () => {
@@ -162,7 +259,8 @@ function ImportScreen({ navigate, showToast, refreshIndividuals }) {
               placeholder={'이름\t성별\t모프\n크한이\t수컷\t릴리화이트\n\n또는\n9/3 크한이 밥 먹음\n9/5 크순이 알 2개'} />
             <button className="btn btn-secondary" style={{ marginTop: 8 }} disabled={!paste.trim()} onClick={onPaste}>읽어보기</button>
           </div>
-          {err && <div className="card" style={{ margin: 0, color: 'var(--danger)', fontSize: 13 }}>⚠️ {err}</div>}
+          {err && <div ref={errRef} className="card" style={{ margin: 0, color: 'var(--danger)', fontSize: 13 }}>⚠️ {err}</div>}
+          {err && <AskHelp title="🙋 이 파일이 안 읽히나요?" text={errorReport(err, fileInfo)} testid="ask-help-error" />}
           {last && (
             <div className="card" style={{ margin: 0 }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text2)', marginBottom: 4 }}>↩️ 지난 가져오기 되돌리기</div>
@@ -222,7 +320,8 @@ function ImportScreen({ navigate, showToast, refreshIndividuals }) {
   /* ───── 2. 확인 ───── */
   if (!plan) return null;
   if (plan.error) {
-    return (<div className="screen"><Header title="📥 확인" /><div className="card">⚠️ 읽다가 막혔어요: {plan.error}</div></div>);
+    return (<div className="screen"><Header title="📥 확인" /><div className="card">⚠️ 읽다가 막혔어요: {plan.error}</div>
+      <div style={{ padding: '0 16px 16px' }}><AskHelp title="🙋 이 파일이 안 읽히나요?" text={errorReport('읽다가 막힘 — ' + plan.error, { name: fileName })} testid="ask-help-error" /></div></div>);
   }
   const bt = plan.byType;
   const typeLine = Object.keys(TYPE_WORD).filter(k => bt[k]).map(k => `${TYPE_WORD[k]} ${bt[k]}`).join(' · ');
@@ -370,6 +469,7 @@ function ImportScreen({ navigate, showToast, refreshIndividuals }) {
           </div>
         ) : null}
         {err && <div className="card" style={{ margin: 0, color: 'var(--danger)', fontSize: 13 }}>⚠️ {err}</div>}
+        <AskHelp title="🤔 읽은 결과가 이상한가요?" text={reviewReport(plan, fileName, err)} testid="ask-help-review" />
       </div>
       <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, padding: '10px 16px calc(10px + env(safe-area-inset-bottom))', background: 'var(--bg)', borderTop: '1px solid var(--border)', display: 'flex', gap: 8, zIndex: 50, maxWidth: 480, margin: '0 auto' }}>
         <button className="btn btn-secondary" style={{ flex: 1, whiteSpace: 'nowrap', padding: '13px 8px', fontSize: 14 }} onClick={() => { setStep('pick'); setGrids(null); }}>다시 고르기</button>
