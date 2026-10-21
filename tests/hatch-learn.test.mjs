@@ -50,6 +50,38 @@ test("keeps hatch learning in one place and remembers when the temperature chang
   const source = await readFile(new URL("../src/app.jsx", import.meta.url), "utf8");
   assert.match(source, /function hatchLearn\(samples\)/);
   assert.match(source, /const etaISO = addDaysISO\(e\.date, hp\.days\)/);
-  assert.match(source, /incubateTempAt: todayStr\(\)/);
+  assert.match(source, /function tempPatch\(s, v\)/, "온도 바꾸기는 한 곳에서 — 바꾸기 전 온도를 기록에 남깁니다");
+  assert.equal((source.match(/tempPatch\(/g) || []).length, 3, "설정 화면·대화 두 곳 + 정의 한 곳");
   assert.match(source, /x\.days >= 40 && x\.days <= 130/);
+});
+
+/* v1.9.32 (대표님 2026-10-21) 온도를 바꿔도 배운 것을 버리지 않습니다 */
+test("keeps the learned hatch offset when the incubator temperature changes", async () => {
+  const run = await loadApp();
+  const today = new Date().toISOString().slice(0, 10);
+  const L1 = days(today, -200), L2 = days(today, -170), L3 = days(today, -10);
+  run(`DB.saveIndividuals([{id:'a',name:'라떼',gender:'female'}]);
+    DB.saveEvents([
+    {id:'l1',individualId:'a',type:'laying',date:'${L1}',data:{}},{id:'h1',individualId:'a',type:'hatching',date:'${days(L1, 68)}',data:{layingId:'l1'}},
+    {id:'l2',individualId:'a',type:'laying',date:'${L2}',data:{}},{id:'h2',individualId:'a',type:'hatching',date:'${days(L2, 70)}',data:{layingId:'l2'}},
+    {id:'l3',individualId:'a',type:'laying',date:'${L3}',data:{}}]);`);
+  assert.equal(run("clutchRows().find(r => r.e.id === 'l3').hatchDays"), 69);          // 24°C: 75 → 실제 68·70 (-6)
+  run("DB.saveSettings({ ...DB.getSettings(), ...tempPatch(DB.getSettings(), 26) })");   // 26°C 로 바꿈
+  const r = JSON.parse(run("JSON.stringify(clutchRows().find(r => r.e.id === 'l3'))"));
+  assert.equal(r.hatchDays, 54, "26°C 계산 60일 - 우리 집 차이 6일");
+  assert.equal(r.hatchBasis, "라떼 실제 부화 2회 평균 (26°C로 맞춤)");
+  assert.equal(r.etaISO, days(L3, 54));
+  const log = JSON.parse(run("JSON.stringify(DB.getSettings().incubateTempLog)"));
+  assert.deepEqual(log.map(x => x.temp), [24, 26], "바꾸기 전 온도를 잃지 않습니다");
+  // 다시 24°C 로 돌리면 원래 값
+  run("DB.saveSettings({ ...DB.getSettings(), ...tempPatch(DB.getSettings(), 24) })");
+  assert.equal(run("clutchRows().find(r => r.e.id === 'l3').hatchDays"), 69);
+});
+
+test("chat 'next laying' and the save screen use the same per-animal numbers as the briefing", async () => {
+  const source = await readFile(new URL("../src/app.jsx", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /산란일 \+75일/, "저장 화면에 75일을 박아두지 않습니다");
+  assert.match(source, /산란일 \+\{layPlusDays\(pending\)\}일/);
+  assert.match(source, /const fc = layingForecasts\(\)\.find\(f => f\.indId === target\.id\)/, "대화 답도 그 아이 평균");
+  assert.doesNotMatch(source, /type: 'laying_expected', date: dISO/, "메이팅 +30일 알림을 따로 저장하지 않습니다");
 });
