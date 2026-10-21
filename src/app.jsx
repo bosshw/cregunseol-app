@@ -642,8 +642,8 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.31';
-const APP_PATCHED = '2026-10-19';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
+const APP_VERSION = '1.9.32';
+const APP_PATCHED = '2026-10-21';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -1635,28 +1635,50 @@ const addDaysISO = (iso, n) => localISO(new Date(new Date(iso).getTime() + n * 8
      ② 아니면 우리 집 전체 부화 기록이 2번 이상 → 우리 집 평균
      ③ 그것도 없으면 → 인큐 온도로 계산(24°C 75일)
    ★ "평균"은 중앙값입니다 — 한 번 늦게 나온 알에 예정일이 끌려가지 않게.
-   ★ 인큐 온도를 바꾸면 그날 뒤에 낳은 알 기록부터 다시 배웁니다(바꾸기 전 기록은 다른 온도라서).
+   ★ v1.9.32 (대표님 2026-10-21) 온도를 바꿔도 배운 것을 버리지 않습니다.
+     기록마다 "그때 온도 계산보다 며칠 빠르게/늦게 나왔나(off)"를 배워, 지금 온도 계산에 그 차이를 더합니다.
+     예) 24°C 계산 75일인데 실제 70일(-5) → 26°C 로 바꾸면 60-5 = 55일.
+     그때 온도는 incubateTempLog(바꿀 때마다 적음)로 압니다. 기록 전 옛날 온도를 모르는 알은 셈에서 뺍니다.
    ★ 산란→부화 40~130일만 셉니다. 그 밖은 잘못 이어진 기록으로 봅니다.
    산란 예정일의 layingForecasts 와 같은 방식입니다. */
 const HATCH_LEARN_MIN = 2;
+/* 그날 인큐 온도 — 모르면 null (학습에서 뺍니다) */
+function incubateTempOn(day) {
+  const s = DB.getSettings() || {};
+  let hit = null;
+  (Array.isArray(s.incubateTempLog) ? s.incubateTempLog : []).forEach(x => {
+    if ((x.from || '') <= day && (!hit || (x.from || '') >= (hit.from || ''))) hit = x;
+  });
+  if (hit) return Number(hit.temp) || INCUBATE_DEFAULT;
+  return !s.incubateTempAt || day >= s.incubateTempAt ? incubateTemp() : null;
+}
+/* 온도 바꾸기 — 설정 화면·대화 둘 다 여기로. 바꾸기 전 온도를 잃지 않게 기록에 남깁니다 */
+function tempPatch(s, v) {
+  const t = todayStr();
+  let log = Array.isArray(s.incubateTempLog) ? s.incubateTempLog.slice() : [];
+  if (!log.length) log.push({ from: s.incubateTempAt || '', temp: incubateTemp() });
+  log = log.filter(x => x.from !== t).concat({ from: t, temp: Number(v) }).slice(-30);
+  return { incubateTemp: Number(v), incubateTempAt: t, incubateTempLog: log };
+}
 function hatchLearn(samples) {
-  const since = (DB.getSettings() || {}).incubateTempAt || '';
-  const ok = samples.filter(x => x.days >= 40 && x.days <= 130 && (!since || x.lay >= since));
+  const cur = incubateTemp(), base = hatchDaysNow();
+  const ok = samples.map(x => { const t = incubateTempOn(x.lay); return t == null ? null : { ...x, off: x.days - hatchDays(t), adj: t !== cur }; })
+    .filter(x => x && x.days >= 40 && x.days <= 130);
   const mid = (arr) => {
     const a = [...arr].sort((x, y) => x - y), m = Math.floor(a.length / 2);
     return a.length % 2 ? a[m] : Math.round((a[m - 1] + a[m]) / 2);
   };
+  const fit = (l) => Math.min(130, Math.max(40, base + mid(l.map(x => x.off))));
+  const tag = (l) => l.some(x => x.adj) ? ` (${cur}°C로 맞춤)` : '';
   const byMom = {};
-  ok.forEach(x => { (byMom[x.mom] = byMom[x.mom] || []).push(x.days); });
-  const all = ok.map(x => x.days);
-  const base = hatchDaysNow();
+  ok.forEach(x => { (byMom[x.mom] = byMom[x.mom] || []).push(x); });
   const plan = (momId, momName) => {
     const own = byMom[momId] || [];
-    if (own.length >= HATCH_LEARN_MIN) return { days: mid(own), basis: `${momName} 실제 부화 ${own.length}회 평균`, learned: 'mom', n: own.length };
-    if (all.length >= HATCH_LEARN_MIN) return { days: mid(all), basis: `우리 집 실제 부화 ${all.length}회 평균`, learned: 'home', n: all.length };
-    return { days: base, basis: `인큐 ${incubateTemp()}°C 기준`, learned: '', n: 0 };
+    if (own.length >= HATCH_LEARN_MIN) return { days: fit(own), basis: `${momName} 실제 부화 ${own.length}회 평균${tag(own)}`, learned: 'mom', n: own.length };
+    if (ok.length >= HATCH_LEARN_MIN) return { days: fit(ok), basis: `우리 집 실제 부화 ${ok.length}회 평균${tag(ok)}`, learned: 'home', n: ok.length };
+    return { days: base, basis: `인큐 ${cur}°C 기준`, learned: '', n: 0 };
   };
-  plan.home = all.length >= HATCH_LEARN_MIN ? { days: mid(all), n: all.length } : null;
+  plan.home = ok.length >= HATCH_LEARN_MIN ? { days: fit(ok), n: ok.length } : null;
   return plan;
 }
 
@@ -1738,6 +1760,7 @@ function clutchRows(individuals, events) {
   const seq = {};
   const hatchPlan = hatchLearn(hatchSamples);
   clutchRows.home = hatchPlan.home;   // 설정 화면의 "우리 집 실제 부화 평균" 표시용 (마지막 계산값)
+  clutchRows.plan = hatchPlan;        // v1.9.32 저장 확인 화면의 "산란일 +N일"용
   return lays.map(e => {
     const mom = byId[e.individualId] || null;
     const momName = mom ? mom.name : '(삭제된 개체)';
@@ -3331,15 +3354,19 @@ function diffPhrase(diffDays) {
   return diffDays > 0 ? `예정보다 ${diffDays}일 늦음` : `예정보다 ${-diffDays}일 빠름`;
 }
 // 개체의 특정 예정 알림 중 실제일과 가장 가까운 것 찾기 (60일 이내)
-function matchExpectedReminder(indId, type, actualDate) {
-  let best = null, bestGap = Infinity;
-  DB.getReminders().forEach(r => {
-    if (r.individualId === indId && r.type === type) {
-      const gap = Math.abs((new Date(actualDate) - new Date(r.date)) / 86400000);
-      if (gap < bestGap) { bestGap = gap; best = r; }
-    }
-  });
-  return best && bestGap <= 60 ? best : null;
+/* v1.9.32 산란이 예정보다 며칠 빠르고 늦었나 — 화면과 같은 예정일(그 아이 평균)과 비교합니다 */
+function layExpected(id, date, data) {
+  const fc = layingForecasts().find(f => f.indId === id);
+  if (fc && Math.abs(daysBetween(fc.eta, date)) <= 60) { data.expectedDate = fc.eta; data.diffDays = daysBetween(fc.eta, date); }
+}
+const daysBetween = (a, b) => Math.round((new Date(b) - new Date(a)) / 86400000);
+function layPlusDays(pending) {
+  let p = null; try { clutchRows(); p = clutchRows.plan; } catch (e) {}
+  const ds = [...new Set(pending.filter(f => f.type === 'laying').map(f => {
+    const m = DB.getIndividuals().find(i => i.id === f.targetId);
+    return p ? p(f.targetId, m ? m.name : '').days : hatchDaysNow();
+  }))];
+  return ds.join('·') || hatchDaysNow();
 }
 
 const nameCore = (n) => {
@@ -4451,10 +4478,13 @@ function answerQuery(target, text) {
   if (asksNext && /산란|알/.test(text)) {
     const e = last('laying');
     const m = last('mating');
+    // v1.9.32 브리핑·캘린더와 같은 값 — layingForecasts(그 아이 평균 → 다른 아이들 평균 → 30일)
+    const fc = layingForecasts().find(f => f.indId === target.id);
     if (e) {
-      const eta = localISO(new Date(new Date(e.date).getTime() + LAYING_INTERVAL * 86400000));
+      const iv = fc && fc.count ? fc.interval : LAYING_INTERVAL;
+      const eta = fc && fc.count ? fc.eta : addDaysISO(e.date, iv);
       return `${target.name}의 다음 산란은 ${fmtDate(eta)}쯤으로 보여요 🥚 (${inDays(eta)})\n`
-        + `마지막 산란 ${fmtDate(e.date)} 기준\n약 ${LAYING_INTERVAL}일 간격으로 잡은 예상이에요.`;
+        + `마지막 산란 ${fmtDate(e.date)} 기준\n약 ${iv}일 간격(${fc && fc.count ? fc.basis : '기본값'})으로 잡은 예상이에요.`;
     }
     if (m) {
       const eta = localISO(new Date(new Date(m.date).getTime() + LAYING_AFTER_MATING * 86400000));
@@ -5887,12 +5917,7 @@ function recordLaying(o) {
       .sort((a, b) => b.date > a.date ? 1 : -1)[0];
     if (mate) { data.sireId = mate.data.partnerId; data.sireName = mate.data.partnerName; }
   }
-  const exp = matchExpectedReminder(o.momId, 'laying_expected', date);
-  if (exp) {
-    data.expectedDate = exp.date;
-    data.diffDays = Math.round((new Date(date) - new Date(exp.date)) / 86400000);
-    DB.saveReminders(DB.getReminders().filter(r => r.id !== exp.id));
-  }
+  layExpected(o.momId, date, data);
   return DB.addEvent({ individualId: o.momId, type: 'laying', date, data });
 }
 function recordMating(o) {
@@ -5900,19 +5925,8 @@ function recordMating(o) {
   const all = DB.getIndividuals();
   const p = o.partnerId ? all.find(i => i.id === o.partnerId) : null;
   const data = { partnerId: p ? p.id : undefined, partnerName: p ? p.name : (o.partnerName || '').trim() };
-  const ev = DB.addEvent({ individualId: o.femaleId, type: 'mating', date, data });
-  // 산란 예정 알림 — 대화로 적을 때와 같게 (암컷 기준)
-  const fem = all.find(i => i.id === o.femaleId);
-  if (fem) {
-    const d = new Date(date); d.setDate(d.getDate() + LAYING_AFTER_MATING);
-    const dISO = localISO(d);
-    const rs = DB.getReminders();
-    if (dISO >= todayStr() && !rs.some(r => r.individualId === fem.id && r.type === 'laying_expected' && r.date === dISO)) {
-      rs.push({ id: uuid(), individualId: fem.id, geckoName: fem.name, type: 'laying_expected', date: dISO, message: `${fem.name} 산란 예정일` });
-      DB.saveReminders(rs);
-    }
-  }
-  return ev;
+  // 산란 예정은 저장하지 않고 layingForecasts 가 메이팅 +30일로 계산합니다
+  return DB.addEvent({ individualId: o.femaleId, type: 'mating', date, data });
 }
 
 /* ── v1.9.15 메이팅·산란을 버튼으로 적고 고치는 창 ──
@@ -7574,7 +7588,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
   /* ── v1.9.17 화면 기능을 말로 (planAppChat 이 정한 것을 실행) ── */
   const lastSavedRef = useRef([]);   // 방금 저장한 기록 id — "방금 저장한 거 지워줘"용
   const SET_OK = {
-    incubate: (v) => (v >= INCUBATE_MIN && v <= INCUBATE_MAX) ? `🌡️ 인큐 온도를 ${v}°C로 바꿨어요 (온도 기준 ${hatchDays(v)}일). 이날 뒤에 낳은 알부터 부화 기간을 다시 배워요.` : null,
+    incubate: (v) => (v >= INCUBATE_MIN && v <= INCUBATE_MAX) ? `🌡️ 인큐 온도를 ${v}°C로 바꿨어요 (온도 기준 ${hatchDays(v)}일). 배운 부화 기록은 그대로 두고 새 온도에 맞춰 예정일을 다시 잡아요.` : null,
     feedWarn: (v) => (v >= 3 && v <= 30) ? `⚠️ ${v}일째 안 먹으면 알려드릴게요.` : null,
     feedInterval: (v) => (v >= 1 && v <= 14) ? `🍽️ 밥은 ${v}일마다로 맞췄어요. 밥 주기·캘린더·브리핑이 이 간격을 따라요.` : null,
     feedDays: (v) => v.length ? `🍽️ 밥은 ${feedDaysLabel(v)}요일마다로 맞췄어요.` : null,
@@ -7589,7 +7603,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     const msg = SET_OK[what] && SET_OK[what](value);
     if (!msg) { bot(what === 'incubate' ? `인큐 온도는 ${INCUBATE_MIN}~${INCUBATE_MAX}°C 사이로 알려주세요 🙂` : what === 'feedWarn' ? '3~30일 사이로 알려주세요 🙂' : what === 'feedInterval' ? '1~14일 사이로 알려주세요 🙂' : '요일을 하나 이상 알려주세요 🙂'); return; }
     const patch = {
-      incubate: { incubateTemp: value, incubateTempAt: todayStr() }, feedWarn: { feedWarn: value },
+      incubate: tempPatch(cur, value), feedWarn: { feedWarn: value },
       feedInterval: { feedMode: 'gap', feedInterval: value }, feedDays: { feedMode: 'days', feedDays: value },
       babyNaming: { babyNaming: value }, tone: { tone: value }, breeder: { breederName: value }, theme: { theme: value },
       call: ({ 브리더님: { callName: 'breeder' }, 대표님: { callName: 'boss' }, 사장님: { callName: 'sajang' } })[value] || { callName: 'custom', callCustom: value },
@@ -8827,12 +8841,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       }
       // 예정일 대비 실제일 차이 기록 — 산란은 저장된 예정 알림, 해칭은 그 알의 계산된 예정일과 비교
       if (f.type === 'laying') {
-        const exp = matchExpectedReminder(f.targetId, 'laying_expected', f.date || todayStr());
-        if (exp) {
-          f.data.expectedDate = exp.date;
-          f.data.diffDays = Math.round((new Date(f.date || todayStr()) - new Date(exp.date)) / 86400000);
-          DB.saveReminders(DB.getReminders().filter(r => r.id !== exp.id)); // 예정 완료 → 제거
-        }
+        layExpected(f.targetId, f.date || todayStr(), f.data);
       }
       if (f.type === 'hatching') {
         const actual = f.date || todayStr();
@@ -8891,17 +8900,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
         const t = all.find(i => i.id === f.targetId);
         const p = f.data.partnerId ? all.find(i => i.id === f.data.partnerId) : null;
         const fem = (t && t.gender === 'female') ? t : (p && p.gender === 'female') ? p : t;
-        if (fem) {
-          const d = new Date(f.date || todayStr());
-          d.setDate(d.getDate() + LAYING_AFTER_MATING);
-          const dISO = localISO(d);
-          const rs = DB.getReminders();
-          if (!rs.some(r => r.individualId === fem.id && r.type === 'laying_expected' && r.date === dISO)) {
-            rs.push({ id: uuid(), individualId: fem.id, geckoName: fem.name, type: 'laying_expected', date: dISO, message: `${fem.name} 산란 예정일` });
-            DB.saveReminders(rs);
-            reminderMsg = ' · 🔔 산란 예정 알림 설정';
-          }
-        }
+        if (fem) reminderMsg = ' · 🔔 산란 예정 알림 설정';   // 예정일은 layingForecasts 가 계산(저장 안 함)
       }
       if (f.type === 'hatching') {
         const named = f.data.babyNames && f.data.babyNames.length ? f.data.babyNames : null;
@@ -9075,7 +9074,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
           {pending.some(f => f.type === 'laying') && (
             <label style={{display:'flex', alignItems:'center', gap:8, fontSize:13, color:'var(--text2)', margin:'0 4px 14px', cursor:'pointer'}}>
               <input type="checkbox" checked={layingReminder} onChange={e => setLayingReminder(e.target.checked)} />
-              🔔 부화 예정 알림 자동 설정 (산란일 +75일)
+              🔔 부화 예정 알림 자동 설정 (산란일 +{layPlusDays(pending)}일)
             </label>
           )}
 
@@ -11435,8 +11434,8 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
     showToast('설정 저장 완료');
   };
   const setTemp = (v) => {
-    // v1.9 — 온도를 바꾼 날을 적어둡니다. 이날 뒤에 낳은 알 기록부터 부화 기간을 다시 배웁니다
-    const s = { ...settings, incubateTemp: Number(v), incubateTempAt: todayStr() };
+    // v1.9.32 — 바꾼 날과 그 전 온도를 적어둡니다. 배운 부화 기록은 버리지 않고 새 온도에 맞춰 다시 계산합니다
+    const s = { ...settings, ...tempPatch(settings, v) };
     DB.saveSettings(s);
     setSettings(s);
   };
@@ -11669,7 +11668,7 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
           {(() => { try { clutchRows(); } catch (e) {} const h = clutchRows.home; return h ? (
             <div style={{fontSize:12, color:'var(--accent2)', margin:'-4px 0 10px', lineHeight:1.6}} data-testid="hatch-learned">
               📊 우리 집 실제 부화 {h.n}회 평균 <b>{h.days}일</b> — 부화 예정일은 이 기록을 먼저 써요<br/>
-              <span style={{color:'var(--text3)'}}>한 엄마가 2번 이상 부화하면 그 아이 평균으로 · 온도를 바꾸면 그 뒤 기록부터 다시 배워요</span>
+              <span style={{color:'var(--text3)'}}>한 엄마가 2번 이상 부화하면 그 아이 평균으로 · 온도를 바꿔도 배운 기록은 그대로, 새 온도에 맞춰 다시 계산해요</span>
             </div>) : (
             <div style={{fontSize:12, color:'var(--text3)', margin:'-4px 0 10px', lineHeight:1.6}} data-testid="hatch-learned">
               부화 기록이 2번 쌓이면 이 온도 대신 우리 집 실제 부화 기간으로 계산해요
