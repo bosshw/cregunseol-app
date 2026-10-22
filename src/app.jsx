@@ -642,8 +642,8 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.32';
-const APP_PATCHED = '2026-10-21';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
+const APP_VERSION = '1.9.33';
+const APP_PATCHED = '2026-10-22';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -5166,6 +5166,9 @@ function CrevalueHost(props) {
   if (!canUseCrevalue()) return <div className="screen" style={{padding:24}}>대표님 전용 기능입니다.<button className="btn btn-secondary" onClick={() => props.navigate('home')}>홈으로</button></div>;
   return mod ? <mod.Screen {...props} bridge={CREVALUE_BRIDGE} /> : <div className="screen" style={{padding:24}} role="status">{error || '크레밸류를 불러오고 있습니다…'}</div>;
 }
+/* v1.9.33 의견 한 줄(extras.min.js FeedbackCard) — 홈에서 딱 한 번. 3번째 방문부터(아이가 있으면 2번째부터).
+   대표님 기기·빼둔 기기·예시 구경 중엔 안 뜹니다. 보내거나 [안 보낼게요]를 누르면 cg_fb 가 남아 다시 안 뜹니다 */
+const fbDue = (n) => { try { if (DEMO.on() || TRACK.off() || localStorage.getItem('cg_fb')) return false; const v = +localStorage.getItem('cg_visit_no') || 0; return v >= 3 || (n > 0 && v > 1); } catch (e) { return false; } };
 function Extra({ part, ...props }) {
   const [mod, setMod] = useState(() => window.CREG_EXTRAS || null);
   useEffect(() => { if (!mod) loadExtras().then(setMod).catch(() => {}); }, []);
@@ -5210,6 +5213,7 @@ const needsOpenHint = () => {
 function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view: initialView }) {
   const [search, setSearch] = useState('');
   const [addOpen, setAddOpen] = useState(false);   // v1.9.22 개체 직접 추가
+  const [fb, setFb] = useState(() => fbDue(individuals.length));   // v1.9.33 의견 한 줄 — 감사 문구를 보여주는 동안은 닫기 전까지 그대로
   // 분양은 v3.8부터 가계부 탭으로 옮겼습니다 (옛 링크로 들어오면 축양으로 보냅니다)
   const [view, setView] = useState(initialView === 'sale' ? 'own' : (initialView || 'own')); // own | mating | laying | hatch
   const [favOnly, setFavOnly] = useState(false);
@@ -5352,6 +5356,7 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
         )}
 
         {view === 'own' && DEMO.on() && <Welcome part="DemoGuide" navigate={navigate} />}
+        {view === 'own' && fb && <Extra part="FeedbackCard" onClose={() => setFb(false)} />}
         {view === 'own' && (
           <>
             {ownList.length === 0 && (
@@ -11625,6 +11630,7 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
         <SyncCard showToast={showToast} refreshIndividuals={refreshIndividuals} />
         <PushCard showToast={showToast} />
         <TrackCard showToast={showToast} />
+        {canUseCrevalue() && <Extra part="FeedbackInbox" />}
         <StorageCard showToast={showToast} />
         <div className="card" style={{margin:0}}>
           <div style={{fontSize:13, fontWeight:700, marginBottom:12, color:'var(--text2)'}}>데이터</div>

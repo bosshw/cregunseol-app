@@ -10,7 +10,7 @@
     if (document.getElementById('cg-extras-css')) return;
     const st = document.createElement('style');
     st.id = 'cg-extras-css';
-    st.textContent = `.onb { position: fixed; inset: 0; z-index: 1000; background: var(--bg); display: flex; align-items: flex-start; justify-content: center; overflow-y: auto; padding: calc(28px + var(--safe-top)) 18px calc(24px + var(--safe-bottom)); } .onb-card { position: relative; width: 100%; max-width: 420px; display: flex; flex-direction: column; align-items: stretch; text-align: center; padding-top: 18px; } .onb-card h2 { font-size: 23px; line-height: 1.38; margin: 18px 0 8px; color: var(--text); word-break: keep-all; } .onb-card p { font-size: 14.5px; line-height: 1.6; color: var(--text2); margin: 0 0 14px; word-break: keep-all; } .onb-hero { align-self: center; margin-top: 18px; } .onb-bar { height: 5px; border-radius: 3px; background: var(--border); overflow: hidden; margin: 0 34px 0 44px; } .onb-bar i { display: block; height: 100%; background: var(--accent); border-radius: 3px; transition: width .25s; } .onb-back { position: absolute; left: -4px; top: 2px; background: none; border: none; font-size: 30px; line-height: 1; color: var(--text3); cursor: pointer; padding: 0 8px; } .onb-input { width: 100%; font-size: 19px; padding: 14px 16px; border-radius: 14px; border: 1.5px solid var(--border); background: var(--card); color: var(--text); margin: 8px 0 4px; text-align: center; } .onb-input:focus { outline: none; border-color: var(--accent); } .onb-err { color: var(--accent2); font-size: 13px; margin: 4px 0; } .onb-main { margin-top: 18px; background: var(--accent); color: var(--on-accent); border: none; border-radius: 16px; padding: 16px; font-size: 17px; font-weight: 800; cursor: pointer; } .onb-main:disabled { opacity: .55; } .onb-sub { margin-top: 12px; background: none; border: none; color: var(--text2); font-size: 14px; text-decoration: underline; cursor: pointer; padding: 6px; } .onb-sub.strong { color: var(--accent2); font-weight: 700; } .onb-skip { margin-top: 26px; align-self: center; background: none; border: none; color: var(--text3); font-size: 12.5px; text-decoration: underline; cursor: pointer; padding: 6px 10px; } .onb-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; } .onb-grid.two { grid-template-columns: repeat(2, 1fr); } .onb-opt { background: var(--card); border: 1.5px solid var(--border); border-radius: 14px; padding: 15px 6px; font-size: 15px; font-weight: 700; color: var(--text); cursor: pointer; word-break: keep-all; } .onb-opt.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent2); } .onb-or { font-size: 12.5px; color: var(--text3); margin-top: 14px; } .onb-done { font-size: 48px; margin-top: 18px; } .onb-say { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 12px; font-size: 15px; line-height: 1.8; color: var(--accent2); font-weight: 700; } .onb-warn { font-size: 12.5px !important; color: var(--accent2) !important; background: var(--accent-soft); border-radius: 10px; padding: 8px 10px; margin-top: 12px !important; text-align: left; } .onb-link { background: none; border: none; color: var(--accent2); text-decoration: underline; font-weight: 700; padding: 0; cursor: pointer; font-size: inherit; } .sn-years { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; } .sn-years button, .sn-dirs button, .sn-tags button { border: 1px solid var(--border); background: var(--card); color: var(--text2); border-radius: 16px; padding: 6px 12px; font-size: 13px; font-weight: 600; cursor: pointer; } .sn-years button.on, .sn-dirs button.on, .sn-tags button.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent2); } .sn-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 10px; } .sn-tile { background: var(--bg2); border-radius: 12px; padding: 9px 11px; display: flex; flex-direction: column; text-align: left; } .sn-tile span { font-size: 11.5px; color: var(--text3); } .sn-tile b { font-size: 18px; color: var(--text); margin-top: 2px; } .sn-tile small { font-size: 11.5px; color: var(--text2); } .sn-facts { background: var(--accent-soft); color: var(--accent2); border-radius: 10px; padding: 8px 10px; font-size: 12.5px; line-height: 1.6; margin-bottom: 10px; } .sn-sec { margin: 6px 0 12px; } .sn-h { font-size: 13px; font-weight: 800; margin-bottom: 6px; color: var(--text); } .sn-pair { display: flex; justify-content: space-between; font-size: 13px; padding: 5px 2px; border-bottom: 1px solid var(--border); color: var(--text2); } .sn-kid { border: 1px solid var(--border); border-radius: 12px; margin-bottom: 6px; overflow: hidden; } .sn-kid-top { width: 100%; background: none; border: none; text-align: left; padding: 9px 11px; display: flex; flex-wrap: wrap; gap: 2px 8px; align-items: baseline; cursor: pointer; color: var(--text); } .sn-kid-top b { font-size: 14px; } .sn-kid-top span { font-size: 12px; color: var(--text3); } .sn-kid-top i { font-style: normal; font-size: 12px; color: var(--accent2); width: 100%; } .sn-kid-body { padding: 0 11px 10px; } .sn-tags, .sn-dirs { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; } .sn-ta { min-height: 54px; margin-bottom: 6px; resize: vertical; font-size: 13.5px; } .sn-empty { font-size: 13px; color: var(--text3); padding: 10px 0; } .sn-empty.small { padding: 2px 0 6px; } .card-prev { border-radius: 14px; overflow: hidden; background: var(--bg2); aspect-ratio: 1 / 1; display: flex; align-items: center; justify-content: center; } .card-prev img { width: 100%; height: 100%; display: block; } .card-wait { font-size: 13px; color: var(--text3); } .adopt-cover { width: 180px; height: 180px; border-radius: 50%; overflow: hidden; align-self: center; margin-top: 14px; background: var(--bg2); display: flex; align-items: center; justify-content: center; font-size: 60px; border: 4px solid var(--accent-soft); } .adopt-cover img { width: 100%; height: 100%; object-fit: cover; } .adopt-info { display: flex; flex-direction: column; gap: 3px; background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 12px; margin: 4px 0 12px; } .adopt-info b { font-size: 22px; } .adopt-info span { font-size: 13.5px; color: var(--text2); } .adopt-info small { font-size: 12.5px; color: var(--accent2); margin-top: 4px; } .adopt-name { display: block; text-align: left; font-size: 12.5px; color: var(--text3); } .adopt-memo { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; padding: 7px 0; border-bottom: 1px solid var(--border); text-align: left; } .adopt-memo span { flex: 1; line-height: 1.5; word-break: break-all; } .adopt-memo small { display: block; font-size: 11px; color: var(--text3); } .bday-bg { position: fixed; inset: 0; z-index: 950; background: rgba(24,16,13,.5); display: flex; align-items: center; justify-content: center; padding: 20px; } .bday-card { width: 100%; max-width: 360px; background: var(--card); border-radius: 24px; padding: 22px 20px 14px; text-align: center; box-shadow: 0 12px 36px rgba(0,0,0,.2); display: flex; flex-direction: column; align-items: center; } .bday-hero { width: 104px; height: 104px; image-rendering: pixelated; } .bday-pics { position: relative; display: flex; justify-content: center; margin: 2px 0 6px; } .bday-pic { width: 132px; height: 132px; border-radius: 50%; object-fit: cover; background: var(--bg2); border: 4px solid var(--card); box-shadow: 0 0 0 3px var(--gold-edge), 0 6px 16px rgba(0,0,0,.14); } .bday-pics.many .bday-pic { width: 96px; height: 96px; margin: 0 -9px; } .bday-mini { position: absolute; width: 50px; height: 50px; left: calc(50% + 34px); bottom: -6px; image-rendering: pixelated; filter: drop-shadow(0 2px 3px rgba(0,0,0,.2)); } .bday-card h2 { font-size: 21px; line-height: 1.4; margin: 8px 0 4px; color: var(--text); word-break: keep-all; } .bday-ages { font-size: 13.5px; color: var(--accent2); font-weight: 700; margin-bottom: 6px; word-break: keep-all; } .bday-say { font-size: 15.5px; line-height: 1.6; color: var(--text2); margin: 4px 0 16px; word-break: keep-all; } .bday-card .btn { width: 100%; margin-bottom: 8px; } .bday-off { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text3); margin-top: 6px; cursor: pointer; }`;
+    st.textContent = `.onb { position: fixed; inset: 0; z-index: 1000; background: var(--bg); display: flex; align-items: flex-start; justify-content: center; overflow-y: auto; padding: calc(28px + var(--safe-top)) 18px calc(24px + var(--safe-bottom)); } .onb-card { position: relative; width: 100%; max-width: 420px; display: flex; flex-direction: column; align-items: stretch; text-align: center; padding-top: 18px; } .onb-card h2 { font-size: 23px; line-height: 1.38; margin: 18px 0 8px; color: var(--text); word-break: keep-all; } .onb-card p { font-size: 14.5px; line-height: 1.6; color: var(--text2); margin: 0 0 14px; word-break: keep-all; } .onb-hero { align-self: center; margin-top: 18px; } .onb-bar { height: 5px; border-radius: 3px; background: var(--border); overflow: hidden; margin: 0 34px 0 44px; } .onb-bar i { display: block; height: 100%; background: var(--accent); border-radius: 3px; transition: width .25s; } .onb-back { position: absolute; left: -4px; top: 2px; background: none; border: none; font-size: 30px; line-height: 1; color: var(--text3); cursor: pointer; padding: 0 8px; } .onb-input { width: 100%; font-size: 19px; padding: 14px 16px; border-radius: 14px; border: 1.5px solid var(--border); background: var(--card); color: var(--text); margin: 8px 0 4px; text-align: center; } .onb-input:focus { outline: none; border-color: var(--accent); } .onb-err { color: var(--accent2); font-size: 13px; margin: 4px 0; } .onb-main { margin-top: 18px; background: var(--accent); color: var(--on-accent); border: none; border-radius: 16px; padding: 16px; font-size: 17px; font-weight: 800; cursor: pointer; } .onb-main:disabled { opacity: .55; } .onb-sub { margin-top: 12px; background: none; border: none; color: var(--text2); font-size: 14px; text-decoration: underline; cursor: pointer; padding: 6px; } .onb-sub.strong { color: var(--accent2); font-weight: 700; } .onb-skip { margin-top: 26px; align-self: center; background: none; border: none; color: var(--text3); font-size: 12.5px; text-decoration: underline; cursor: pointer; padding: 6px 10px; } .onb-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; } .onb-grid.two { grid-template-columns: repeat(2, 1fr); } .onb-opt { background: var(--card); border: 1.5px solid var(--border); border-radius: 14px; padding: 15px 6px; font-size: 15px; font-weight: 700; color: var(--text); cursor: pointer; word-break: keep-all; } .onb-opt.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent2); } .onb-or { font-size: 12.5px; color: var(--text3); margin-top: 14px; } .onb-done { font-size: 48px; margin-top: 18px; } .onb-say { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 12px; font-size: 15px; line-height: 1.8; color: var(--accent2); font-weight: 700; } .onb-warn { font-size: 12.5px !important; color: var(--accent2) !important; background: var(--accent-soft); border-radius: 10px; padding: 8px 10px; margin-top: 12px !important; text-align: left; } .onb-link { background: none; border: none; color: var(--accent2); text-decoration: underline; font-weight: 700; padding: 0; cursor: pointer; font-size: inherit; } .sn-years { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; } .sn-years button, .sn-dirs button, .sn-tags button { border: 1px solid var(--border); background: var(--card); color: var(--text2); border-radius: 16px; padding: 6px 12px; font-size: 13px; font-weight: 600; cursor: pointer; } .sn-years button.on, .sn-dirs button.on, .sn-tags button.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent2); } .sn-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 10px; } .sn-tile { background: var(--bg2); border-radius: 12px; padding: 9px 11px; display: flex; flex-direction: column; text-align: left; } .sn-tile span { font-size: 11.5px; color: var(--text3); } .sn-tile b { font-size: 18px; color: var(--text); margin-top: 2px; } .sn-tile small { font-size: 11.5px; color: var(--text2); } .sn-facts { background: var(--accent-soft); color: var(--accent2); border-radius: 10px; padding: 8px 10px; font-size: 12.5px; line-height: 1.6; margin-bottom: 10px; } .sn-sec { margin: 6px 0 12px; } .sn-h { font-size: 13px; font-weight: 800; margin-bottom: 6px; color: var(--text); } .sn-pair { display: flex; justify-content: space-between; font-size: 13px; padding: 5px 2px; border-bottom: 1px solid var(--border); color: var(--text2); } .sn-kid { border: 1px solid var(--border); border-radius: 12px; margin-bottom: 6px; overflow: hidden; } .sn-kid-top { width: 100%; background: none; border: none; text-align: left; padding: 9px 11px; display: flex; flex-wrap: wrap; gap: 2px 8px; align-items: baseline; cursor: pointer; color: var(--text); } .sn-kid-top b { font-size: 14px; } .sn-kid-top span { font-size: 12px; color: var(--text3); } .sn-kid-top i { font-style: normal; font-size: 12px; color: var(--accent2); width: 100%; } .sn-kid-body { padding: 0 11px 10px; } .sn-tags, .sn-dirs { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; } .sn-ta { min-height: 54px; margin-bottom: 6px; resize: vertical; font-size: 13.5px; } .sn-empty { font-size: 13px; color: var(--text3); padding: 10px 0; } .sn-empty.small { padding: 2px 0 6px; } .card-prev { border-radius: 14px; overflow: hidden; background: var(--bg2); aspect-ratio: 1 / 1; display: flex; align-items: center; justify-content: center; } .card-prev img { width: 100%; height: 100%; display: block; } .card-wait { font-size: 13px; color: var(--text3); } .adopt-cover { width: 180px; height: 180px; border-radius: 50%; overflow: hidden; align-self: center; margin-top: 14px; background: var(--bg2); display: flex; align-items: center; justify-content: center; font-size: 60px; border: 4px solid var(--accent-soft); } .adopt-cover img { width: 100%; height: 100%; object-fit: cover; } .adopt-info { display: flex; flex-direction: column; gap: 3px; background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 12px; margin: 4px 0 12px; } .adopt-info b { font-size: 22px; } .adopt-info span { font-size: 13.5px; color: var(--text2); } .adopt-info small { font-size: 12.5px; color: var(--accent2); margin-top: 4px; } .adopt-name { display: block; text-align: left; font-size: 12.5px; color: var(--text3); } .adopt-memo { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; padding: 7px 0; border-bottom: 1px solid var(--border); text-align: left; } .adopt-memo span { flex: 1; line-height: 1.5; word-break: break-all; } .adopt-memo small { display: block; font-size: 11px; color: var(--text3); } .bday-bg { position: fixed; inset: 0; z-index: 950; background: rgba(24,16,13,.5); display: flex; align-items: center; justify-content: center; padding: 20px; } .bday-card { width: 100%; max-width: 360px; background: var(--card); border-radius: 24px; padding: 22px 20px 14px; text-align: center; box-shadow: 0 12px 36px rgba(0,0,0,.2); display: flex; flex-direction: column; align-items: center; } .bday-hero { width: 104px; height: 104px; image-rendering: pixelated; } .bday-pics { position: relative; display: flex; justify-content: center; margin: 2px 0 6px; } .bday-pic { width: 132px; height: 132px; border-radius: 50%; object-fit: cover; background: var(--bg2); border: 4px solid var(--card); box-shadow: 0 0 0 3px var(--gold-edge), 0 6px 16px rgba(0,0,0,.14); } .bday-pics.many .bday-pic { width: 96px; height: 96px; margin: 0 -9px; } .bday-mini { position: absolute; width: 50px; height: 50px; left: calc(50% + 34px); bottom: -6px; image-rendering: pixelated; filter: drop-shadow(0 2px 3px rgba(0,0,0,.2)); } .bday-card h2 { font-size: 21px; line-height: 1.4; margin: 8px 0 4px; color: var(--text); word-break: keep-all; } .bday-ages { font-size: 13.5px; color: var(--accent2); font-weight: 700; margin-bottom: 6px; word-break: keep-all; } .bday-say { font-size: 15.5px; line-height: 1.6; color: var(--text2); margin: 4px 0 16px; word-break: keep-all; } .bday-card .btn { width: 100%; margin-bottom: 8px; } .bday-off { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text3); margin-top: 6px; cursor: pointer; } .fb-card { margin: 10px 16px 0; padding: 14px 14px 12px; border: 1.5px solid var(--accent-edge); background: var(--card); } .fb-top { display: flex; align-items: center; gap: 8px; } .fb-top img { width: 46px; height: 46px; flex-shrink: 0; image-rendering: pixelated; } .fb-top b { font-size: 15.5px; line-height: 1.4; color: var(--text); word-break: keep-all; } .fb-say { font-size: 13.5px; line-height: 1.6; color: var(--text2); margin: 8px 0 10px; word-break: keep-all; } .fb-say span { color: var(--text3); font-size: 12px; } .fb-picks { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; } .fb-pick { border: 1.5px solid var(--border); background: var(--bg2); color: var(--text2); border-radius: 18px; padding: 8px 12px; font-size: 13px; font-weight: 600; cursor: pointer; } .fb-pick.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent2); font-weight: 800; } .fb-text { text-align: left; letter-spacing: normal; width: 100%; min-height: 64px; resize: vertical; font-size: 13.5px; line-height: 1.5; } .fb-note { font-size: 11.5px; color: var(--text3); margin: 6px 0 2px; line-height: 1.5; word-break: keep-all; } .fb-err { font-size: 12.5px; color: var(--accent2); margin-top: 6px; } .fb-later { font-size: 13px; line-height: 1.65; color: var(--text2); background: var(--accent-soft); border-radius: 10px; padding: 9px 11px; word-break: keep-all; } .fb-later b { color: var(--accent2); } .fb-row { display: flex; gap: 8px; margin-top: 10px; } .fb-row > * { flex: 1; width: auto; display: flex; align-items: center; justify-content: center; text-decoration: none; } .fb-inbox-top { width: 100%; display: flex; justify-content: space-between; align-items: center; background: none; border: none; padding: 0; cursor: pointer; color: var(--text); font-size: 13.5px; } .fb-inbox-top span { font-size: 12.5px; color: var(--text3); } .fb-tally { font-size: 12px; color: var(--accent2); background: var(--accent-soft); border-radius: 8px; padding: 6px 9px; margin-bottom: 8px; line-height: 1.6; } .fb-item { border-top: 1px solid var(--border); padding: 8px 0; } .fb-meta { font-size: 11px; color: var(--text3); } .fb-tags { font-size: 12.5px; color: var(--accent2); font-weight: 700; margin-top: 3px; } .fb-msg { font-size: 13.5px; color: var(--text); margin-top: 3px; line-height: 1.55; white-space: pre-wrap; word-break: break-all; }`;
     document.head.appendChild(st);
   } catch (e) {}
 })();
@@ -1055,8 +1055,148 @@ function DupMergeCard({ showToast, refreshIndividuals }) {
 }
 
 
+/* ══════════════════════════════════════════
+   v1.9.33 의견 한 줄 — 대표님 요청(2026-10-22)
+   쓰시는 분 연락처가 없어서, 앱을 몇 번 열어 본 분께 홈에서 딱 한 번 여쭙니다.
+   ★ [보내기] 와 [안 보낼게요] 둘 다 있습니다. 안 보내셔도 아무것도 서버에 가지 않습니다.
+   ★ 두 경우 모두 "써 주셔서 감사합니다"를 꼭 넣고, 나중에라도 설정의 오픈채팅으로 건의할 수 있다고 알립니다.
+   ★ 이름·이메일·연락처는 받지 않습니다. 보내는 것: 고른 버튼 · 적은 글 · 기기 종류 · 몇 번째 방문 · 아이 수 · 앱 버전.
+   ★ 표(cg_feedback)는 넣기만 되고, 읽기는 대표님 계정만 됩니다(supabase_feedback.sql).
+   ══════════════════════════════════════════ */
+const FB_PICKS = [
+  { key: 'easy', label: '기록이 편해요' },
+  { key: 'alarm', label: '알림이 도움돼요' },
+  { key: 'hard', label: '쓰는 법이 어려워요' },
+  { key: 'missing', label: '필요한 기능이 없어요' },
+  { key: 'bug', label: '오류·느림이 있어요' },
+  { key: 'unsure', label: '아직 잘 모르겠어요' },
+];
+const FB_MAX = 500;
+const fbLabel = (k) => (FB_PICKS.find(p => p.key === k) || {}).label || k;
+/* 보낼 내용 — 고른 것도 적은 것도 없으면 null (보내기 버튼이 꺼집니다) */
+function fbPayload(picks, msg) {
+  const p = FB_PICKS.map(x => x.key).filter(k => (picks || []).indexOf(k) >= 0);
+  const m = String(msg || '').trim().slice(0, FB_MAX);
+  if (!p.length && !m) return null;
+  let visit = 0, animals = 0;
+  try { visit = parseInt(localStorage.getItem('cg_visit_no') || '0', 10) || 0; } catch (e) {}
+  try { animals = DB.getIndividuals().filter(isHere).length; } catch (e) {}
+  return { picks: p, msg: m, device: TRACK.device(), standalone: TRACK.standalone(), visit_no: visit, animals, app: APP_VERSION };
+}
+const fbChat = () => { try { return (contactLinks(DB.getSettings()).find(l => l.key === 'chat') || {}).url || ''; } catch (e) { return ''; } };
+
+function FeedbackCard({ onClose }) {
+  const [picks, setPicks] = useState([]);
+  const [msg, setMsg] = useState('');
+  const [mode, setMode] = useState('ask');   // ask | sent | skip
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const body = fbPayload(picks, msg);
+  const done = (m) => { try { STORE.set('cg_fb', m + ':' + todayStr()); } catch (e) {} setMode(m); };
+  const toggle = (k) => setPicks(v => v.indexOf(k) >= 0 ? v.filter(x => x !== k) : v.concat(k));
+  const send = async () => {
+    if (!body || busy) return;
+    setBusy(true); setErr('');
+    try {
+      const res = await SYNC.api('/rest/v1/cg_feedback', { method: 'POST', headers: { Prefer: 'return=minimal' }, body: JSON.stringify(body) }, false);
+      if (!res.ok) throw new Error(String(res.status));
+      done('sent');
+    } catch (e) {
+      setErr('전송이 안 됐어요. 인터넷 연결을 확인하고 한 번 더 눌러 주세요.');
+    }
+    setBusy(false);
+  };
+  const chat = fbChat();
+  const after = (
+    <>
+      <div className="fb-later" data-testid="fb-later">
+        나중에라도 불편한 점이나 바라는 기능이 생기면 <b>설정 › 💬 문의·건의 오픈채팅</b>으로 언제든 보내 주세요. 꼭 참고할게요!
+      </div>
+      <div className="fb-row">
+        {chat && <a className="btn btn-secondary btn-sm" href={chat} target="_blank" rel="noopener noreferrer" data-testid="fb-chat">💬 오픈채팅 열기</a>}
+        <button className="btn btn-primary btn-sm" data-testid="fb-close" onClick={() => onClose && onClose()}>닫기</button>
+      </div>
+    </>
+  );
+  if (mode === 'sent') return (
+    <div className="card fb-card" data-testid="fb-sent">
+      <div className="fb-top"><img src="./assets/brand/gecko-transparent.webp" alt="" width="46" height="46" /><b>보내 주셔서 정말 감사합니다!</b></div>
+      <div className="fb-say">브리딩비서를 써 주시는 것만으로도 큰 힘이 돼요. 한 줄 한 줄 꼼꼼히 읽고 더 편한 앱으로 만들어 볼게요.</div>
+      {after}
+    </div>
+  );
+  if (mode === 'skip') return (
+    <div className="card fb-card" data-testid="fb-skipped">
+      <div className="fb-top"><img src="./assets/brand/gecko-transparent.webp" alt="" width="46" height="46" /><b>괜찮아요! 써 주셔서 정말 감사합니다</b></div>
+      <div className="fb-say">브리딩비서를 아껴 써 주셔서 늘 고마워요.</div>
+      {after}
+    </div>
+  );
+  return (
+    <div className="card fb-card" data-testid="fb-card">
+      <div className="fb-top"><img src="./assets/brand/gecko-transparent.webp" alt="" width="46" height="46" /><b>브리딩비서를 써 주셔서 감사해요</b></div>
+      <div className="fb-say">만든 사람이 직접 하나하나 읽어요. 써 보시니 어떠셨는지 잠깐만 들려주시겠어요? <span>(여러 개 골라도 돼요)</span></div>
+      <div className="fb-picks">
+        {FB_PICKS.map(p => (
+          <button key={p.key} className={'fb-pick' + (picks.indexOf(p.key) >= 0 ? ' on' : '')} data-testid={'fb-pick-' + p.key} onClick={() => toggle(p.key)}>{p.label}</button>
+        ))}
+      </div>
+      <textarea className="input fb-text" data-testid="fb-text" maxLength={FB_MAX} rows={3} value={msg} onChange={e => setMsg(e.target.value)}
+        placeholder="불편한 점이나 있었으면 하는 기능을 적어 주세요 (안 적으셔도 돼요)" />
+      <div className="fb-note">이름·연락처는 받지 않아요. 답장이 필요하시면 설정의 오픈채팅으로 말씀해 주세요.</div>
+      {err && <div className="fb-err" role="alert">{err}</div>}
+      <div className="fb-row">
+        <button className="btn btn-secondary btn-sm" data-testid="fb-skip" disabled={busy} onClick={() => done('skip')}>안 보낼게요</button>
+        <button className="btn btn-primary btn-sm" data-testid="fb-send" disabled={!body || busy} onClick={send}>{busy ? '보내는 중…' : '보내기'}</button>
+      </div>
+    </div>
+  );
+}
+
+/* 대표님 설정 화면 — 받은 의견 보기 (대표님 계정만 읽을 수 있습니다) */
+function FeedbackInbox() {
+  const [rows, setRows] = useState(null);
+  const [open, setOpen] = useState(false);
+  const [err, setErr] = useState('');
+  const load = async () => {
+    setErr('');
+    try {
+      await SYNC.ensureSession();
+      const res = await SYNC.api('/rest/v1/cg_feedback?select=at,day,picks,msg,device,standalone,visit_no,animals,app&order=at.desc&limit=200');
+      if (!res.ok) throw new Error(String(res.status));
+      setRows(await res.json());
+    } catch (e) { setErr('받은 의견을 불러오지 못했어요. (' + (e.message || '') + ')'); }
+  };
+  useEffect(() => { load(); }, []);
+  const dev = { ios: '아이폰', android: '안드로이드', pc: 'PC' };
+  const tally = {};
+  (rows || []).forEach(r => (r.picks || []).forEach(k => { tally[k] = (tally[k] || 0) + 1; }));
+  return (
+    <div className="card fb-inbox" style={{margin:0}} data-testid="fb-inbox">
+      <button className="fb-inbox-top" onClick={() => setOpen(o => !o)}>
+        <b>📮 받은 의견</b><span>{rows ? rows.length + '건' : (err ? '' : '불러오는 중…')} {open ? '▲' : '▼'}</span>
+      </button>
+      {err && <div className="fb-err">{err} <button className="onb-link" onClick={load}>다시</button></div>}
+      {open && rows && (
+        <div style={{marginTop:8}}>
+          {!rows.length && <div className="fb-note">아직 받은 의견이 없어요.</div>}
+          {rows.length > 0 && <div className="fb-tally">{FB_PICKS.filter(p => tally[p.key]).map(p => p.label + ' ' + tally[p.key]).join(' · ')}</div>}
+          {rows.map((r, i) => (
+            <div key={i} className="fb-item">
+              <div className="fb-meta">{r.day || String(r.at || '').slice(0, 10)} · {dev[r.device] || r.device || '?'}{r.standalone ? '(앱)' : ''} · {r.visit_no}번째 방문 · 아이 {r.animals}마리 · v{r.app}</div>
+              {(r.picks || []).length > 0 && <div className="fb-tags">{r.picks.map(fbLabel).join(' · ')}</div>}
+              {r.msg && <div className="fb-msg">{r.msg}</div>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 window.CREG_EXTRAS = {
-  SeasonNoteSheet, BirthdayPopup, DupMergeCard, BDAY_LINES, bdayPick, SaleCardSheet, AdoptSendSheet, AdoptReceive, AddGeckoSheet, chat,
+  SeasonNoteSheet, BirthdayPopup, DupMergeCard, FeedbackCard, FeedbackInbox, fbPayload, FB_PICKS, BDAY_LINES, bdayPick, SaleCardSheet, AdoptSendSheet, AdoptReceive, AddGeckoSheet, chat,
   // 시험(node)에서 쓰는 순수 함수들
   seasonYears, seasonNoteStats, seasonSummaryText, saveSeasonNote, toggleTrait, SEASON_TRAITS, SEASON_DIRS,
   adoptSnapshot, adoptMemos, adoptImport, adoptCounts, looksPrivate, ADOPT, ADOPT_KINDS, ADOPT_NEVER, saleCardData,
