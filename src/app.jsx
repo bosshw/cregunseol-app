@@ -642,7 +642,7 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.33';
+const APP_VERSION = '1.9.34';
 const APP_PATCHED = '2026-10-22';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -7385,6 +7385,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
   const pendingNameRef = useRef(null);               // 새 이름 등록 확인 대기
   const hatchAskRef = useRef(null);                  // v1.9.19 부화 마릿수 답 대기 ("2마리"라고 적으셔도 됩니다)
   const layAskRef = useRef(null);                    // v1.9.19 알 개수 답 대기 (칩 대신 "2개"라고 적으셔도 됩니다)
+  const mfRef = useRef(false);                       // v1.9.34 모프누락명령 진행 중 (extras.min.js morphFill)
   const pendingRetargetRef = useRef(null);           // 등록 후 옮길 기록 (주인 정정 대기)
   const pendingBabyRef = useRef(null);               // 해칭 베이비 이름 답변 대기
   const pendingRef = useRef([]);                     // 담긴 기록 (ref 미러)
@@ -8111,6 +8112,11 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
 
   /* ── 문장 해석 본체 ── */
   const process = (text) => {
+    /* v1.9.34 모프누락명령 — 묻는 동안의 답은 전부 그쪽으로 (그만·취소·모름 포함) */
+    if (mfRef.current || /모프\s*누락\s*명령/.test(text)) {
+      loadExtras().then(X => { mfRef.current = X.morphFill(text, { bot, refreshIndividuals }); }).catch(() => missBot('잠깐 연결이 안 됐어요. 한 번 더 말씀해 주세요 🙂'));
+      return;
+    }
     /* v1.9.19 알 개수를 여쭌 뒤 — "2개", "두 개요", "몰라" 같은 짧은 답을 받습니다.
        다른 말씀이면 산란은 개수 없이 담아두고, 새 문장을 그대로 해석합니다(기록이 사라지지 않게). */
     if (hatchAskRef.current) {

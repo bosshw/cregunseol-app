@@ -1195,8 +1195,109 @@ function FeedbackInbox() {
 }
 
 
+/* ══════════════════════════════════════════
+   v1.9.34 모프누락명령 — 대표님 요청(2026-10-22)
+   대화창에 "모프누락명령"이라고 치면 모프가 빈 아이를 한 마리씩 소개하고 모프를 받아 바로 적습니다.
+   ★ 대상: 곁에 있는 아이(isHere — 보유중·분양가능·예약중). 분양 간 아이·떠난 아이는 묻지 않습니다.
+   ★ 순서: 태어난 날(없으면 데려온 날 → 등록한 날)이 오래된 아이부터.
+   ★ 답: 적으신 글자 그대로 저장(띄어쓰기도 그대로). "모름/넘어가" 비워 두고 다음 · "그만" 멈춤 · "취소" 방금 것 되돌리고 다시 묻기.
+   ★ 소개 문구는 기록에 있는 것만 말합니다(부모·몇 차 해칭·부화일·데려온 날·데려온 곳). 없는 건 지어내지 않습니다.
+   ★ 진행 상태는 이 조각 안(MF)에만 둡니다. "그만" 뒤에 다시 치면 그때 빈 아이부터 새로 셉니다.
+   ══════════════════════════════════════════ */
+const MF = { ids: [], i: 0, done: 0, skip: 0, last: null };
+const MF_CMD = /모프\s*누락\s*명령/;
+/* 이름 끝이 숫자면 읽는 소리로 받침을 봅니다 (Ch24 → 사 → 예요, 크은1 → 일 → 이에요) */
+const mfYeyo = (w) => { const t = String(w || '').trim(), d = t.slice(-1); return /\d/.test(d) ? t + ('013678'.indexOf(d) >= 0 ? '이에요' : '예요') : iyeyo(t); };
+const mfDate = (d) => /^\d{4}-\d\d-\d\d/.test(d || '') ? d.slice(2, 4) + '.' + d.slice(5, 7) + '.' + d.slice(8, 10) : '';
+/* 데려온 날·곳 — 입양 받기(adoptFrom) → 입양처/입양가 메모(날짜를 아는 것만) → 가계부 '개체 구입' 순 */
+function mfCame(g, evs) {
+  const src = (() => { try { return splitMemo(g.id).source || ''; } catch (e) { return ''; } })() || (g.adoptFrom && g.adoptFrom.breeder) || '';
+  let at = (g.adoptFrom && g.adoptFrom.at) || '';
+  if (!at) { const m = evs.find(e => e.individualId === g.id && e.type === 'memo' && e.data && e.data.dated && /입양(처|가)/.test(e.data.notes || '')); if (m) at = m.date; }
+  if (!at) { const l = evs.find(e => e.type === 'ledger' && e.data && e.data.indId === g.id && e.data.flow !== 'in'); if (l) at = l.date; }
+  return { src: String(src).trim(), at };
+}
+function mfList() {
+  const evs = DB.getEvents();
+  const key = (g) => g.hatchDate || mfCame(g, evs).at || String(g.createdAt || '').slice(0, 10) || '9999';
+  return DB.getIndividuals().filter(g => isHere(g) && !String(g.morph || '').trim())
+    .sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0)).map(g => g.id);
+}
+/* 한 마리 소개 — 기록에 있는 것만 */
+function mfIntro(g, k) {
+  const inds = DB.getIndividuals(), evs = DB.getEvents(), byId = {};
+  inds.forEach(i => { byId[i.id] = i; });
+  const L = [`${k + 1}번 아이는 ${mfYeyo(g.name)}.`];
+  const row = (() => { try { return clutchRows(inds, evs).find(r => r.babies.some(b => b.id === g.id)); } catch (e) { return null; } })();
+  const mom = byId[g.damId], dad = byId[g.sireId];
+  if (row) L.push(`${row.pairName} ${row.nth}차 해칭 아이이고`);
+  else if (mom || dad) L.push(`${[mom && mom.name, dad && dad.name].filter(Boolean).join(' × ')} 사이에서 나온 아이이고`);
+  const born = mfDate(g.hatchDate);
+  const mine = (row || mom || dad);
+  const came = mine ? { src: '', at: '' } : mfCame(g, evs);
+  if (born) L.push(`${born}에 태어난 아이예요.`);
+  if (came.at || came.src) L.push(`${came.at ? mfDate(came.at) + '에 ' : ''}${came.src ? came.src + '에서 ' : ''}데려왔어요.`);
+  else if (!born && !mine && g.createdAt) L.push(`${mfDate(String(g.createdAt).slice(0, 10))}에 등록한 아이예요.`);
+  if (L.length > 1 && /이고$/.test(L[L.length - 1])) L[L.length - 1] = L[L.length - 1].replace(/ 아이이고$/, ' 아이예요.');
+  L.push('모프가 무엇인가요?');
+  return L.join('\n');
+}
+function mfAsk(bot) {
+  const all = DB.getIndividuals();
+  while (MF.i < MF.ids.length) {
+    const g = all.find(x => x.id === MF.ids[MF.i]);
+    if (g && isHere(g) && !String(g.morph || '').trim()) { bot(mfIntro(g, MF.i)); return true; }
+    MF.i++;   // 그 사이 지워졌거나 다른 데서 모프를 채운 아이는 건너뜁니다
+  }
+  const n = MF.ids.length;
+  bot(`🎉 ${n}마리 모두 끝났어요! 모프를 채운 아이 ${MF.done}마리${MF.skip ? `, 비워 둔 아이 ${MF.skip}마리` : ''}.` + (MF.skip ? '\n비워 둔 아이는 다음에 "모프누락명령"이라고 하시면 다시 여쭐게요.' : ''));
+  return false;
+}
+/* 돌려주는 값: 아직 묻는 중이면 true (app 이 다음 말을 다시 이리로 보냅니다) */
+function morphFill(text, ctx) {
+  const { bot, refreshIndividuals } = ctx;
+  const t = String(text || '').trim();
+  if (MF_CMD.test(t) || !MF.ids.length) {
+    MF.ids = mfList(); MF.i = 0; MF.done = 0; MF.skip = 0; MF.last = null;
+    if (!MF.ids.length) { bot('모프가 비어 있는 아이가 없어요 🙂 모두 채워져 있어요.'); return false; }
+    bot(`모프가 비어 있는 아이는 총 ${MF.ids.length}마리예요.\n1번 아이부터 모프를 말씀해 주시면 채워 둘게요.\n(모르면 "모름" · 멈추려면 "그만" · 방금 것 되돌리려면 "취소")`);
+    return mfAsk(bot);
+  }
+  const g = DB.getIndividuals().find(x => x.id === MF.ids[MF.i]);
+  if (/^(그만|멈춰|중단|끝내|그만할래|그만해)/.test(t)) {
+    const left = mfList().length;   // 넘어간 아이까지 — 다음에 다시 여쭙는 수
+    bot(`여기까지 할게요. ${MF.done}마리 채웠어요.${left > 0 ? `\n남은 ${left}마리는 다음에 "모프누락명령"이라고 하시면 이어서 여쭐게요.` : ''}`);
+    MF.ids = []; return false;
+  }
+  if (/^(취소|되돌려|방금\s*(거|것)?\s*취소|잘못)/.test(t)) {
+    if (!MF.last) { bot('되돌릴 게 아직 없어요 🙂'); return mfAsk(bot); }
+    const { id, prev, k, skipped } = MF.last; MF.last = null;
+    const p = DB.getIndividuals().find(x => x.id === id);
+    if (!skipped) { DB.updateIndividual(id, { morph: prev || '' }); MF.done = Math.max(0, MF.done - 1); refreshIndividuals && refreshIndividuals(); }
+    else MF.skip = Math.max(0, MF.skip - 1);
+    MF.i = k;
+    bot(`↩️ ${p ? p.name : '방금 아이'} ${skipped ? '다시 여쭐게요.' : '모프를 다시 비웠어요.'}`);
+    return mfAsk(bot);
+  }
+  if (!g) return mfAsk(bot);
+  if (/^(모름|모르겠|몰라|넘어가|넘어|패스|스킵|다음|건너)/.test(t)) {
+    MF.last = { id: g.id, prev: '', k: MF.i, skipped: true };
+    MF.skip++; MF.i++;
+    bot(`${eunneun(g.name)} 비워 둘게요.`);
+    return mfAsk(bot);
+  }
+  if (!t || t.length > 40 || /\n/.test(t)) { bot('모프 이름만 짧게 말씀해 주세요 🙂 (예: 100헷초초)'); return true; }
+  MF.last = { id: g.id, prev: g.morph || '', k: MF.i, skipped: false };
+  DB.updateIndividual(g.id, { morph: t });
+  refreshIndividuals && refreshIndividuals();
+  MF.done++; MF.i++;
+  bot(`✅ ${g.name} 모프 "${t}"로 기록할게요.`);
+  return mfAsk(bot);
+}
+
+
 window.CREG_EXTRAS = {
-  SeasonNoteSheet, BirthdayPopup, DupMergeCard, FeedbackCard, FeedbackInbox, fbPayload, FB_PICKS, BDAY_LINES, bdayPick, SaleCardSheet, AdoptSendSheet, AdoptReceive, AddGeckoSheet, chat,
+  SeasonNoteSheet, BirthdayPopup, DupMergeCard, FeedbackCard, FeedbackInbox, fbPayload, FB_PICKS, morphFill, mfList, mfIntro, MF, BDAY_LINES, bdayPick, SaleCardSheet, AdoptSendSheet, AdoptReceive, AddGeckoSheet, chat,
   // 시험(node)에서 쓰는 순수 함수들
   seasonYears, seasonNoteStats, seasonSummaryText, saveSeasonNote, toggleTrait, SEASON_TRAITS, SEASON_DIRS,
   adoptSnapshot, adoptMemos, adoptImport, adoptCounts, looksPrivate, ADOPT, ADOPT_KINDS, ADOPT_NEVER, saleCardData,
