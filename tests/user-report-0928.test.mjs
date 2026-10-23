@@ -7,7 +7,7 @@ import test from "node:test";
 import vm from "node:vm";
 
 const root = new URL("../", import.meta.url);
-const read = (f) => readFile(new URL(f, root), "utf8");
+const read = async (f) => (await readFile(new URL(f, root), "utf8")).replace(/\r\n/g, "\n");
 
 async function loadApp() {
   const store = new Map();

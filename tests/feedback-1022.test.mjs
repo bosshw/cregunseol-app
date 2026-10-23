@@ -7,7 +7,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const ex = await readFile(new URL("../src/extras.jsx", import.meta.url), "utf8");
+const ex = (await readFile(new URL("../src/extras.jsx", import.meta.url), "utf8")).replace(/\r\n/g, "\n");
 const app = await readFile(new URL("../src/app.jsx", import.meta.url), "utf8");
 const sql = await readFile(new URL("../supabase_feedback.sql", import.meta.url), "utf8");
 const card = ex.slice(ex.indexOf("function FeedbackCard("), ex.indexOf("function FeedbackInbox("));

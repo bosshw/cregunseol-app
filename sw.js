@@ -125,6 +125,16 @@ self.addEventListener('fetch', e => {
   if (u.pathname.endsWith('/version.json')) return;
   const mine = u.origin === self.location.origin;
   if (!mine) return;
+  // CREVALUE owner tools update independently; preserve all other offline assets.
+  if (u.pathname.endsWith('/crevalue.min.js')) {
+    e.respondWith(fetch(new Request(e.request, { cache: 'no-cache' })).then(res => {
+      if (!res.ok) throw new Error('CREVALUE unavailable');
+      const copy = res.clone();
+      e.waitUntil(caches.open(CACHE).then(c => c.put(e.request, copy)).catch(() => {}));
+      return res;
+    }).catch(() => caches.match(e.request)));
+    return;
+  }
   // 저장해둔 게 있으면 그것부터, 없으면 받아오고 다음을 위해 저장합니다
   e.respondWith(
     caches.match(e.request).then(hit => hit || fetch(e.request).then(res => {
