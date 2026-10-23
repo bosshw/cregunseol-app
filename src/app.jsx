@@ -642,8 +642,8 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.34';
-const APP_PATCHED = '2026-10-22';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
+const APP_VERSION = '1.9.35';
+const APP_PATCHED = '2026-10-24';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -4458,6 +4458,14 @@ function answerQuery(target, text) {
     .replace(/[?？!！.,\s]/g, '');
   const compactQ = /^(생일|부화일|출생일|나이|밥|먹이|피딩|최근기록|기록|몸무게|무게|산란|메이팅|탈피|해칭|부화|모프|성별|분양|분양가|혈통|엄마|아빠|동배|형제)$/.test(compactText);
   if (!explicit && !tailQ && !compactQ) return null;
+  /* v1.9.35 "크빛이 새끼 몇 마리야" (대표님 2026-10-24) — 엄마·아빠 어느 쪽이든 셉니다.
+     곁에 있는 아이 / 분양 간 아이 / 떠난 아이로 나눠 이름까지. 예전엔 혈통 전체가 나오거나 "애기"는 메모로 담겼습니다 */
+  if (/새끼|자식|애기|아기|베이비|해츨링/.test(text) && /몇|얼마나/.test(text)) {
+    const k = DB.getIndividuals().filter(i => i.id !== target.id && (i.sireId === target.id || i.damId === target.id));
+    if (!k.length) return `${target.name} 새끼는 아직 기록이 없어요.\n부화를 기록하면 엄마·아빠가 저절로 이어져요.`;
+    return `${target.name} 새끼는 모두 ${k.length}마리예요.` + [['곁에 있는 아이', k.filter(i => !isAway(i))], ['분양 간 아이', k.filter(i => statusOf(i) === 'sold')], ['떠난 아이', k.filter(i => statusOf(i) === 'gone')]]
+      .filter(x => x[1].length).map(([a, l]) => `\n· ${a} ${l.length}마리: ${l.map(i => i.name).join(', ')}`).join('');
+  }
 
   const evs = DB.getEventsFor(target.id).sort((a, b) =>
     (b.date + (b.createdAt || '')) > (a.date + (a.createdAt || '')) ? 1 : -1);
@@ -11081,25 +11089,7 @@ function buildWorkbook(XLSX) {
    숫자를 보여주는 화면은 없습니다(대표님 확정) — 무엇을 세는지 밝히고,
    원하시면 이 기기는 빼는 스위치만 둡니다.
    ══════════════════════════════════════════ */
-function TrackCard({ showToast }) {
-  const [off, setOff] = useState(() => TRACK.isOff());
-  return (
-    <div className="card" style={{margin:0}} data-testid="track-card">
-      <div style={{fontSize:13, fontWeight:700, color:'var(--text2)', marginBottom:8}}>📊 익명 방문 집계</div>
-      <div style={{fontSize:12.5, color:'var(--text3)', lineHeight:1.7}}>
-        앱이 얼마나 쓰이는지 보려고 <b>사람 수만</b> 셉니다.{'\n'}
-        이름·이메일·아이피 같은 건 <b>하나도 보내지 않습니다.</b> 기록 내용도 물론이고요.
-      </div>
-      <button className="chip-btn" data-testid="track-off"
-        onClick={() => { const v = !off; TRACK.setOff(v); setOff(v); showToast(v ? '이 기기는 세지 않을게요' : '집계에 다시 포함했어요'); }}
-        style={{display:'flex', alignItems:'center', gap:9, width:'100%', textAlign:'left',
-                marginTop:12, padding:'11px 12px', ...(off ? CHIP_ON : CHIP_OFF)}}>
-        <span style={{fontSize:15}}>{off ? '☑' : '☐'}</span>
-        <span style={{flex:1, minWidth:0, fontWeight:600, fontSize:13}}>이 기기는 세지 않기</span>
-      </button>
-    </div>
-  );
-}
+/* v1.9.35 익명 방문 집계 카드(TrackCard)는 extras.min.js 로 옮겼습니다 — 첫 화면 크기 한도. 설정에서 <Extra part="TrackCard"> 로 부릅니다 */
 
 /* ══════════════════════════════════════════
    설정 · 폰 알림 카드
@@ -11635,7 +11625,7 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
         {DB.findDuplicateNames().length > 0 && <Extra part="DupMergeCard" showToast={showToast} refreshIndividuals={refreshIndividuals} />}
         <SyncCard showToast={showToast} refreshIndividuals={refreshIndividuals} />
         <PushCard showToast={showToast} />
-        <TrackCard showToast={showToast} />
+        <Extra part="TrackCard" showToast={showToast} />
         {canUseCrevalue() && <Extra part="FeedbackInbox" />}
         <StorageCard showToast={showToast} />
         <div className="card" style={{margin:0}}>

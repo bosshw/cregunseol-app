@@ -1296,8 +1296,29 @@ function morphFill(text, ctx) {
 }
 
 
+/* v1.9.35 설정 · 익명 방문 집계 카드 — app.min.js 에서 옮겨 왔습니다(첫 화면 크기 한도). TRACK·CHIP_ON/OFF 는 app 것을 씁니다 */
+function TrackCard({ showToast }) {
+  const [off, setOff] = useState(() => TRACK.isOff());
+  return (
+    <div className="card" style={{margin:0}} data-testid="track-card">
+      <div style={{fontSize:13, fontWeight:700, color:'var(--text2)', marginBottom:8}}>📊 익명 방문 집계</div>
+      <div style={{fontSize:12.5, color:'var(--text3)', lineHeight:1.7}}>
+        앱이 얼마나 쓰이는지 보려고 <b>사람 수만</b> 셉니다.{'\n'}
+        이름·이메일·아이피 같은 건 <b>하나도 보내지 않습니다.</b> 기록 내용도 물론이고요.
+      </div>
+      <button className="chip-btn" data-testid="track-off"
+        onClick={() => { const v = !off; TRACK.setOff(v); setOff(v); showToast(v ? '이 기기는 세지 않을게요' : '집계에 다시 포함했어요'); }}
+        style={{display:'flex', alignItems:'center', gap:9, width:'100%', textAlign:'left',
+                marginTop:12, padding:'11px 12px', ...(off ? CHIP_ON : CHIP_OFF)}}>
+        <span style={{fontSize:15}}>{off ? '☑' : '☐'}</span>
+        <span style={{flex:1, minWidth:0, fontWeight:600, fontSize:13}}>이 기기는 세지 않기</span>
+      </button>
+    </div>
+  );
+}
+
 window.CREG_EXTRAS = {
-  SeasonNoteSheet, BirthdayPopup, DupMergeCard, FeedbackCard, FeedbackInbox, fbPayload, FB_PICKS, morphFill, mfList, mfIntro, MF, BDAY_LINES, bdayPick, SaleCardSheet, AdoptSendSheet, AdoptReceive, AddGeckoSheet, chat,
+  SeasonNoteSheet, BirthdayPopup, DupMergeCard, FeedbackCard, FeedbackInbox, fbPayload, FB_PICKS, morphFill, mfList, mfIntro, MF, TrackCard, BDAY_LINES, bdayPick, SaleCardSheet, AdoptSendSheet, AdoptReceive, AddGeckoSheet, chat,
   // 시험(node)에서 쓰는 순수 함수들
   seasonYears, seasonNoteStats, seasonSummaryText, saveSeasonNote, toggleTrait, SEASON_TRAITS, SEASON_DIRS,
   adoptSnapshot, adoptMemos, adoptImport, adoptCounts, looksPrivate, ADOPT, ADOPT_KINDS, ADOPT_NEVER, saleCardData,
