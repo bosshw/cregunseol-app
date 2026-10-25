@@ -1317,8 +1317,69 @@ function TrackCard({ showToast }) {
   );
 }
 
+/* v1.9.37 설정 · 저장 공간 카드 — app.min.js 에서 옮겨 왔습니다(첫 화면 크기 한도). STORE·PHOTO·STORE_MSG 는 app 것을 씁니다 */
+/* 저장 공간 막대.
+   ★ 숫자는 STORE.usage() 와 PHOTO.pending() 두 곳에서만 옵니다 — 화면에서 다시 세지 마세요.
+   사진이 칸의 대부분을 먹기 때문에 "사진이 몇 장, 얼마"까지 같이 보여드립니다. */
+function StorageCard({ showToast }) {
+  const [tick, setTick] = useState(0);
+  const [busy, setBusy] = useState(null);          // {done, total} 옮기는 중
+  const u = STORE.usage();
+  const pend = PHOTO.pending().count;
+  const onServer = DB.getEvents().filter(e => e && e.data && isPhotoUrl(e.data.photo)).length;
+  const pct = Math.min(100, Math.round(u.ratio * 100));
+  const mb = (n) => (n / 1000000).toFixed(2) + 'MB';
+  const color = pct >= 90 ? 'var(--danger, #B3362B)' : pct >= STORE_WARN * 100 ? '#C87F2F' : '#2E7D46';
+
+  const moveAll = async () => {
+    if (!PHOTO.ready()) return showToast && showToast('⚠️ 로그인하고 인터넷이 연결돼야 옮길 수 있어요');
+    setBusy({ done: 0, total: pend });
+    const r = await PHOTO.flush((done, total) => setBusy({ done, total }));
+    setBusy(null);
+    setTick(t => t + 1);
+    if (showToast) showToast(r.left ? `📷 ${r.done}장 옮겼어요 · ${r.left}장 남음` : `📷 사진 ${r.done}장을 모두 옮겼어요`);
+  };
+
+  return (
+    <div className="card" style={{margin:0}} data-testid="storage-card" key={tick}>
+      <div style={{fontSize:13, fontWeight:700, marginBottom:4, color:'var(--text2)'}}>🗂️ 저장 공간</div>
+      <div style={{fontSize:12, color:'var(--text3)', marginBottom:10, lineHeight:1.6}}>
+        기록은 이 기기 안에 저장돼요. 칸이 꽉 차면 새 기록이 저장되지 않아요.
+      </div>
+      <div style={{height:10, borderRadius:6, background:'var(--bg3)', overflow:'hidden'}}>
+        <div style={{width: Math.max(2, pct) + '%', height:'100%', background: color, borderRadius:6}} />
+      </div>
+      <div style={{display:'flex', justifyContent:'space-between', marginTop:7, fontSize:12, color:'var(--text2)'}}>
+        <span><b style={{color}}>{mb(u.used)}</b> / 약 5MB</span>
+        <span style={{fontVariantNumeric:'tabular-nums'}}>{pct}%</span>
+      </div>
+
+      <div style={{fontSize:11.5, color:'var(--text3)', marginTop:6, lineHeight:1.6}} data-testid="storage-photos">
+        {onServer > 0 && `☁️ 서버에 ${onServer}장 (폰 칸을 안 먹어요)`}
+        {onServer > 0 && pend > 0 && <br/>}
+        {pend > 0 && `📱 폰에 ${pend}장이 ${mb(u.photo)}를 쓰고 있어요`}
+        {onServer === 0 && pend === 0 && '아직 사진은 없어요.'}
+      </div>
+
+      {pend > 0 && (
+        <button className="btn btn-secondary btn-sm" style={{width:'100%', marginTop:10}}
+          disabled={!!busy} onClick={moveAll} data-testid="photo-move">
+          {busy ? `옮기는 중… ${busy.done}/${busy.total}` : `☁️ 사진 ${pend}장 서버로 옮기기`}
+        </button>
+      )}
+
+      {pct >= STORE_WARN * 100 && (
+        <div style={{marginTop:9, padding:'9px 11px', borderRadius:9, background:'var(--bg3)',
+                     fontSize:12, color:'var(--text2)', lineHeight:1.6, whiteSpace:'pre-line'}}>
+          {STORE_MSG.near(pct)}
+        </div>
+      )}
+    </div>
+  );
+}
+
 window.CREG_EXTRAS = {
-  SeasonNoteSheet, BirthdayPopup, DupMergeCard, FeedbackCard, FeedbackInbox, fbPayload, FB_PICKS, morphFill, mfList, mfIntro, MF, TrackCard, BDAY_LINES, bdayPick, SaleCardSheet, AdoptSendSheet, AdoptReceive, AddGeckoSheet, chat,
+  SeasonNoteSheet, BirthdayPopup, DupMergeCard, FeedbackCard, FeedbackInbox, fbPayload, FB_PICKS, morphFill, mfList, mfIntro, MF, TrackCard, StorageCard, BDAY_LINES, bdayPick, SaleCardSheet, AdoptSendSheet, AdoptReceive, AddGeckoSheet, chat,
   // 시험(node)에서 쓰는 순수 함수들
   seasonYears, seasonNoteStats, seasonSummaryText, saveSeasonNote, toggleTrait, SEASON_TRAITS, SEASON_DIRS,
   adoptSnapshot, adoptMemos, adoptImport, adoptCounts, looksPrivate, ADOPT, ADOPT_KINDS, ADOPT_NEVER, saleCardData,

@@ -642,7 +642,7 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.36';
+const APP_VERSION = '1.9.37';
 const APP_PATCHED = '2026-10-25';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -3534,7 +3534,7 @@ function countIn(text, unit) {
 // 문장에서 기록(팩트) 추출 — 한 문장에 여러 개 가능
 /* ── 같은 뜻을 사람마다 다르게 말합니다. 되도록 넓게 알아듣습니다 ── */
 const RE_LAY   = /산란|알\s*낳|알낳|낳았|낳음|낳으[셨시]|낳더|알\s*깠|알깠|알\s*확인|알\s*나왔|알\s*발견|알\s*받[았아]|클러치|알\s*\d+\s*개|\d+\s*개\s*낳|알\s*(?:한|두|세|네|다섯|여섯)\s*개/;
-const RE_HATCH = /해칭|헤칭|부화|태어났|태어난|태어나|깨어났|깨어남|깨났|껍질\s*(깨|뚫)|알에서\s*나|(알|새끼|베이비|애기|아기)\s*(에서\s*)?(나왔|나옴|나온)/;
+const RE_HATCH = /해칭|헤칭|부화|태어났|태어난|태어나|깨어났|깨어남|깨났|껍질\s*(깨|뚫)|알에서\s*나|(알|새끼|베이비|애기|아기)\s*(에서\s*)?([\d한두세네]\s*마리\s*)?(나왔|나옴|나온)/;   // v1.9.37 "새끼 2마리 나왔어"도 부화
 const RE_MATE  = /메이팅|교배|합사|짝짓기|붙였|붙여\s*놨|합방|짝\s*지어|올려\s*놨|올려놨/;
 const RE_SHED  = /탈피|허물|각질\s*벗|껍질\s*벗/;
 const RE_FEED  = /피딩|먹이|밥|먹였|먹었|먹임|먹여|급여|사료|줬어|줬음|줬고|줬다|주었|급식/;
@@ -4273,10 +4273,10 @@ function sibParentOf(text, list) {
   const m = String(text).match(/([가-힣A-Za-z]{1,10})\s*(\d{1,3})\s*호/), k = (x) => x.replace(/\s/g, '');
   if (!m) return null;
   const c = {}; let sp = 0, n = 0;
-  list.forEach(i => { const q = splitBabyName(i.name); if (q && i.damId && k(q.prefix) === m[1]) { c[i.damId] = (c[i.damId] || 0) + 1; n++; if (/\s\d+\s*호$/.test(i.name)) sp++; } });
-  const mom = list.find(i => i.id === Object.keys(c).sort((a, b) => c[b] - c[a])[0]);
-  const name = m[1] + (sp * 2 > n ? ' ' : '') + Number(m[2]) + '호';
-  return mom && !list.some(i => k(i.name) === k(name)) ? { mom, name } : null;
+  list.forEach(i => { const q = splitBabyName(i.name); if (q && i.damId && k(q.prefix) === m[1]) { const key = i.damId + '|' + (i.sireId || ''); c[key] = (c[key] || 0) + 1; n++; if (/\s\d+\s*호$/.test(i.name)) sp++; } });
+  const [dam, sire] = (Object.keys(c).sort((a, b) => c[b] - c[a])[0] || '').split('|');
+  const mom = list.find(i => i.id === dam), name = m[1] + (sp * 2 > n ? ' ' : '') + Number(m[2]) + '호';
+  return mom && !list.some(i => k(i.name) === k(name)) ? { mom, dad: list.find(i => i.id === sire), name } : null;
 }
 function nameFixPlan(individuals) {
   const list = individuals || DB.getIndividuals();
@@ -8442,9 +8442,25 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     const sibHatch = !names.length && facts.find(f => f.type === 'hatching');
     const sib = sibHatch && sibParentOf(text, inds);
     if (sib) {
-      sibHatch.data = { ...sibHatch.data, count: '1', babyNames: [sib.name] };
-      bot(`🐣 ${eunneun(sib.name)} 이름이 같은 형제들처럼 ${sib.mom.name} 아이로 볼게요. ${sib.mom.name} 해칭 1마리로 담아요.`);
+      sibHatch.data = { ...sibHatch.data, count: '1', babyNames: [sib.name], sireId: sib.dad && sib.dad.id };
+      bot(`🐣 ${eunneun(sib.name)} 형제들처럼 ${sib.mom.name}(엄마)${sib.dad ? ' × ' + sib.dad.name + '(아빠)' : ''} 아이로 담아요.`);
       target = sib.mom; setTarget(sib.mom); newSubject = null;
+    }
+    /* v1.9.37 아빠 이름으로 부화를 말하면("크산이 새끼 2마리 나왔어" — 크산이는 수컷) 그 아빠의 알을 품은 엄마에게 붙입니다.
+       예전엔 아빠가 엄마로 저장되고(아빠 칸은 비고) 아기 이름도 "산1호"처럼 지어졌습니다 */
+    const dadHatch = target && target.gender === 'male' && facts.find(f => f.type === 'hatching');
+    if (dadHatch) {
+      dadHatch.data = { ...dadHatch.data, sireId: target.id };
+      const rows = clutchRows().filter(r => r.waiting && r.dadId === target.id), moms = [...new Set(rows.map(r => r.e.individualId))];
+      if (!moms.length) { bot(`${eunneun(target.name)} 수컷이라 알을 품은 엄마가 필요해요 🙂\n"엄마 이름 새끼 2마리 나왔어"처럼 알려주세요.`); return; }
+      if (moms.length > 1) {
+        bot(`${target.name} 짝 중에 알을 품은 엄마가 여럿이에요. 어느 알에서 나왔나요? 🐣`, rows.map(r => ({ label: `${r.pairName} ${r.nth}차 (${fmtDate(r.e.date)} 산란)`, kind: 'hatch-clutch',
+          value: { layingId: r.e.id, nth: r.nth, eggs: r.units.length, fact: { ...dadHatch, date, targetId: r.e.individualId, targetName: r.momName }, rest: [] } })));
+        return;
+      }
+      const mom = inds.find(i => i.id === moms[0]);
+      bot(`🐣 ${eunneun(target.name)} 아빠라서 ${mom.name}(엄마) 알로 담을게요.`);
+      target = mom; setTarget(mom);
     }
     // 4) 새 개체 등록 플로우
     if (newSubject) {
@@ -8950,7 +8966,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
           const evs2 = DB.getEventsFor(f.targetId).sort((a, b) => b.date > a.date ? 1 : -1);
           const lay = evs2.find(e => e.type === 'laying' && e.data && e.data.sireId);
           const mate2 = evs2.find(e => e.type === 'mating' && e.data && e.data.partnerId);
-          const dadId = (lay && lay.data.sireId) || (mate2 && mate2.data.partnerId) || null;
+          const dadId = f.data.sireId || (lay && lay.data.sireId) || (mate2 && mate2.data.partnerId) || null;   // v1.9.37 형제 이름으로 담은 해칭은 형제들 아빠
           const dad = all.find(i => i.id === dadId) || null;
           const names = named || makeBabyNames(mom ? mom.name : '', dad ? dad.name : '', count, all.map(i => i.name));
           const mo = (f.data.morph || '').trim();
@@ -11386,65 +11402,8 @@ function SyncCard({ showToast, refreshIndividuals }) {
   );
 }
 
-/* 저장 공간 막대.
-   ★ 숫자는 STORE.usage() 와 PHOTO.pending() 두 곳에서만 옵니다 — 화면에서 다시 세지 마세요.
-   사진이 칸의 대부분을 먹기 때문에 "사진이 몇 장, 얼마"까지 같이 보여드립니다. */
-function StorageCard({ showToast }) {
-  const [tick, setTick] = useState(0);
-  const [busy, setBusy] = useState(null);          // {done, total} 옮기는 중
-  const u = STORE.usage();
-  const pend = PHOTO.pending().count;
-  const onServer = DB.getEvents().filter(e => e && e.data && isPhotoUrl(e.data.photo)).length;
-  const pct = Math.min(100, Math.round(u.ratio * 100));
-  const mb = (n) => (n / 1000000).toFixed(2) + 'MB';
-  const color = pct >= 90 ? 'var(--danger, #B3362B)' : pct >= STORE_WARN * 100 ? '#C87F2F' : '#2E7D46';
-
-  const moveAll = async () => {
-    if (!PHOTO.ready()) return showToast && showToast('⚠️ 로그인하고 인터넷이 연결돼야 옮길 수 있어요');
-    setBusy({ done: 0, total: pend });
-    const r = await PHOTO.flush((done, total) => setBusy({ done, total }));
-    setBusy(null);
-    setTick(t => t + 1);
-    if (showToast) showToast(r.left ? `📷 ${r.done}장 옮겼어요 · ${r.left}장 남음` : `📷 사진 ${r.done}장을 모두 옮겼어요`);
-  };
-
-  return (
-    <div className="card" style={{margin:0}} data-testid="storage-card" key={tick}>
-      <div style={{fontSize:13, fontWeight:700, marginBottom:4, color:'var(--text2)'}}>🗂️ 저장 공간</div>
-      <div style={{fontSize:12, color:'var(--text3)', marginBottom:10, lineHeight:1.6}}>
-        기록은 이 기기 안에 저장돼요. 칸이 꽉 차면 새 기록이 저장되지 않아요.
-      </div>
-      <div style={{height:10, borderRadius:6, background:'var(--bg3)', overflow:'hidden'}}>
-        <div style={{width: Math.max(2, pct) + '%', height:'100%', background: color, borderRadius:6}} />
-      </div>
-      <div style={{display:'flex', justifyContent:'space-between', marginTop:7, fontSize:12, color:'var(--text2)'}}>
-        <span><b style={{color}}>{mb(u.used)}</b> / 약 5MB</span>
-        <span style={{fontVariantNumeric:'tabular-nums'}}>{pct}%</span>
-      </div>
-
-      <div style={{fontSize:11.5, color:'var(--text3)', marginTop:6, lineHeight:1.6}} data-testid="storage-photos">
-        {onServer > 0 && `☁️ 서버에 ${onServer}장 (폰 칸을 안 먹어요)`}
-        {onServer > 0 && pend > 0 && <br/>}
-        {pend > 0 && `📱 폰에 ${pend}장이 ${mb(u.photo)}를 쓰고 있어요`}
-        {onServer === 0 && pend === 0 && '아직 사진은 없어요.'}
-      </div>
-
-      {pend > 0 && (
-        <button className="btn btn-secondary btn-sm" style={{width:'100%', marginTop:10}}
-          disabled={!!busy} onClick={moveAll} data-testid="photo-move">
-          {busy ? `옮기는 중… ${busy.done}/${busy.total}` : `☁️ 사진 ${pend}장 서버로 옮기기`}
-        </button>
-      )}
-
-      {pct >= STORE_WARN * 100 && (
-        <div style={{marginTop:9, padding:'9px 11px', borderRadius:9, background:'var(--bg3)',
-                     fontSize:12, color:'var(--text2)', lineHeight:1.6, whiteSpace:'pre-line'}}>
-          {STORE_MSG.near(pct)}
-        </div>
-      )}
-    </div>
-  );
-}
+/* v1.9.37 저장 공간 카드(StorageCard)는 extras.min.js 로 옮겼습니다 — 첫 화면 크기 한도. 설정에서 <Extra part="StorageCard"> 로 부릅니다.
+   위쪽 '저장 칸이 거의 찼어요' 막대(store-bar)는 그대로 여기 있습니다 */
 
 function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
   const [settings, setSettings] = useState(() => DB.getSettings());
@@ -11647,7 +11606,7 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
         <PushCard showToast={showToast} />
         <Extra part="TrackCard" showToast={showToast} />
         {canUseCrevalue() && <Extra part="FeedbackInbox" />}
-        <StorageCard showToast={showToast} />
+        <Extra part="StorageCard" showToast={showToast} />
         <div className="card" style={{margin:0}}>
           <div style={{fontSize:13, fontWeight:700, marginBottom:12, color:'var(--text2)'}}>데이터</div>
           <div style={{display:'flex', flexDirection:'column', gap:8}}>
