@@ -642,8 +642,8 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.35';
-const APP_PATCHED = '2026-10-24';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
+const APP_VERSION = '1.9.36';
+const APP_PATCHED = '2026-10-25';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -4266,6 +4266,17 @@ function splitBabyName(name) {
   const prefix = m[1].trim();
   if (!prefix) return null;
   return { prefix, no: parseInt(m[2], 10) };
+}
+/* v1.9.36 말 속의 "빛산5호"·"빛산 5호"가 아직 없는 이름이고, 같은 앞부분을 쓰는 형제들(엄마가 있는 아이)이 있으면
+   { 형제들 엄마(가장 많이 겹치는), 이름(형제들 띄어쓰기에 맞춤) } — 없으면 null */
+function sibParentOf(text, list) {
+  const m = String(text).match(/([가-힣A-Za-z]{1,10})\s*(\d{1,3})\s*호/), k = (x) => x.replace(/\s/g, '');
+  if (!m) return null;
+  const c = {}; let sp = 0, n = 0;
+  list.forEach(i => { const q = splitBabyName(i.name); if (q && i.damId && k(q.prefix) === m[1]) { c[i.damId] = (c[i.damId] || 0) + 1; n++; if (/\s\d+\s*호$/.test(i.name)) sp++; } });
+  const mom = list.find(i => i.id === Object.keys(c).sort((a, b) => c[b] - c[a])[0]);
+  const name = m[1] + (sp * 2 > n ? ' ' : '') + Number(m[2]) + '호';
+  return mom && !list.some(i => k(i.name) === k(name)) ? { mom, name } : null;
 }
 function nameFixPlan(individuals) {
   const list = individuals || DB.getIndividuals();
@@ -8426,6 +8437,15 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       }
     }
 
+    /* v1.9.36 "빛산5호 태어났어" (대표님 2026-10-25) — 처음 보는 "○○N호"여도 이름 앞부분이 같은 형제(빛산1~4호)가 있으면
+       새 등록을 묻지 않고 그 형제들 엄마의 해칭 1마리(이름은 형제들 띄어쓰기에 맞춰)로 담습니다. 어느 알인지·저장은 평소 해칭과 같습니다 */
+    const sibHatch = !names.length && facts.find(f => f.type === 'hatching');
+    const sib = sibHatch && sibParentOf(text, inds);
+    if (sib) {
+      sibHatch.data = { ...sibHatch.data, count: '1', babyNames: [sib.name] };
+      bot(`🐣 ${eunneun(sib.name)} 이름이 같은 형제들처럼 ${sib.mom.name} 아이로 볼게요. ${sib.mom.name} 해칭 1마리로 담아요.`);
+      target = sib.mom; setTarget(sib.mom); newSubject = null;
+    }
     // 4) 새 개체 등록 플로우
     if (newSubject) {
       pendingNameRef.current = newSubject;
@@ -8493,7 +8513,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
 
     /* 5.54) 이미 적힌 값과 다른 정보가 들어온 경우 — 말없이 덮어쓰지 않고 여쭤봅니다.
        "고쳐줘"라는 말이 없어도 됩니다. 값이 같거나 아직 비어 있으면 평소대로 흘려보냅니다. */
-    {
+    if (!sib) {   // v1.9.36 형제 이름으로 해칭을 담았으면 "어제 태어났어"를 엄마 생일로 읽지 않습니다
       const cur = DB.getIndividuals().find(i => i.id === target.id) || target;
       const plan = planProfileFix(cur, text, DB.getIndividuals(), morph);
       if (plan && plan.kind === 'future') {
@@ -8776,7 +8796,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     }
 
     const hf = mapped.find(f => f.type === 'hatching');
-    if (hf && babyNamingMode() === 'ask') {
+    if (hf && babyNamingMode() === 'ask' && !hf.data.babyNames) {
       pendingBabyRef.current = hf;
       bot(`아기들 이름을 지어줄까요? 쉼표로 알려주세요 🐣\n예) 순한1호, 순한2호\n"자동으로"라고 하시면 제가 규칙대로 지어둘게요.`);
     }
