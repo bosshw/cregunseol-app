@@ -1378,8 +1378,90 @@ function StorageCard({ showToast }) {
   );
 }
 
+/* ══════════════════════════════════════════
+   v1.9.39 대화 이어 묻기 — 대표님 요청(2026-10-30)
+   "분양 보냈어 · 입양했어 · 태어났어"를 대화에서 끝내지 않고, 빠진 것을 하나씩 여쭙고 연결된 곳까지 채웁니다.
+   · 분양: 얼마에 · 누구에게 → 담아 둔 분양 기록에 채움 → 저장하면 DB.recordSale(분양완료·분양가·입양자·가계부 수입·분양 기록)
+   · 입양: 얼마에 · 어디서 → setAdoptMemo(프로필 입양처·입양가) + 그 메모를 그날 날짜로(가계부 '개체 구입'이 그 달에 잡힘)
+   · 부화: 모프 → 담아 둔 부화 기록에 채움 → 저장하면 아기들 모프
+   ★ "모름/넘어가" 그 질문만 건너뜀 · "그만" 멈춤 · 다른 이야기(밥·탈피·저장…)를 하시면 묻기를 멈추고 그 말을 평소대로 처리('pass')
+   ★ 돌려주는 값: true 아직 묻는 중 · false 끝 · 'pass' 대답이 아님(app 이 그 말을 평소대로 해석)
+   ══════════════════════════════════════════ */
+const FU = { q: [], ctx: null, g: null };
+const FU_SKIP = /^(모름|모르겠|몰라|없어|패스|넘어가|건너|다음에|나중에|비워)/;
+const FU_STOP = /^(그만|됐어|괜찮아|안\s*적)/;
+const FU_NOT = /밥|먹었|먹이|탈피|산란|무게|그램|\dg\b|해칭|부화|메이팅|저장|기록|분양|입양|태어|나왔|낳았|몇\s*마리|[?？]$/;
+/* "15만원" · "150,000원" · "15"(→ 만원) · "무료" */
+function fuPrice(t) {
+  if (/무료|공짜|무상|선물|그냥\s*(줬|받)/.test(t)) return { free: true, won: 0 };
+  let m = t.match(/(\d+(?:\.\d+)?)\s*만/); if (m) return { won: Math.round(parseFloat(m[1]) * 10000) };
+  m = t.match(/(\d[\d,]*)\s*원/); if (m) return { won: parseInt(m[1].replace(/,/g, ''), 10) };
+  m = t.match(/^(\d+(?:\.\d+)?)$/); if (m) { const n = parseFloat(m[1]); return { won: n <= 2000 ? Math.round(n * 10000) : Math.round(n) }; }
+  return null;
+}
+const fuWho = (t) => {
+  const n = t.replace(/^(그냥\s*)?/, '').replace(/(님|씨)?(한테|에게|께|에서|이요|요|이야|야)?$/, '').trim();
+  return n && n.length <= 20 && !FU_NOT.test(t) && !/\d/.test(n.slice(0, 1)) && !DB.getIndividuals().some(i => i.name === n) ? n : null;
+};
+const fuWon = (p) => p.free ? '무료' : wonText(p.won);
+function fuBuild(job, c) {
+  const Q = [], add = (g, ask, take) => { Q.push({ g, ask: (Q.some(x => x.g === g) ? '' : g.intro + '\n') + ask, take }); };
+  (job.facts || []).forEach(f => {
+    const d = f.data || {}, nm = f.targetName || '';
+    if (f.type === 'distribution') {
+      const g = { got: [], intro: `🤝 ${nm} 분양 보냈군요! 빠진 걸 적어 둘게요.`,
+        end: () => c.bot(`✅ ${nm} 분양 · ${g.got.join(' · ')} 담았어요.\n저장하면 분양완료로 바뀌고, 분양가는 가계부 수입·분양 기록에 들어가요.`) };
+      if (!Number(d.price) && !d.free) add(g, '얼마에 보내셨나요? (예: 15만원 · 무료 · 모름)', t => { const p = fuPrice(t); if (!p) return null; c.patch(f, p.free ? { free: true, price: '' } : { price: String(p.won) }); return fuWon(p); });
+      if (!d.buyer) add(g, '누구에게 보내셨나요? (이름·닉네임 · 모르면 "모름")', t => { const w = fuWho(t); if (!w) return null; c.patch(f, { buyer: w }); return '분양처 ' + w; });
+    }
+    if (f.type === 'hatching' && Number(d.count) > 0 && !String(d.morph || '').trim() && (babyNamingMode() !== 'ask' || (d.babyNames || []).length)) {
+      const who = (d.babyNames || []).length ? d.babyNames.join(', ') : `아기들(${d.count}마리)`;
+      const g = { got: [], intro: `🐣 축하드려요!`, end: () => c.bot(`✅ 모프 "${g.got[0]}"로 담았어요. 저장하면 ${who} 프로필에 들어가요.`) };
+      add(g, `${who} 모프는 무엇인가요? (모르면 "모름")`, t => { if (t.length > 30 || /\n/.test(t) || FU_NOT.test(t)) return null; c.patch(f, { morph: t }); return t; });
+    }
+  });
+  if (job.adopt) {
+    const ind = DB.getIndividuals().find(i => i.id === job.adopt);
+    if (ind) {
+      const cur = (() => { try { return splitMemo(ind.id); } catch (e) { return { source: '', price: '' }; } })();
+      const v = { source: cur.source || '', price: cur.price === undefined ? '' : String(cur.price) };
+      const put = () => {
+        setAdoptMemo(ind.id, v.source, v.price);
+        const m = DB.getEventsFor(ind.id).find(e => e.type === 'memo' && /입양처\s*:|입양가/.test((e.data && e.data.notes) || ''));
+        if (m) DB.updateEvent(m.id, { date: job.date || todayStr(), data: { ...m.data, dated: true } });   // 가계부 그 달에 '개체 구입'으로
+        c.refreshIndividuals && c.refreshIndividuals();
+      };
+      const g = { got: [], intro: `🏠 ${ind.name} 데려왔군요! 빠진 걸 적어 둘게요.`,
+        end: () => c.bot(`✅ ${ind.name} · ${g.got.join(' · ')} 적었어요.\n프로필의 입양처·입양가에 들어가요.${Number(v.price) > 0 ? "\n가계부 '개체 구입'에도 잡혀요." : ''}`) };
+      if (v.price === '') add(g, '얼마에 데려오셨나요? (예: 30만원 · 무료 · 모름)', t => { const p = fuPrice(t); if (!p) return null; v.price = p.free ? '0' : String(Math.round(p.won / 1000) / 10); put(); return '입양가 ' + fuWon(p); });
+      if (!v.source) add(g, '어디서(누구에게서) 데려오셨나요? (샵·브리더 이름 · 모르면 "모름")', t => { const w = fuWho(t); if (!w) return null; v.source = w; put(); return '입양처 ' + w; });
+    }
+  }
+  return Q;
+}
+function fuNext() {
+  const q = FU.q[0], c = FU.ctx;
+  if (FU.g && (!q || q.g !== FU.g)) { if (FU.g.got.length) FU.g.end(); FU.g = null; }
+  if (!q) return false;
+  FU.g = q.g; c.bot(q.ask);
+  return true;
+}
+function followUp(text, job, ctx) {
+  if (ctx) FU.ctx = ctx;
+  if (job) { FU.q = fuBuild(job, FU.ctx); FU.g = null; return fuNext(); }
+  const q = FU.q[0], t = String(text || '').trim();
+  if (!q) return false;
+  if (FU_STOP.test(t)) { FU.q = []; fuNext(); FU.ctx.bot('네, 여기까지만 적어 둘게요 🙂'); return false; }
+  if (FU_SKIP.test(t)) { FU.q.shift(); return fuNext(); }
+  const r = q.take(t);
+  if (r == null) { FU.q = []; fuNext(); return 'pass'; }
+  q.g.got.push(r); FU.q.shift();
+  return fuNext();
+}
+
+
 window.CREG_EXTRAS = {
-  SeasonNoteSheet, BirthdayPopup, DupMergeCard, FeedbackCard, FeedbackInbox, fbPayload, FB_PICKS, morphFill, mfList, mfIntro, MF, TrackCard, StorageCard, BDAY_LINES, bdayPick, SaleCardSheet, AdoptSendSheet, AdoptReceive, AddGeckoSheet, chat,
+  SeasonNoteSheet, BirthdayPopup, DupMergeCard, FeedbackCard, FeedbackInbox, fbPayload, FB_PICKS, morphFill, mfList, mfIntro, MF, TrackCard, StorageCard, followUp, fuPrice, fuWho, FU, BDAY_LINES, bdayPick, SaleCardSheet, AdoptSendSheet, AdoptReceive, AddGeckoSheet, chat,
   // 시험(node)에서 쓰는 순수 함수들
   seasonYears, seasonNoteStats, seasonSummaryText, saveSeasonNote, toggleTrait, SEASON_TRAITS, SEASON_DIRS,
   adoptSnapshot, adoptMemos, adoptImport, adoptCounts, looksPrivate, ADOPT, ADOPT_KINDS, ADOPT_NEVER, saleCardData,

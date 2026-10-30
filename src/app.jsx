@@ -642,8 +642,8 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.38';
-const APP_PATCHED = '2026-10-28';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
+const APP_VERSION = '1.9.39';
+const APP_PATCHED = '2026-10-30';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -7405,6 +7405,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
   const hatchAskRef = useRef(null);                  // v1.9.19 부화 마릿수 답 대기 ("2마리"라고 적으셔도 됩니다)
   const layAskRef = useRef(null);                    // v1.9.19 알 개수 답 대기 (칩 대신 "2개"라고 적으셔도 됩니다)
   const mfRef = useRef(false);                       // v1.9.34 모프누락명령 진행 중 (extras.min.js morphFill)
+  const fuRef = useRef(false);                       // v1.9.39 이어 묻기 진행 중 (extras.min.js followUp)
   const pendingRetargetRef = useRef(null);           // 등록 후 옮길 기록 (주인 정정 대기)
   const pendingBabyRef = useRef(null);               // 해칭 베이비 이름 답변 대기
   const pendingRef = useRef([]);                     // 담긴 기록 (ref 미러)
@@ -7442,6 +7443,9 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
   const setTarget = (ind) => { geckoRef.current = ind; setGeckoName(ind ? ind.name : null); };
 
   /* ── 담기 + 요약 응답 ── */
+  /* v1.9.39 이어 묻기 — 분양(얼마·누구) · 입양(얼마·어디서) · 부화(모프). 담아 둔 기록은 그 자리에서 채웁니다 */
+  const fuCtx = () => ({ bot, refreshIndividuals, patch: (f, d) => { f.data = { ...f.data, ...d }; updatePending(l => [...l]); } });
+  const follow = (job) => loadExtras().then(X => { fuRef.current = X.followUp(null, job, fuCtx()) === true; }).catch(() => {});
   const pushPending = (fs, target, extraLine) => {
     if (!fs.length) return;
     missRef.current = 0;
@@ -7451,6 +7455,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     bot(`${head}${target.name} ${pickOpener()}\n${lines}\n\n계속 말씀하셔도 되고, 끝나면 저장을 눌러주세요.`, [
       { label: '💾 이제 저장할래', kind: 'save' },
     ]);
+    if (fs.some(f => f.type === 'distribution' || f.type === 'hatching')) follow({ facts: fs });
   };
 
   /* ── 몇 마리 나왔는지 여쭤봅니다 ──
@@ -7981,6 +7986,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       heldProfileRef.current = null;
       if (hp.spots) morphLine += '\n' + applySpots(saved, hp.spots);
       if (hp.adopt) morphLine += '\n' + applyAdopt(saved, hp.adopt);
+      if (hp.ask) follow({ adopt: saved.id, date: hp.ask });   // v1.9.39 등록 뒤 얼마에·어디서
     }
     const extLine = isExternal ? '\n(외부 개체로 등록했어요 — 축양리스트엔 표시되지 않고, 혈통 연결에만 사용돼요)' : '';
     if (detectedGender) {
@@ -8136,6 +8142,12 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       loadExtras().then(X => { mfRef.current = X.morphFill(text, { bot, refreshIndividuals }); }).catch(() => missBot('잠깐 연결이 안 됐어요. 한 번 더 말씀해 주세요 🙂'));
       return;
     }
+    /* v1.9.39 이어 묻는 중이면 대답부터. 대답이 아니면('pass') 묻기를 멈추고 그 말을 평소대로 */
+    if (fuRef.current && window.CREG_EXTRAS) {
+      const r = window.CREG_EXTRAS.followUp(text, null, fuCtx());
+      fuRef.current = r === true;
+      if (r !== 'pass') return;
+    }
     /* v1.9.19 알 개수를 여쭌 뒤 — "2개", "두 개요", "몰라" 같은 짧은 답을 받습니다.
        다른 말씀이면 산란은 개수 없이 담아두고, 새 문장을 그대로 해석합니다(기록이 사라지지 않게). */
     if (hatchAskRef.current) {
@@ -8268,7 +8280,13 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       const nm0 = findNamesInText(text, DB.getIndividuals());
       const okWeak = !adoptC.weak || (nm0.length && !SUPPLY_WORDS.test(text));
       const who = okWeak ? (nm0[0] || (adoptC.strong ? geckoRef.current : null)) : null;
-      if (who) { setTarget(who); bot(applyAdopt(who, adoptC)); return; }
+      if (who) { setTarget(who); bot(applyAdopt(who, adoptC)); follow({ adopt: who.id, date: parseKDate(text) }); return; }
+    }
+    /* v1.9.39 "크윤이 입양했어"처럼 값 없이 데려온 말만 — 얼마에·어디서를 여쭙니다 */
+    const adoptSaid = ADOPT_STRONG.test(text) && !/[?？]\s*$/.test(text);
+    if (adoptSaid && !adoptC) {
+      const who = findNamesInText(text, DB.getIndividuals())[0];
+      if (who) { setTarget(who); follow({ adopt: who.id, date: parseKDate(text) }); return; }
     }
     // 처음 보는 이름이면 등록한 뒤에 적습니다 (그동안 가계부·먹이로 새지 않게)
     const adoptHeld = adoptC && adoptC.strong ? adoptC : null;
@@ -8425,7 +8443,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       const singleWord = text.trim().split(/\s+/).length === 1;
       const genderAssert = !!genderClaim(text);
       const c = guessNewName(text, inds);
-      const profileSaid = !!(adoptHeld || spotsC);
+      const profileSaid = !!(adoptHeld || spotsC || adoptSaid);
       if (c && isBadName(c) && (singleWord || facts.length || morph || genderAssert || profileSaid)) {
         bot(BAD_NAME_MSG);
         return;
@@ -8467,7 +8485,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       pendingNameRef.current = newSubject;
       heldRef.current = [...heldRef.current, ...facts.map(f => ({ ...f, date }))];
       if (morph) heldMorphRef.current = morph;
-      heldProfileRef.current = (adoptHeld || spotsC) ? { adopt: adoptHeld, spots: spotsC && spotsC.value } : null;
+      heldProfileRef.current = (adoptHeld || spotsC || adoptSaid) ? { adopt: adoptHeld, spots: spotsC && spotsC.value, ask: adoptSaid && (date || todayStr()) } : null;
       // 성별 미리 캡처 (메이팅 문장 제외)
       if (!mating) {
         const gc = genderClaim(text);
