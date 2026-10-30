@@ -74,5 +74,5 @@ test("chat writes to the same place the pencil sheet reads, counted once in the 
   assert.match(src, /const led = adoptHeld \? null : extractLedger\(text\);/, "데려온 이야기는 가계부 따로 적기로 새지 않습니다");
   assert.ok(src.indexOf("const adoptC = adoptClaim(text);") < src.indexOf("const facts = spotsC ? [] : extractFacts(factText);"), "먹이 규칙보다 먼저");
   assert.match(src, /if \(spotsC\) \{ bot\(applySpots\(target, spotsC\.value\)\); return; \}/);
-  assert.match(src, /heldProfileRef\.current = \(adoptHeld \|\| spotsC\)/, "처음 보는 이름이면 등록 뒤에 적습니다");
+  assert.match(src, /heldProfileRef\.current = \(adoptHeld \|\| spotsC \|\| adoptSaid\)/, "처음 보는 이름이면 등록 뒤에 적습니다(v1.9.39 값 없이 '입양했어'만 해도)");
 });
