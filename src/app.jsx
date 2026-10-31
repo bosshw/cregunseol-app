@@ -642,7 +642,7 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.40';
+const APP_VERSION = '1.9.41';
 const APP_PATCHED = '2026-10-31';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -8323,6 +8323,14 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     const prevTarget = geckoRef.current;   // v1.9.40 "얘 아빠가 마인이야"의 "얘"
     let target = geckoRef.current;
     if (names.length) { target = names[0]; setTarget(names[0]); }
+    /* v1.9.41 "아빠마인이" · "엄마는 크동이야" — 부모 이름만 말하면 그 부모가 대상이 되지 않게(예전: 마인이 혈통 조회로 새고 저장 안 됨) */
+    if (names.length && !QUESTION_RE.test(text) && !/누구|뭐|몰라/.test(text)) {
+      const pw = [/(?:아빠|아비)(?:는|가|:)?\s*([가-힣A-Za-z0-9]+)/, /(?:엄마|어미)(?:는|가|:)?\s*([가-힣A-Za-z0-9]+)/].map(re => { const m = text.match(re); return m && nameFromWord(m[1], inds); }).filter(Boolean);
+      if (pw.length && names.every(n => pw.some(p => p.id === n.id))) {
+        if (!prevTarget || pw.some(p => p.id === prevTarget.id)) { setTarget(prevTarget); bot('어느 아이의 부모인지 이름과 함께 알려주세요 🙂\n예) "크얌이 아빠는 마인이야"'); return; }
+        target = inds.find(i => i.id === prevTarget.id) || prevTarget; setTarget(target);
+      }
+    }
 
     /* 3.02) v1.9.15 산란·알을 말로 고치기 — 잇기("크롱은 크순 1차 알에서 나왔어")·부화 마릿수·메이팅/산란 날짜·알 개수.
        ★ 여러 아이 담기(3.1)·동배 묶기(3.05)보다 먼저 봅니다 — 이름이 둘이라 거기로 새면 '2마리 해칭'으로 잘못 담깁니다. */
