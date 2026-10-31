@@ -70,3 +70,26 @@ test("parent-only sentence keeps the animal you were talking about", () => {
   assert.match(blk, /target = inds\.find\(i => i\.id === prevTarget\.id\) \|\| prevTarget; setTarget\(target\);/);
   assert.match(blk, /!QUESTION_RE\.test\(text\) && !\/누구\|뭐\|몰라\/\.test\(text\)/, "'마인이 아빠 누구야?'는 그대로 질문");
 });
+
+/* v1.9.42 외부 개체(남의 아이) — 대표님 2026-10-31 "마인이처럼 내 개체가 아닌 애들이 부모일 때"
+   ① 없는 이름을 부모로 말하면 버튼 한 번으로 외부 개체(또는 내 아이)로 등록하고 바로 연결
+   ② "○○ 외부 개체야"·"남의 아이야" / "다시 내 아이야", 프로필 '외부 개체' 배지로 켜고 끄기 */
+test("external parents: register-and-link chip, chat toggle, profile badge", () => {
+  assert.match(app, /kind: 'ext-parent', value: \{ name: n, role, targetId: target\.id \}/);
+  assert.match(app, /kind: 'ext-parent', value: \{ name: n, role, targetId: target\.id, mine: true \}/);
+  const h = app.slice(app.indexOf("if (kind === 'ext-parent')"), app.indexOf("if (kind === 'ext-parent')") + 900);
+  assert.match(h, /gender: v\.role === 'sireId' \? 'male' : 'female'/, "아빠면 수컷, 엄마면 암컷");
+  assert.match(h, /isExternal: !v\.mine/);
+  assert.match(h, /DB\.updateIndividual\(t\.id, \{ \[v\.role\]: p\.id \}\)/);
+  const nn = app.match(/const nn = \(raw\) => \(raw \|\| ''\)\.replace\((\/[^\n]*?\/), ''\);/);
+  assert.ok(nn, "없는 이름 끝말 정리");
+  const re = new Function("return " + nn[1])();
+  assert.equal("크뿡이야".replace(re, ""), "크뿡이", "이름 끝 '이'는 남김");
+  assert.equal("새별이에요".replace(re, ""), "새별이");
+  assert.match(app, /what: 'ext', on: !RE_OFF\.test\(t\), g/);
+  assert.match(app, /g\.isExternal && \/\(\?:다시\\s\*\)\?\(\?:내\|우리\)/, "'내 아이야'는 외부일 때만 되돌리기");
+  assert.match(app, /DB\.updateIndividual\(g\.id, p\.on \? \{ isExternal: true, isFromCreGunseol: false \} : \{ isExternal: false \}\)/);
+  assert.match(app, /data-testid="ext-toggle"/);
+  assert.match(app, /<Extra part="SyncCard" showToast=\{showToast\} refreshIndividuals=\{refreshIndividuals\} \/>/);
+  assert.match(ex, /function SyncCard\(\{ showToast, refreshIndividuals \}\)/);
+});
