@@ -60,3 +60,13 @@ test("app wiring: 얘 = 방금 그 아이, half-siblings are danger", () => {
   assert.match(app, /<Extra part="PushCard" showToast=\{showToast\} \/>/);
   assert.match(ex, /function PushCard\(\{ showToast \}\)/);
 });
+
+/* v1.9.41 "아빠마인이"(대표님 2026-10-31 21:47 제보) — 부모 이름이 곧바로 대상이 돼 마인이 혈통 조회(compactQ "아빠")로 새고 저장 안 됨 */
+test("parent-only sentence keeps the animal you were talking about", () => {
+  const i = app.indexOf("v1.9.41 \"아빠마인이\"");
+  assert.ok(i > 0 && i < app.indexOf("const qa = answerQuery(target, text);"), "질문 답변보다 먼저");
+  const blk = app.slice(i, i + 900);
+  assert.match(blk, /names\.every\(n => pw\.some\(p => p\.id === n\.id\)\)/, "문장에 나온 이름이 모두 부모일 때만");
+  assert.match(blk, /target = inds\.find\(i => i\.id === prevTarget\.id\) \|\| prevTarget; setTarget\(target\);/);
+  assert.match(blk, /!QUESTION_RE\.test\(text\) && !\/누구\|뭐\|몰라\/\.test\(text\)/, "'마인이 아빠 누구야?'는 그대로 질문");
+});
