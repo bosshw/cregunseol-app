@@ -642,7 +642,7 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.41';
+const APP_VERSION = '1.9.42';
 const APP_PATCHED = '2026-10-31';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -3887,6 +3887,9 @@ function planAppChat(text, target, names) {
   if (/즐겨\s*찾기|즐찾|별\s*표시|별표/.test(t)) return { kind: 'flag', what: 'favorite', on: !RE_OFF.test(t), g };
   // KEEP
   if (/\bkeep\b|킵|안\s*팔|안\s*보낼|소장할|내\s*새끼로\s*남/i.test(t)) return { kind: 'flag', what: 'keep', on: !RE_OFF.test(t) && !/다시\s*팔|내놓/.test(t), g };
+  // v1.9.42 외부 개체 — "마인이 외부 개체야" · "남의 아이야" · "다시 내 아이야"(외부일 때만)
+  if (/외부\s*(?:개체|아이|애)|남의\s*(?:아이|애|개체)|내\s*(?:아이|애|개체)\s*(?:가\s*)?아니|빌려\s*온|빌린\s*(?:아이|애|수컷|암컷)/.test(t)) return { kind: 'flag', what: 'ext', on: !RE_OFF.test(t), g };
+  if (g.isExternal && /(?:다시\s*)?(?:내|우리)\s*(?:아이|애|개체)(?:야|예요|이야|로|에요|임)/.test(t)) return { kind: 'flag', what: 'ext', on: false, g };
   // MY (우리 집에서 나온 아이)
   if (/\bmy\b|마이\s*표시|우리\s*집\s*(?:에서\s*)?(?:나온|태어난|출신|해칭)|직접\s*(?:해칭|뽑)|내가\s*(?:뽑은|해칭한|부화시킨)/i.test(t))
     return { kind: 'flag', what: 'mine', on: !(RE_OFF.test(t) || /아니|아냐|데려온|입양한|외부/.test(t)), g };
@@ -7767,6 +7770,9 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       } else if (p.what === 'keep') {
         const r = DB.setKeep(g.id, p.on);
         bot(p.on ? `🔒 ${g.name} KEEP으로 표시했어요${r.status === 'own' && g.status !== 'own' ? ' (분양 목록에서도 내렸어요)' : ''}. 분양가능 목록에 안 올라가요.` : `${g.name} KEEP을 풀었어요.`);
+      } else if (p.what === 'ext') {
+        if (!!g.isExternal === p.on) bot(`${eunneun(g.name)} 이미 ${p.on ? '외부 개체' : '내 아이'}예요 🙂`);
+        else { DB.updateIndividual(g.id, p.on ? { isExternal: true, isFromCreGunseol: false } : { isExternal: false }); bot(p.on ? `🔗 ${g.name}를 외부 개체로 바꿨어요.\n축양 목록·마릿수·짝 추천에서 빠지고, 혈통 연결과 근친 판정에만 쓰여요.\n되돌리려면 "${g.name} 다시 내 아이야"라고 해주세요.` : `🏠 ${g.name}를 다시 내 아이로 바꿨어요. 축양 목록에 다시 보여요.`); }
       } else {
         DB.updateIndividual(g.id, p.on ? { cgOff: false, isFromCreGunseol: true } : { cgOff: true, isFromCreGunseol: false });
         bot(p.on ? `🏷️ ${g.name}를 MY(우리 집에서 나온 아이)로 표시했어요.` : `${g.name} MY 표시를 뗐어요.`);
@@ -8023,6 +8029,15 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
 
   /* ── 칩 버튼 처리 ── */
   const handleChip = (kind, value) => {
+    if (kind === 'ext-parent') {   // v1.9.42 혈통에 말한 없는 부모 → 등록하고 바로 연결
+      const v = value, all = DB.getIndividuals(), t = all.find(i => i.id === v.targetId);
+      if (!t) return;
+      const p = all.find(i => i.name === v.name) || DB.addIndividual({ name: v.name, gender: v.role === 'sireId' ? 'male' : 'female', morph: '', hatchDate: '', isFromCreGunseol: false, isExternal: !v.mine, sireId: null, damId: null, shareCode: newShareCode() });
+      DB.updateIndividual(t.id, { [v.role]: p.id });
+      refreshIndividuals(); setTarget(DB.getIndividuals().find(i => i.id === t.id) || t);
+      bot(`🧬 ${p.name}를 ${v.mine ? '내 아이' : '외부 개체'}로 등록하고 ${t.name} ${v.role === 'sireId' ? '아빠' : '엄마'}로 연결했어요.` + (v.mine ? '' : '\n축양 목록·마릿수에는 안 들어가고, 혈통과 근친 판정에만 쓰여요.'));
+      return;
+    }
     if (kind === 'register-yes') {
       if (pendingNameRef.current) doRegister(pendingNameRef.current);
     } else if (kind === 'register-no') {
@@ -8623,21 +8638,23 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
         bot(`${target.name}의 혈통이에요 🧬\n부(아빠): ${sire ? sire.name : '미등록'}\n모(엄마): ${dam ? dam.name : '미등록'}`);
         return;
       }
-      const lines = [];
+      const lines = [], chips = [];
       const fresh = DB.getIndividuals();
-      if (sw) {
-        const p = fresh.find(i => i.name === sw);
-        if (p) { DB.updateIndividual(target.id, { sireId: p.id }); lines.push(`부(아빠) ${p.name} 🧬 연결 완료`); }
-        else lines.push(`"${sw}"는 아직 미등록이에요. 먼저 등록해주시면 연결해드릴게요.`);
-      }
-      if (dw) {
-        const p = fresh.find(i => i.name === dw);
-        if (p) { DB.updateIndividual(target.id, { damId: p.id }); lines.push(`모(엄마) ${p.name} 🧬 연결 완료`); }
-        else lines.push(`"${dw}"는 아직 미등록이에요. 먼저 등록해주시면 연결해드릴게요.`);
-      }
+      /* v1.9.42 없는 이름이면 버튼 한 번으로 등록+연결 — "크뿡이야"는 크뿡이(이름 끝 '이'를 남깁니다) */
+      const nn = (raw) => (raw || '').replace(/(에요|예요|입니다|이다|야|고|임|요|래|랑)$/, '');
+      [['sireId', sw, sireM, '부(아빠)'], ['damId', dw, damM, '모(엄마)']].forEach(([role, w, m, lab]) => {
+        if (!w) return;
+        const p = fresh.find(i => i.name === w);
+        if (p) { DB.updateIndividual(target.id, { [role]: p.id }); lines.push(`${lab} ${p.name} 🧬 연결 완료`); return; }
+        const n = nn(m[1]);
+        if (!n || isBadName(n)) { lines.push(`"${w}"는 아직 없는 아이예요. 먼저 등록해주시면 연결해드릴게요.`); return; }
+        lines.push(`${lab} "${n}"는 아직 없는 아이예요.\n남의 아이면 [외부 개체로]를 눌러주세요. 등록하고 바로 연결해요.`);
+        chips.push({ label: `🔗 ${n} 외부 개체로 등록·연결`, kind: 'ext-parent', value: { name: n, role, targetId: target.id } },
+          { label: `🦎 ${n} 내 아이로 등록·연결`, kind: 'ext-parent', value: { name: n, role, targetId: target.id, mine: true } });
+      });
       refreshIndividuals();
       geckoRef.current = DB.getIndividuals().find(i => i.id === target.id) || target;
-      bot(`${target.name} 혈통 정보예요.\n${lines.join('\n')}\n프로필에서 가계도로 확인할 수 있어요.`);
+      bot(`${target.name} 혈통 정보예요.\n${lines.join('\n')}\n프로필에서 가계도로 확인할 수 있어요.`, chips.length ? chips.concat([{ label: '아니요, 다시 쓸게요', kind: 'memo-skip' }]) : undefined);
       return;
     }
 
@@ -9587,6 +9604,15 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
                   }}>
                   {isMine(gecko) ? 'MY' : 'MY 아님'}
                 </button>
+                {/* v1.9.42 외부 개체(남의 아이) — 켜면 목록·마릿수·짝 추천에서 빠지고 혈통에만 쓰입니다 */}
+                <button className="badge badge-blue" data-testid="ext-toggle"
+                  style={{cursor:'pointer', opacity: gecko.isExternal ? 1 : .4, filter: gecko.isExternal ? 'none' : 'grayscale(1)'}}
+                  onClick={() => {
+                    const on = !gecko.isExternal;
+                    DB.updateIndividual(gecko.id, on ? { isExternal: true, isFromCreGunseol: false } : { isExternal: false });
+                    refreshLocal(); refreshIndividuals && refreshIndividuals();
+                    showToast(on ? '🔗 외부 개체로 바꿨어요 · 목록·마릿수에서 빠지고 혈통에만 쓰여요' : '🏠 다시 내 아이로 바꿨어요');
+                  }}>{gecko.isExternal ? '외부 개체' : '외부 아님'}</button>
               </div>
               <div style={{fontSize:13, color:'var(--text3)', marginTop:4}}>
                 {genderLabel(gecko.gender)}
@@ -11180,179 +11206,7 @@ function buildWorkbook(XLSX) {
 /* ══════════════════════════════════════════
    설정 · 서버 동기화 카드
    ══════════════════════════════════════════ */
-function SyncCard({ showToast, refreshIndividuals }) {
-  const [, bump] = useState(0);
-  const [form, setForm] = useState({ email: '', password: '' });
-  const [busy, setBusy] = useState(false);
-  const [open, setOpen] = useState(false);
-  const [mode, setMode] = useState('signin');   // signin | signup | reset
-  const [note, setNote] = useState('');
-  const [confirmPull, setConfirmPull] = useState(false);
-
-  useEffect(() => SYNC.on(() => bump(v => v + 1)), []);
-
-  const st = SYNC.st();
-  const ses = SYNC.ses();
-  const active = SYNC.active();
-
-  const fmtSync = (iso) => {
-    if (!iso) return '아직 없음';
-    const d = new Date(iso), diff = Math.floor((Date.now() - d.getTime()) / 1000);
-    if (diff < 60) return '방금 전';
-    if (diff < 3600) return `${Math.floor(diff / 60)}분 전`;
-    if (diff < 86400) return `${Math.floor(diff / 3600)}시간 전`;
-    return d.toLocaleString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-  };
-
-  const afterAuth = async () => {
-    showToast('✅ 연결됐어요! 기록을 맞추는 중...');
-    const r = await SYNC.firstSync();
-    const dup = DB.findDuplicateNames();
-    showToast(r && r.error ? '⚠️ ' + r.error
-      : dup.length ? `☁️ 동기화 완료 · 같은 이름 ${dup.length}건은 아래에서 합쳐주세요`
-      : '☁️ 동기화 완료!');
-    refreshIndividuals();
-    setForm({ email: '', password: '' });
-    setOpen(false); setNote('');
-  };
-
-  const doSubmit = async () => {
-    const email = form.email.trim();
-    if (!email) return showToast('⚠️ 이메일을 넣어주세요');
-    if (mode === 'reset') {
-      setBusy(true);
-      try { await SYNC.resetPassword(email); setNote('📧 비밀번호 재설정 메일을 보냈어요. 메일함을 확인해주세요.'); }
-      catch (e) { showToast('⚠️ ' + ((e && e.message) || '실패')); }
-      setBusy(false); return;
-    }
-    if (!form.password) return showToast('⚠️ 비밀번호를 넣어주세요');
-    if (mode === 'signup' && form.password.length < 6) return showToast('⚠️ 비밀번호는 6자 이상이어야 해요');
-    setBusy(true);
-    try {
-      if (mode === 'signup') {
-        const r = await SYNC.signUp(email, form.password);
-        if (!r.signedIn) {
-          setNote('📧 인증 메일을 보냈어요. 메일의 링크를 누른 뒤 로그인해주세요.');
-          setMode('signin'); setBusy(false); return;
-        }
-      } else {
-        await SYNC.signIn(email, form.password);
-      }
-      await afterAuth();
-    } catch (e) {
-      showToast('⚠️ ' + ((e && e.message) || '실패'));
-    }
-    setBusy(false);
-  };
-
-  const doSync = async () => {
-    setBusy(true);
-    const r = await SYNC.run('manual');
-    showToast(r && r.error ? '⚠️ ' + r.error : '☁️ 동기화 완료!');
-    refreshIndividuals();
-    setBusy(false);
-  };
-
-  const doPullReplace = async () => {
-    setBusy(true);
-    setConfirmPull(false);
-    try {
-      const n = await SYNC.pullReplace();
-      refreshIndividuals();
-      showToast(`📥 서버 데이터 ${n}건 불러왔어요`);
-    } catch (e) {
-      showToast('⚠️ ' + ((e && e.message) || '불러오기 실패'));
-    }
-    setBusy(false);
-  };
-
-  const doLogout = () => {
-    SYNC.signOut();
-    showToast('연결을 끊었어요 (이 기기 데이터는 그대로예요)');
-  };
-
-  return (
-    <div className="card" style={{margin:0}}>
-      <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:6}}>
-        <div style={{fontSize:13, fontWeight:700, color:'var(--text2)'}}>☁️ 서버 동기화</div>
-        <div style={{fontSize:11, fontWeight:700, color: active ? '#2E7D46' : 'var(--text3)'}}>
-          {SYNC.running ? '동기화 중…' : active ? '● 연결됨' : '○ 로컬 저장만'}
-        </div>
-      </div>
-
-      {active ? (
-        <>
-          <div style={{fontSize:12, color:'var(--text3)', lineHeight:1.7, marginBottom:10}}>
-            계정: {(ses && ses.email) || '-'}<br/>
-            마지막 동기화: {fmtSync(st.lastSyncAt)}
-            {st.lastError && <><br/><span style={{color:'#B3261E'}}>⚠️ {st.lastError}</span></>}
-          </div>
-          <div style={{display:'flex', flexDirection:'column', gap:8}}>
-            <button className="btn btn-primary" disabled={busy} onClick={doSync}>{busy ? '진행 중…' : '🔄 지금 동기화'}</button>
-            {confirmPull ? (
-              <div style={{background:'var(--bg3)', borderRadius:10, padding:12}}>
-                <div style={{fontSize:12, color:'var(--text2)', marginBottom:8, lineHeight:1.6}}>
-                  이 기기의 데이터를 지우고 서버 내용으로 통째로 바꿔요.<br/>새 폰·새 PC에서 처음 설치했을 때만 쓰세요.
-                </div>
-                <div style={{display:'flex', gap:6}}>
-                  <button className="btn btn-primary btn-sm" style={{flex:1}} onClick={doPullReplace}>서버 내용으로 바꾸기</button>
-                  <button className="btn btn-secondary btn-sm" style={{flex:1}} onClick={() => setConfirmPull(false)}>취소</button>
-                </div>
-              </div>
-            ) : (
-              <button className="btn btn-secondary" disabled={busy} onClick={() => setConfirmPull(true)}>📥 서버 내용 통째로 받기 (새 기기)</button>
-            )}
-            <button className="btn btn-secondary" disabled={busy} onClick={doLogout}>연결 끊기</button>
-          </div>
-        </>
-      ) : open ? (
-        <div style={{display:'flex', flexDirection:'column', gap:8}}>
-          <div style={{fontSize:12, color:'var(--text3)', lineHeight:1.6, marginBottom:2}}>
-            {mode === 'signup' ? '이메일과 비밀번호만 정하면 됩니다. 기록은 본인만 볼 수 있어요.'
-             : mode === 'reset' ? '가입하신 이메일을 넣으면 재설정 링크를 보내드려요.'
-             : '로그인하면 폰·PC가 같은 기록을 봅니다.'}
-          </div>
-          <input className="input" type="email" autoComplete="username" placeholder="이메일"
-            value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} />
-          {mode !== 'reset' && (
-            <input className="input" type="password"
-              autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
-              placeholder={mode === 'signup' ? '비밀번호 (6자 이상)' : '비밀번호'}
-              value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} />
-          )}
-          {note && <div style={{fontSize:12, color:'var(--accent2)', lineHeight:1.6}}>{note}</div>}
-          <div style={{display:'flex', gap:6}}>
-            <button className="btn btn-primary" style={{flex:1}} disabled={busy} onClick={doSubmit}>
-              {busy ? '진행 중…' : mode === 'signup' ? '가입하고 시작하기' : mode === 'reset' ? '재설정 메일 보내기' : '로그인'}
-            </button>
-            <button className="btn btn-secondary" style={{flex:1}} disabled={busy}
-              onClick={() => { setOpen(false); setNote(''); setMode('signin'); }}>취소</button>
-          </div>
-          <div style={{display:'flex', justifyContent:'space-between', fontSize:12, paddingTop:2}}>
-            {mode === 'signin' ? (
-              <>
-                <button onClick={() => { setMode('signup'); setNote(''); }} style={{background:'none', border:'none', color:'var(--accent2)', cursor:'pointer', padding:0}}>처음이세요? 회원가입</button>
-                <button onClick={() => { setMode('reset'); setNote(''); }} style={{background:'none', border:'none', color:'var(--text3)', cursor:'pointer', padding:0}}>비밀번호를 잊었어요</button>
-              </>
-            ) : (
-              <button onClick={() => { setMode('signin'); setNote(''); }} style={{background:'none', border:'none', color:'var(--accent2)', cursor:'pointer', padding:0}}>← 로그인으로 돌아가기</button>
-            )}
-          </div>
-        </div>
-      ) : (
-        <>
-          <div style={{fontSize:12, color:'var(--text3)', lineHeight:1.7, marginBottom:10}}>
-            지금은 이 기기에만 저장돼요. 로그인하면 폰에서 적은 기록이 PC에도 그대로 나타나요.
-          </div>
-          <div style={{display:'flex', gap:6}}>
-            <button className="btn btn-primary" style={{flex:1}} onClick={() => { setMode('signin'); setOpen(true); }}>로그인</button>
-            <button className="btn btn-secondary" style={{flex:1}} onClick={() => { setMode('signup'); setOpen(true); }}>회원가입</button>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
+/* v1.9.42 서버 동기화 카드(SyncCard)는 extras.min.js 로 옮겼습니다 — 첫 화면 크기 한도. 설정에서 <Extra part="SyncCard"> 로 부릅니다. */
 
 /* v1.9.37 저장 공간 카드(StorageCard)는 extras.min.js 로 옮겼습니다 — 첫 화면 크기 한도. 설정에서 <Extra part="StorageCard"> 로 부릅니다.
    위쪽 '저장 칸이 거의 찼어요' 막대(store-bar)는 그대로 여기 있습니다 */
@@ -11554,7 +11408,7 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
           🎂 아이 생일날 홈에 축하 팝업 띄우기
         </label>
         {DB.findDuplicateNames().length > 0 && <Extra part="DupMergeCard" showToast={showToast} refreshIndividuals={refreshIndividuals} />}
-        <SyncCard showToast={showToast} refreshIndividuals={refreshIndividuals} />
+        <Extra part="SyncCard" showToast={showToast} refreshIndividuals={refreshIndividuals} />
         <Extra part="PushCard" showToast={showToast} />
         <Extra part="TrackCard" showToast={showToast} />
         {canUseCrevalue() && <Extra part="FeedbackInbox" />}

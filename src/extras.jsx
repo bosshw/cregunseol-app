@@ -1459,6 +1459,181 @@ function followUp(text, job, ctx) {
   return fuNext();
 }
 
+/* v1.9.42 서버 동기화 카드 — app.jsx 에서 옮겨 왔습니다(첫 화면 크기 한도). SYNC 등은 app 것을 씁니다 */
+function SyncCard({ showToast, refreshIndividuals }) {
+  const [, bump] = useState(0);
+  const [form, setForm] = useState({ email: '', password: '' });
+  const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [mode, setMode] = useState('signin');   // signin | signup | reset
+  const [note, setNote] = useState('');
+  const [confirmPull, setConfirmPull] = useState(false);
+
+  useEffect(() => SYNC.on(() => bump(v => v + 1)), []);
+
+  const st = SYNC.st();
+  const ses = SYNC.ses();
+  const active = SYNC.active();
+
+  const fmtSync = (iso) => {
+    if (!iso) return '아직 없음';
+    const d = new Date(iso), diff = Math.floor((Date.now() - d.getTime()) / 1000);
+    if (diff < 60) return '방금 전';
+    if (diff < 3600) return `${Math.floor(diff / 60)}분 전`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}시간 전`;
+    return d.toLocaleString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  };
+
+  const afterAuth = async () => {
+    showToast('✅ 연결됐어요! 기록을 맞추는 중...');
+    const r = await SYNC.firstSync();
+    const dup = DB.findDuplicateNames();
+    showToast(r && r.error ? '⚠️ ' + r.error
+      : dup.length ? `☁️ 동기화 완료 · 같은 이름 ${dup.length}건은 아래에서 합쳐주세요`
+      : '☁️ 동기화 완료!');
+    refreshIndividuals();
+    setForm({ email: '', password: '' });
+    setOpen(false); setNote('');
+  };
+
+  const doSubmit = async () => {
+    const email = form.email.trim();
+    if (!email) return showToast('⚠️ 이메일을 넣어주세요');
+    if (mode === 'reset') {
+      setBusy(true);
+      try { await SYNC.resetPassword(email); setNote('📧 비밀번호 재설정 메일을 보냈어요. 메일함을 확인해주세요.'); }
+      catch (e) { showToast('⚠️ ' + ((e && e.message) || '실패')); }
+      setBusy(false); return;
+    }
+    if (!form.password) return showToast('⚠️ 비밀번호를 넣어주세요');
+    if (mode === 'signup' && form.password.length < 6) return showToast('⚠️ 비밀번호는 6자 이상이어야 해요');
+    setBusy(true);
+    try {
+      if (mode === 'signup') {
+        const r = await SYNC.signUp(email, form.password);
+        if (!r.signedIn) {
+          setNote('📧 인증 메일을 보냈어요. 메일의 링크를 누른 뒤 로그인해주세요.');
+          setMode('signin'); setBusy(false); return;
+        }
+      } else {
+        await SYNC.signIn(email, form.password);
+      }
+      await afterAuth();
+    } catch (e) {
+      showToast('⚠️ ' + ((e && e.message) || '실패'));
+    }
+    setBusy(false);
+  };
+
+  const doSync = async () => {
+    setBusy(true);
+    const r = await SYNC.run('manual');
+    showToast(r && r.error ? '⚠️ ' + r.error : '☁️ 동기화 완료!');
+    refreshIndividuals();
+    setBusy(false);
+  };
+
+  const doPullReplace = async () => {
+    setBusy(true);
+    setConfirmPull(false);
+    try {
+      const n = await SYNC.pullReplace();
+      refreshIndividuals();
+      showToast(`📥 서버 데이터 ${n}건 불러왔어요`);
+    } catch (e) {
+      showToast('⚠️ ' + ((e && e.message) || '불러오기 실패'));
+    }
+    setBusy(false);
+  };
+
+  const doLogout = () => {
+    SYNC.signOut();
+    showToast('연결을 끊었어요 (이 기기 데이터는 그대로예요)');
+  };
+
+  return (
+    <div className="card" style={{margin:0}}>
+      <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:6}}>
+        <div style={{fontSize:13, fontWeight:700, color:'var(--text2)'}}>☁️ 서버 동기화</div>
+        <div style={{fontSize:11, fontWeight:700, color: active ? '#2E7D46' : 'var(--text3)'}}>
+          {SYNC.running ? '동기화 중…' : active ? '● 연결됨' : '○ 로컬 저장만'}
+        </div>
+      </div>
+
+      {active ? (
+        <>
+          <div style={{fontSize:12, color:'var(--text3)', lineHeight:1.7, marginBottom:10}}>
+            계정: {(ses && ses.email) || '-'}<br/>
+            마지막 동기화: {fmtSync(st.lastSyncAt)}
+            {st.lastError && <><br/><span style={{color:'#B3261E'}}>⚠️ {st.lastError}</span></>}
+          </div>
+          <div style={{display:'flex', flexDirection:'column', gap:8}}>
+            <button className="btn btn-primary" disabled={busy} onClick={doSync}>{busy ? '진행 중…' : '🔄 지금 동기화'}</button>
+            {confirmPull ? (
+              <div style={{background:'var(--bg3)', borderRadius:10, padding:12}}>
+                <div style={{fontSize:12, color:'var(--text2)', marginBottom:8, lineHeight:1.6}}>
+                  이 기기의 데이터를 지우고 서버 내용으로 통째로 바꿔요.<br/>새 폰·새 PC에서 처음 설치했을 때만 쓰세요.
+                </div>
+                <div style={{display:'flex', gap:6}}>
+                  <button className="btn btn-primary btn-sm" style={{flex:1}} onClick={doPullReplace}>서버 내용으로 바꾸기</button>
+                  <button className="btn btn-secondary btn-sm" style={{flex:1}} onClick={() => setConfirmPull(false)}>취소</button>
+                </div>
+              </div>
+            ) : (
+              <button className="btn btn-secondary" disabled={busy} onClick={() => setConfirmPull(true)}>📥 서버 내용 통째로 받기 (새 기기)</button>
+            )}
+            <button className="btn btn-secondary" disabled={busy} onClick={doLogout}>연결 끊기</button>
+          </div>
+        </>
+      ) : open ? (
+        <div style={{display:'flex', flexDirection:'column', gap:8}}>
+          <div style={{fontSize:12, color:'var(--text3)', lineHeight:1.6, marginBottom:2}}>
+            {mode === 'signup' ? '이메일과 비밀번호만 정하면 됩니다. 기록은 본인만 볼 수 있어요.'
+             : mode === 'reset' ? '가입하신 이메일을 넣으면 재설정 링크를 보내드려요.'
+             : '로그인하면 폰·PC가 같은 기록을 봅니다.'}
+          </div>
+          <input className="input" type="email" autoComplete="username" placeholder="이메일"
+            value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} />
+          {mode !== 'reset' && (
+            <input className="input" type="password"
+              autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+              placeholder={mode === 'signup' ? '비밀번호 (6자 이상)' : '비밀번호'}
+              value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} />
+          )}
+          {note && <div style={{fontSize:12, color:'var(--accent2)', lineHeight:1.6}}>{note}</div>}
+          <div style={{display:'flex', gap:6}}>
+            <button className="btn btn-primary" style={{flex:1}} disabled={busy} onClick={doSubmit}>
+              {busy ? '진행 중…' : mode === 'signup' ? '가입하고 시작하기' : mode === 'reset' ? '재설정 메일 보내기' : '로그인'}
+            </button>
+            <button className="btn btn-secondary" style={{flex:1}} disabled={busy}
+              onClick={() => { setOpen(false); setNote(''); setMode('signin'); }}>취소</button>
+          </div>
+          <div style={{display:'flex', justifyContent:'space-between', fontSize:12, paddingTop:2}}>
+            {mode === 'signin' ? (
+              <>
+                <button onClick={() => { setMode('signup'); setNote(''); }} style={{background:'none', border:'none', color:'var(--accent2)', cursor:'pointer', padding:0}}>처음이세요? 회원가입</button>
+                <button onClick={() => { setMode('reset'); setNote(''); }} style={{background:'none', border:'none', color:'var(--text3)', cursor:'pointer', padding:0}}>비밀번호를 잊었어요</button>
+              </>
+            ) : (
+              <button onClick={() => { setMode('signin'); setNote(''); }} style={{background:'none', border:'none', color:'var(--accent2)', cursor:'pointer', padding:0}}>← 로그인으로 돌아가기</button>
+            )}
+          </div>
+        </div>
+      ) : (
+        <>
+          <div style={{fontSize:12, color:'var(--text3)', lineHeight:1.7, marginBottom:10}}>
+            지금은 이 기기에만 저장돼요. 로그인하면 폰에서 적은 기록이 PC에도 그대로 나타나요.
+          </div>
+          <div style={{display:'flex', gap:6}}>
+            <button className="btn btn-primary" style={{flex:1}} onClick={() => { setMode('signin'); setOpen(true); }}>로그인</button>
+            <button className="btn btn-secondary" style={{flex:1}} onClick={() => { setMode('signup'); setOpen(true); }}>회원가입</button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 /* v1.9.40 폰 알림 카드 — app.jsx 에서 옮겨 왔습니다(첫 화면 크기 한도). PUSH·SYNC·CHIP_ON/OFF 는 app 것을 씁니다 */
 function PushCard({ showToast }) {
   const [, bump] = useState(0);
@@ -1622,7 +1797,7 @@ function sibParents(text, c) {
 
 
 window.CREG_EXTRAS = {
-  SeasonNoteSheet, BirthdayPopup, DupMergeCard, FeedbackCard, FeedbackInbox, fbPayload, FB_PICKS, morphFill, mfList, mfIntro, MF, TrackCard, StorageCard, PushCard, followUp, fuPrice, fuWho, FU, sibParents, sibGroupOf, sibParentsPlan, SIB_PAR_RE, SIB_MORE_RE, SIB, BDAY_LINES, bdayPick, SaleCardSheet, AdoptSendSheet, AdoptReceive, AddGeckoSheet, chat,
+  SeasonNoteSheet, BirthdayPopup, DupMergeCard, FeedbackCard, FeedbackInbox, fbPayload, FB_PICKS, morphFill, mfList, mfIntro, MF, TrackCard, StorageCard, PushCard, SyncCard, followUp, fuPrice, fuWho, FU, sibParents, sibGroupOf, sibParentsPlan, SIB_PAR_RE, SIB_MORE_RE, SIB, BDAY_LINES, bdayPick, SaleCardSheet, AdoptSendSheet, AdoptReceive, AddGeckoSheet, chat,
   // 시험(node)에서 쓰는 순수 함수들
   seasonYears, seasonNoteStats, seasonSummaryText, saveSeasonNote, toggleTrait, SEASON_TRAITS, SEASON_DIRS,
   adoptSnapshot, adoptMemos, adoptImport, adoptCounts, looksPrivate, ADOPT, ADOPT_KINDS, ADOPT_NEVER, saleCardData,
