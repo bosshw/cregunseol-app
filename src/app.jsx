@@ -642,8 +642,8 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.39';
-const APP_PATCHED = '2026-10-30';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
+const APP_VERSION = '1.9.40';
+const APP_PATCHED = '2026-10-31';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -2719,7 +2719,7 @@ function relationOf(a, b, all) {
   if (shared.length >= 2) return { kind: 'litter', level: 'danger', label: '아빠·엄마가 모두 같은 동배예요' };
   if (shared.length === 1) {
     const p = byId[shared[0]];
-    return { kind: 'half', level: 'caution', label: `${p ? p.name : '부모 한쪽'}${p ? '가' : ''} 같은 반동배예요` };
+    return { kind: 'half', level: 'danger', label: `${p ? p.name : '부모 한쪽'}${p ? '가' : ''} 같은 반동배예요(동배나 다름없어요)` };   // v1.9.40 대표님: 아빠만 같아도 교배 불가
   }
 
   const grandOf = (x) => parentsOf(x).reduce((acc, id) => acc.concat(parentsOf(byId[id])), []);
@@ -3418,6 +3418,13 @@ function avatarSrc(gecko, allEvents) {
 const escapeReg = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // 문장에서 등록된 개체 이름 찾기 (긴 이름 우선, 등장 순서대로)
+/* v1.9.40 "마인이야" → 마인이 — 등록된 이름 + 끝말로 읽습니다(예전엔 "이야"를 잘라 "마인"을 찾았습니다) */
+function nameFromWord(w, list) {
+  if (!w) return null;
+  let best = null;
+  for (const i of list) if (i.name && w.startsWith(i.name) && /^(이?에요|이?예요|입니다|이?야|이?고|이다|이?래|임|요|이?랑|하고|인데|)$/.test(w.slice(i.name.length)) && (!best || i.name.length > best.name.length)) best = i;
+  return best;
+}
 function findNamesInText(text, individuals) {
   const found = [];
   const sorted = [...individuals].sort((a, b) => b.name.length - a.name.length);
@@ -8313,6 +8320,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     const morph = extractMorph(text);
     const date = parseKDate(text);
 
+    const prevTarget = geckoRef.current;   // v1.9.40 "얘 아빠가 마인이야"의 "얘"
     let target = geckoRef.current;
     if (names.length) { target = names[0]; setTarget(names[0]); }
 
@@ -8581,17 +8589,25 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     }
 
     // 5.55) 혈통
+    /* v1.9.40 "마동이들이랑 아빠가 같아" · "엄마도 같아" → 형제들의 부모를 그대로 잇습니다(extras sibParents) */
+    if (/(랑|하고|와|과)\s*(다\s*)?(아빠|아비|엄마|어미|부모|엄빠)\S*\s*(같|동일)|^(근데\s*)?(아빠|엄마|부모|엄빠)(도|가|는)?\s*(다\s*)?(같|동일)/.test(text)) {
+      loadExtras().then(X => { if (!X.sibParents(text, { names, prev: prevTarget, bot, setTarget, refreshIndividuals })) bot('누구랑 같은지 이름을 알려주세요 🙂\n예) "마동1호랑 아빠가 같아"'); }).catch(() => {});
+      return;
+    }
     const sireM = text.match(/(?:아빠|아비)(?:는|가|:)?\s*([가-힣A-Za-z0-9]+)/);
     const damM = text.match(/(?:엄마|어미)(?:는|가|:)?\s*([가-힣A-Za-z0-9]+)/);
     if (sireM || damM) {
       const clean = w => (w || '').replace(/(이에요|입니다|이야|이고|예요|이다|야|고|임)$/, '');
-      const sw = clean(sireM && sireM[1]);
-      const dw = clean(damM && damM[1]);
+      const sP = sireM && nameFromWord(sireM[1], inds), dP = damM && nameFromWord(damM[1], inds);
+      const sw = sP ? sP.name : clean(sireM && sireM[1]);
+      const dw = dP ? dP.name : clean(damM && damM[1]);
       // 부/모로 언급된 이름을 제외한 나머지를 혈통 대상(주체)으로 재결정
       // (예: "크범이 아들 크범5호 어미는 크범이야" → 크범이가 앞에 나와도 대상은 크범5호)
       const parentNames = [sw, dw].filter(Boolean);
       const subjectCandidates = names.filter(n => !parentNames.includes(n.name));
       if (subjectCandidates.length) { target = subjectCandidates[0]; setTarget(subjectCandidates[0]); }
+      else if (prevTarget && !parentNames.includes(prevTarget.name)) { target = inds.find(i => i.id === prevTarget.id) || prevTarget; setTarget(target); }
+      if (!target || parentNames.includes(target.name)) { setTarget(prevTarget); bot('어느 아이의 부모인지 이름과 함께 알려주세요 🙂\n예) "크얌이 아빠는 마인이야"'); return; }
       if (/누구|뭐|몰라/.test(sw + dw)) {
         const fresh0 = DB.getIndividuals();
         const sire = fresh0.find(i => i.id === target.sireId);
@@ -11151,98 +11167,7 @@ function buildWorkbook(XLSX) {
 
    상태는 PUSH.state() 한 곳이 정합니다. 여기서는 그 낱말에 맞는 안내만 그립니다.
    ══════════════════════════════════════════ */
-function PushCard({ showToast }) {
-  const [, bump] = useState(0);
-  const [busy, setBusy] = useState('');
-  useEffect(() => {
-    const off = PUSH.on(() => bump(v => v + 1));
-    const off2 = SYNC.on(() => bump(v => v + 1));
-    PUSH.refresh().catch(() => {});
-    return () => { off(); off2(); };
-  }, []);
-
-  const st = PUSH.state();
-  const prefs = PUSH.prefs();
-
-  const wrap = (children) => (
-    <div className="card" style={{margin:0}} data-testid="push-card">
-      <div style={{fontSize:13, fontWeight:700, color:'var(--text2)', marginBottom:10}}>🔔 폰 알림</div>
-      {children}
-    </div>
-  );
-  const note = (text) => (
-    <div style={{fontSize:12.5, color:'var(--text3)', lineHeight:1.6}}>{text}</div>
-  );
-
-  if (st === 'unsupported') return wrap(note('이 브라우저는 폰 알림을 지원하지 않아요.\n크롬이나 사파리에서 열어주세요.'));
-  if (st === 'need-install') return wrap(note('아이폰은 홈 화면에 추가한 뒤에 알림을 받을 수 있어요.\n사파리 아래 공유 버튼 → "홈 화면에 추가" 를 누르시고,\n거기서 열어서 다시 와주세요.'));
-  if (st === 'need-login') return wrap(note('먼저 위의 ☁️ 서버 동기화를 연결해주세요.\n어느 폰으로 보낼지 알아야 알림을 드릴 수 있어요.'));
-  if (st === 'denied') return wrap(note('알림이 차단돼 있어요.\n폰 설정 → 알림에서 이 앱을 허용해주신 뒤 다시 와주세요.'));
-
-  const doEnable = async () => {
-    setBusy('on');
-    try { await PUSH.enable(); showToast('🔔 알림을 켰어요'); }
-    catch (e) { showToast('⚠️ ' + ((e && e.message) || '실패')); }
-    setBusy('');
-  };
-  const doDisable = async () => {
-    setBusy('off');
-    try { await PUSH.disable(); showToast('알림을 껐어요'); }
-    catch (e) { showToast('⚠️ ' + ((e && e.message) || '실패')); }
-    setBusy('');
-  };
-  const doTest = async () => {
-    setBusy('test');
-    try { await PUSH.test(); showToast('📨 보냈어요. 잠시 뒤 알림이 뜰 거예요'); }
-    catch (e) { showToast('⚠️ ' + ((e && e.message) || '실패')); }
-    setBusy('');
-  };
-
-  if (st === 'off') return wrap(
-    <div>
-      {note('앱을 켜지 않아도 잠금화면으로 알려드려요.\n부화 예정일과 밥 주는 날, 아침 8시에 한 번씩이에요.')}
-      <button className="btn btn-primary" style={{marginTop:12}} data-testid="push-on"
-        disabled={busy === 'on'} onClick={doEnable}>
-        {busy === 'on' ? '켜는 중…' : '🔔 알림 받기'}
-      </button>
-    </div>
-  );
-
-  // 켜져 있음
-  const row = (key, label, sub, on) => (
-    <button key={key} className="chip-btn" data-testid={'push-' + key}
-      onClick={() => PUSH.savePrefs(key === 'hatch' ? { pushHatch: !on } : { pushFeed: !on })}
-      style={{display:'flex', alignItems:'center', gap:10, width:'100%', textAlign:'left',
-              padding:'11px 12px', ...(on ? CHIP_ON : CHIP_OFF)}}>
-      <span style={{fontSize:15}}>{on ? '☑' : '☐'}</span>
-      <span style={{flex:1, minWidth:0}}>
-        <span style={{display:'block', fontWeight:600, fontSize:13.5}}>{label}</span>
-        <span style={{display:'block', fontSize:11.5, opacity:.8, marginTop:2}}>{sub}</span>
-      </span>
-    </button>
-  );
-
-  return wrap(
-    <div>
-      <div style={{fontSize:12.5, color:'#2E7D46', fontWeight:600, marginBottom:10}}>● 이 기기로 알림을 받고 있어요</div>
-      <div style={{display:'flex', flexDirection:'column', gap:8}}>
-        {row('hatch', '🥚 부화 예정', '사흘 전과 당일 아침', prefs.hatch)}
-        {row('feed', '🍽️ 밥 주는 날', '그날 아침', prefs.feed)}
-      </div>
-      <div style={{display:'flex', gap:8, marginTop:12}}>
-        <button className="btn btn-secondary btn-sm" style={{flex:1}} data-testid="push-test"
-          disabled={busy === 'test'} onClick={doTest}>
-          {busy === 'test' ? '보내는 중…' : '📨 시험 알림'}
-        </button>
-        <button className="btn btn-secondary btn-sm" style={{flex:1}} data-testid="push-off"
-          disabled={busy === 'off'} onClick={doDisable}>알림 끄기</button>
-      </div>
-      <div style={{fontSize:11.5, color:'var(--text3)', marginTop:10, lineHeight:1.6}}>
-        아침 8시에 그날 챙길 것을 묶어서 한 통으로 보내드려요.
-      </div>
-    </div>
-  );
-}
+/* v1.9.40 폰 알림 카드(PushCard)는 extras.min.js 로 옮겼습니다 — 첫 화면 크기 한도. 설정에서 <Extra part="PushCard"> 로 부릅니다. */
 
 /* ══════════════════════════════════════════
    설정 · 서버 동기화 카드
@@ -11622,7 +11547,7 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
         </label>
         {DB.findDuplicateNames().length > 0 && <Extra part="DupMergeCard" showToast={showToast} refreshIndividuals={refreshIndividuals} />}
         <SyncCard showToast={showToast} refreshIndividuals={refreshIndividuals} />
-        <PushCard showToast={showToast} />
+        <Extra part="PushCard" showToast={showToast} />
         <Extra part="TrackCard" showToast={showToast} />
         {canUseCrevalue() && <Extra part="FeedbackInbox" />}
         <Extra part="StorageCard" showToast={showToast} />

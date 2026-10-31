@@ -1459,9 +1459,170 @@ function followUp(text, job, ctx) {
   return fuNext();
 }
 
+/* v1.9.40 폰 알림 카드 — app.jsx 에서 옮겨 왔습니다(첫 화면 크기 한도). PUSH·SYNC·CHIP_ON/OFF 는 app 것을 씁니다 */
+function PushCard({ showToast }) {
+  const [, bump] = useState(0);
+  const [busy, setBusy] = useState('');
+  useEffect(() => {
+    const off = PUSH.on(() => bump(v => v + 1));
+    const off2 = SYNC.on(() => bump(v => v + 1));
+    PUSH.refresh().catch(() => {});
+    return () => { off(); off2(); };
+  }, []);
+
+  const st = PUSH.state();
+  const prefs = PUSH.prefs();
+
+  const wrap = (children) => (
+    <div className="card" style={{margin:0}} data-testid="push-card">
+      <div style={{fontSize:13, fontWeight:700, color:'var(--text2)', marginBottom:10}}>🔔 폰 알림</div>
+      {children}
+    </div>
+  );
+  const note = (text) => (
+    <div style={{fontSize:12.5, color:'var(--text3)', lineHeight:1.6}}>{text}</div>
+  );
+
+  if (st === 'unsupported') return wrap(note('이 브라우저는 폰 알림을 지원하지 않아요.\n크롬이나 사파리에서 열어주세요.'));
+  if (st === 'need-install') return wrap(note('아이폰은 홈 화면에 추가한 뒤에 알림을 받을 수 있어요.\n사파리 아래 공유 버튼 → "홈 화면에 추가" 를 누르시고,\n거기서 열어서 다시 와주세요.'));
+  if (st === 'need-login') return wrap(note('먼저 위의 ☁️ 서버 동기화를 연결해주세요.\n어느 폰으로 보낼지 알아야 알림을 드릴 수 있어요.'));
+  if (st === 'denied') return wrap(note('알림이 차단돼 있어요.\n폰 설정 → 알림에서 이 앱을 허용해주신 뒤 다시 와주세요.'));
+
+  const doEnable = async () => {
+    setBusy('on');
+    try { await PUSH.enable(); showToast('🔔 알림을 켰어요'); }
+    catch (e) { showToast('⚠️ ' + ((e && e.message) || '실패')); }
+    setBusy('');
+  };
+  const doDisable = async () => {
+    setBusy('off');
+    try { await PUSH.disable(); showToast('알림을 껐어요'); }
+    catch (e) { showToast('⚠️ ' + ((e && e.message) || '실패')); }
+    setBusy('');
+  };
+  const doTest = async () => {
+    setBusy('test');
+    try { await PUSH.test(); showToast('📨 보냈어요. 잠시 뒤 알림이 뜰 거예요'); }
+    catch (e) { showToast('⚠️ ' + ((e && e.message) || '실패')); }
+    setBusy('');
+  };
+
+  if (st === 'off') return wrap(
+    <div>
+      {note('앱을 켜지 않아도 잠금화면으로 알려드려요.\n부화 예정일과 밥 주는 날, 아침 8시에 한 번씩이에요.')}
+      <button className="btn btn-primary" style={{marginTop:12}} data-testid="push-on"
+        disabled={busy === 'on'} onClick={doEnable}>
+        {busy === 'on' ? '켜는 중…' : '🔔 알림 받기'}
+      </button>
+    </div>
+  );
+
+  // 켜져 있음
+  const row = (key, label, sub, on) => (
+    <button key={key} className="chip-btn" data-testid={'push-' + key}
+      onClick={() => PUSH.savePrefs(key === 'hatch' ? { pushHatch: !on } : { pushFeed: !on })}
+      style={{display:'flex', alignItems:'center', gap:10, width:'100%', textAlign:'left',
+              padding:'11px 12px', ...(on ? CHIP_ON : CHIP_OFF)}}>
+      <span style={{fontSize:15}}>{on ? '☑' : '☐'}</span>
+      <span style={{flex:1, minWidth:0}}>
+        <span style={{display:'block', fontWeight:600, fontSize:13.5}}>{label}</span>
+        <span style={{display:'block', fontSize:11.5, opacity:.8, marginTop:2}}>{sub}</span>
+      </span>
+    </button>
+  );
+
+  return wrap(
+    <div>
+      <div style={{fontSize:12.5, color:'#2E7D46', fontWeight:600, marginBottom:10}}>● 이 기기로 알림을 받고 있어요</div>
+      <div style={{display:'flex', flexDirection:'column', gap:8}}>
+        {row('hatch', '🥚 부화 예정', '사흘 전과 당일 아침', prefs.hatch)}
+        {row('feed', '🍽️ 밥 주는 날', '그날 아침', prefs.feed)}
+      </div>
+      <div style={{display:'flex', gap:8, marginTop:12}}>
+        <button className="btn btn-secondary btn-sm" style={{flex:1}} data-testid="push-test"
+          disabled={busy === 'test'} onClick={doTest}>
+          {busy === 'test' ? '보내는 중…' : '📨 시험 알림'}
+        </button>
+        <button className="btn btn-secondary btn-sm" style={{flex:1}} data-testid="push-off"
+          disabled={busy === 'off'} onClick={doDisable}>알림 끄기</button>
+      </div>
+      <div style={{fontSize:11.5, color:'var(--text3)', marginTop:10, lineHeight:1.6}}>
+        아침 8시에 그날 챙길 것을 묶어서 한 통으로 보내드려요.
+      </div>
+    </div>
+  );
+}
+
+/* ══ v1.9.40 형제로 부모 잇기 — "마동이들이랑 아빠가 같아" · "크한이랑 엄마가 같아" · "엄마도 같아"
+   이름 하나(크한이)나 이름 앞부분이 같은 무리(마동1호~10호)의 부모를 지금 이야기하는 아이에게 그대로 잇습니다.
+   ★ 대상: 문장에 나온 다른 이름 → 없으면 방금까지 이야기하던 아이("얘"). 무리 아이들은 대상이 될 수 없습니다. ══ */
+const SIB_PAR_RE = /([가-힣A-Za-z0-9]+?)\s*(?:이들|들)?\s*(?:이랑|랑|이하고|하고|이와|와|과)\s*(?:다\s*)?(아빠|아비|엄마|어미|부모|엄빠)\s*(?:가|는|도|랑|이)?\s*(?:다\s*)?(?:똑\s*)?(?:같|동일)/;
+const SIB_MORE_RE = /^(?:근데\s*|그리고\s*)?(아빠|엄마|부모|엄빠)\s*(?:도|가|는)?\s*(?:다\s*)?(?:똑\s*)?(?:같|동일)/;
+const wa = (w) => { const c = (w || '').charCodeAt(w.length - 1) - 0xAC00; return c >= 0 && c < 11172 && c % 28 ? '과' : '와'; };
+function sibGroupOf(word, list) {
+  const all = list.filter(i => i.name);
+  const flat = s => s.replace(/\s+/g, '');
+  const one = all.find(i => i.name === word) || all.find(i => i.name === word + '이');
+  if (one) return [one];
+  const stem = word.replace(/이$/, '');
+  if (stem.length < 2) return [];
+  return all.filter(i => flat(i.name).startsWith(stem));
+}
+function sibParentKeys(role) { return /엄마|어미/.test(role) ? ['damId'] : /부모|엄빠/.test(role) ? ['sireId', 'damId'] : ['sireId']; }
+/* 순수 — 무리에서 가장 많이 겹치는 부모를 고릅니다 */
+function sibParentsPlan(subj, grp, keys, list) {
+  const byId = {}; list.forEach(i => { byId[i.id] = i; });
+  const patch = {}, L = [], miss = [];
+  for (const k of keys) {
+    const role = k === 'sireId' ? '아빠' : '엄마';
+    const cnt = {};
+    grp.forEach(g => { if (g[k] && g[k] !== subj.id && byId[g[k]]) cnt[g[k]] = (cnt[g[k]] || 0) + 1; });
+    const ids = Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a]);
+    if (!ids.length) { miss.push(role); continue; }
+    const p = byId[ids[0]], old = subj[k] && subj[k] !== p.id && byId[subj[k]];
+    patch[k] = p.id;
+    L.push(`${role} ${p.name} 🧬 연결 완료${old ? ` (전에는 ${old.name})` : ''}${ids.length > 1 ? ` · ${grp.length}마리 중 ${cnt[ids[0]]}마리 기준` : ''}`);
+  }
+  return { patch, L, miss };
+}
+const SIB = { last: null };
+function sibParents(text, c) {
+  const t = String(text || '').trim();
+  const list = DB.getIndividuals();
+  let m = t.match(SIB_PAR_RE), grp, keys, word;
+  if (m) {
+    word = m[1]; keys = sibParentKeys(m[2]);
+    const hit = (c.names || []).find(n => new RegExp(n.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*(?:들|이들)?\\s*(?:이랑|랑|이하고|하고|이와|와|과)').test(t));   // "마동 5호랑" 처럼 띄어 쓴 이름
+    grp = hit ? [hit] : sibGroupOf(word, list);
+    if (hit) word = hit.name;
+  }
+  else if ((m = t.match(SIB_MORE_RE)) && SIB.last && c.prev && c.prev.id === SIB.last.subj) {
+    word = SIB.last.word; keys = sibParentKeys(m[1]);
+    grp = SIB.last.grp.map(id => list.find(i => i.id === id)).filter(Boolean);
+  } else return false;
+  const ids = new Set(grp.map(g => g.id).concat(...grp.map(g => [g.sireId, g.damId])));   // 무리와 그 부모는 대상이 아닙니다
+  const pick = (c.names || []).find(n => !ids.has(n.id)) || (c.prev && !ids.has(c.prev.id) ? c.prev : null);
+  const subj = pick && (list.find(i => i.id === pick.id) || pick);
+  if (!grp.length) { c.bot(`"${word}" 아이를 못 찾았어요 🙂\n${keys[0] === 'damId' ? '엄마' : '아빠'}가 같은 아이 이름을 하나만 알려주시겠어요?\n예) "마동1호랑 아빠가 같아"`); return true; }
+  if (!subj) { c.bot(`어느 아이 이야기인지 이름을 알려주세요 🙂\n예) "크얌이는 ${word}들이랑 아빠가 같아"`); return true; }
+  const p = sibParentsPlan(subj, grp, keys, list);
+  const nm = grp.length > 1 ? `${grp[0].name} 외 ${grp.length - 1}마리` : grp[0].name;
+  c.setTarget(subj);
+  SIB.last = { subj: subj.id, grp: grp.map(g => g.id), word };
+  if (!p.L.length) { c.bot(`${nm}도 ${p.miss.join('·')}가 아직 비어 있어요.\n"${subj.name} 아빠는 ○○야"처럼 이름으로 알려주시면 이어 드릴게요.`); return true; }
+  DB.updateIndividual(subj.id, p.patch);
+  c.refreshIndividuals && c.refreshIndividuals();
+  const fresh = DB.getIndividuals(), me = fresh.find(i => i.id === subj.id) || subj;
+  const both = grp.some(g => g.sireId && g.damId && g.sireId === me.sireId && g.damId === me.damId);
+  c.bot(`${subj.name} 혈통에 담았어요.\n${p.L.join('\n')}${p.miss.length ? `\n(${nm}도 ${p.miss.join('·')}는 비어 있어요)` : ''}\n\n`
+    + `${nm}${wa(nm)} ${both ? '부모가 모두 같은 동배' : '한쪽 부모가 같은 반동배'}라 서로 메이팅은 피해 주세요.\n붙이려 하시면 제가 먼저 말씀드릴게요.`
+    + (!both && keys.length === 1 ? `\n${keys[0] === 'sireId' ? '엄마' : '아빠'}도 같으면 "${keys[0] === 'sireId' ? '엄마' : '아빠'}도 같아"라고 말씀해 주세요.` : ''));
+  return true;
+}
+
 
 window.CREG_EXTRAS = {
-  SeasonNoteSheet, BirthdayPopup, DupMergeCard, FeedbackCard, FeedbackInbox, fbPayload, FB_PICKS, morphFill, mfList, mfIntro, MF, TrackCard, StorageCard, followUp, fuPrice, fuWho, FU, BDAY_LINES, bdayPick, SaleCardSheet, AdoptSendSheet, AdoptReceive, AddGeckoSheet, chat,
+  SeasonNoteSheet, BirthdayPopup, DupMergeCard, FeedbackCard, FeedbackInbox, fbPayload, FB_PICKS, morphFill, mfList, mfIntro, MF, TrackCard, StorageCard, PushCard, followUp, fuPrice, fuWho, FU, sibParents, sibGroupOf, sibParentsPlan, SIB_PAR_RE, SIB_MORE_RE, SIB, BDAY_LINES, bdayPick, SaleCardSheet, AdoptSendSheet, AdoptReceive, AddGeckoSheet, chat,
   // 시험(node)에서 쓰는 순수 함수들
   seasonYears, seasonNoteStats, seasonSummaryText, saveSeasonNote, toggleTrait, SEASON_TRAITS, SEASON_DIRS,
   adoptSnapshot, adoptMemos, adoptImport, adoptCounts, looksPrivate, ADOPT, ADOPT_KINDS, ADOPT_NEVER, saleCardData,
