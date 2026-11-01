@@ -642,7 +642,7 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.42';
+const APP_VERSION = '1.9.43';
 const APP_PATCHED = '2026-10-31';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -8168,6 +8168,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     if (fuRef.current && window.CREG_EXTRAS) {
       const r = window.CREG_EXTRAS.followUp(text, null, fuCtx());
       fuRef.current = r === true;
+      if (r === false) setMessages(ms => [...ms]);   // 묻기가 끝났으면(모름 포함) 다시 그려 맨 아래 저장 칩이 뜨게
       if (r !== 'pass') return;
     }
     /* v1.9.19 알 개수를 여쭌 뒤 — "2개", "두 개요", "몰라" 같은 짧은 답을 받습니다.
@@ -9098,14 +9099,16 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       {phase === 'chat' && (
         <>
           <div className="chat-wrap" style={{flex:1, overflowY:'auto'}}>
+            {/* '💾 이제 저장할래'는 항상 대화 맨 아래에만 둡니다 — 지난 말풍선의 저장 칩은 숨김
+                (제보 2026-11-01: 부화 뒤 모프를 이어 묻고 답하면, 저장 칩이 위쪽 '기록해뒀어요' 말풍선에 남아 아래엔 안 떴음) */}
             {messages.map((m, i) => (
               <div key={i} style={{display:'flex', flexDirection:'column', gap:6}}>
                 {m.role === 'bot' ? (
                   <>
                     <div className="chat-q">{m.text}</div>
-                    {m.chips && (
+                    {m.chips && m.chips.some(c => c.kind !== 'save' || i === messages.length - 1) && (
                       <div className="chip-row" style={{marginTop:0}}>
-                        {m.chips.map((c, j) => (
+                        {m.chips.filter(c => c.kind !== 'save' || i === messages.length - 1).map((c, j) => (
                           <button key={j} className="chip-btn" onClick={() => handleChip(c.kind, c.value)}>{c.label}</button>
                         ))}
                       </div>
@@ -9118,6 +9121,13 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
                 )}
               </div>
             ))}
+            {/* 담긴 기록이 있고, 지금 이어 묻는 중이 아니고(fuRef — 답을 받은 같은 차례에 바뀌므로 그리기 전에 맞춰져 있습니다),
+                마지막 말풍선에 고를 칩이 없으면 → 맨 아래에 저장 칩 */}
+            {pending.length > 0 && !fuRef.current && !(messages.length && messages[messages.length - 1].role === 'bot' && (messages[messages.length - 1].chips || []).length) && (
+              <div className="chip-row" style={{marginTop:0, flexShrink:0}}>
+                <button className="chip-btn" onClick={() => handleChip('save')}>💾 이제 저장할래</button>
+              </div>
+            )}
             <div ref={endRef} />
           </div>
 
