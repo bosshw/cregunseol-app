@@ -41,8 +41,13 @@ test("questions per record and where answers go", () => {
 
 test("app hooks: after records are put in, before parsing, and on adoption words", () => {
   assert.match(app, /if \(fs\.some\(f => f\.type === 'distribution' \|\| f\.type === 'hatching'\)\) follow\(\{ facts: fs \}\);/);
-  assert.match(app, /if \(fuRef\.current && window\.CREG_EXTRAS\) \{\n\s*const r = window\.CREG_EXTRAS\.followUp\(text, null, fuCtx\(\)\);\n\s*fuRef\.current = r === true;\n\s*if \(r !== 'pass'\) return;/);
+  assert.match(app, /if \(fuRef\.current && window\.CREG_EXTRAS\) \{\n\s*const r = window\.CREG_EXTRAS\.followUp\(text, null, fuCtx\(\)\);\n\s*fuRef\.current = r === true;\n\s*if \(r === false\) setMessages\(ms => \[\.\.\.ms\]\);[^\n]*\n\s*if \(r !== 'pass'\) return;/);
   assert.match(app, /const adoptSaid = ADOPT_STRONG\.test\(text\)/);
   assert.match(app, /if \(hp\.ask\) follow\(\{ adopt: saved\.id, date: hp\.ask \}\);/, "새 이름은 등록한 뒤 묻기");
   assert.match(app, /DB\.recordSale\(f\.targetId, \{/, "분양 저장은 원래 길 그대로");
+});
+
+test("save chip stays at the bottom of the chat (report 2026-11-01)", () => {
+  assert.match(app, /m\.chips\.filter\(c => c\.kind !== 'save' \|\| i === messages\.length - 1\)/, "지난 말풍선의 저장 칩은 숨김");
+  assert.match(app, /pending\.length > 0 && !fuRef\.current[\s\S]{0,300}handleChip\('save'\)/, "묻는 중이 아닐 때 맨 아래 저장 칩");
 });
