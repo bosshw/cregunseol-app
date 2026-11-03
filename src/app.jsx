@@ -394,6 +394,16 @@ const now = () => new Date().toISOString();
    화면 코드는 전부 var(--accent) 같은 변수만 쓰기 때문에 앱 전체 색이 한 번에 바뀝니다.
    고른 값은 cg_settings.theme 에 저장돼 서버 동기화로 다른 기기에도 따라갑니다.
    ══════════════════════════════════════════ */
+/* v1.9.44 연하늘·연핑크·핫핑크·화이트 (대표님 2026-11-03) — 칸 이름이 같아 짧게 적습니다.
+   c = [bg, bg2, bg3, card, border, accent, accent2, accent-soft, accent-dim, accent-edge, text, text2, text3] · sh = 그림자 색(rgb) */
+const tv = (c, sh) => ({
+  '--bg':c[0], '--bg2':c[1], '--bg3':c[2], '--card':c[3], '--border':c[4],
+  '--accent':c[5], '--accent2':c[6], '--accent-soft':c[7], '--accent-dim':c[8],
+  '--accent-edge':c[9], '--accent-shadow':`rgba(${sh},.25)`, '--on-accent':'#FFFFFF',
+  '--text':c[10], '--text2':c[11], '--text3':c[12],
+  '--danger':'#B3362B', '--warning':'#C87F2F', '--gold':'#A9812E', '--gold-soft':'#F5EBD6', '--gold-edge':'#E2D2AC',
+  '--shadow':'0 2px 10px rgba(40,30,35,.07)',
+});
 const THEMES = [
   {
     key: 'burgundy', label: '버건디', hint: '크레건설 기본',
@@ -439,6 +449,14 @@ const THEMES = [
       '--shadow':'0 2px 10px rgba(38,49,61,.08)',
     },
   },
+  { key: 'sky', label: '연하늘', hint: '맑은 하늘색',
+    vars: tv(['#F5FAFE','#E8F3FB','#E0EEF9','#FCFEFF','#CFE3F2','#3478A8','#245E88','#E1EFFA','#5E9CC8','#C2DDF1','#22323F','#4A6070','#8399A8'], '52,120,168') },
+  { key: 'pink', label: '연핑크', hint: '부드러운 분홍',
+    vars: tv(['#FFF7F9','#FCEDF1','#F9E5EB','#FFFCFD','#F1D5DE','#B85273','#983B59','#FBE3EA','#D17D97','#F0C6D3','#3D2A30','#6E5259','#A88C94'], '184,82,115') },
+  { key: 'hotpink', label: '핫핑크', hint: '선명한 분홍',
+    vars: tv(['#FFF6FA','#FDE8F1','#FBDFEB','#FFFCFE','#F5CFE0','#D01F69','#AD1557','#FDE1EE','#E2558F','#F6BCD5','#3A2230','#6B4A5B','#A58597'], '208,31,105') },
+  { key: 'white', label: '화이트', hint: '깔끔한 흰색',
+    vars: tv(['#FFFFFF','#F6F6F6','#F0F0F0','#FFFFFF','#E3E3E3','#3A3A3C','#1F1F21','#F0F0F2','#6B6B70','#D9D9DC','#222222','#555555','#999999'], '0,0,0') },
   {
     key: 'charcoal', label: '차콜', hint: '어두운 화면',
     vars: {
@@ -642,7 +660,7 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.43';
+const APP_VERSION = '1.9.44';
 const APP_PATCHED = '2026-10-31';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -1903,6 +1921,10 @@ function reopenSeason(id) {
   return mine.length;
 }
 
+/* v1.9.44 산란 체크표에 올라올 아이 — 예정일 3일 전부터 낳을 때까지 (화면은 extras 의 LayCheck)
+   ★ 체크는 따로 저장하지 않습니다. 낳았다고 누르면 산란 기록이 생기고, 그러면 예정이 다음 차수로 넘어가 저절로 빠집니다. */
+const LAYCHK_AHEAD = 3;
+const layDueList = (inds, evs) => layingForecasts(inds, evs).filter(f => !f.seasonEnded && f.late >= -LAYCHK_AHEAD);
 function layingForecasts(individuals, events) {
   const inds = individuals || DB.getIndividuals();
   const evs = events || DB.getEvents();
@@ -1947,12 +1969,13 @@ function layingForecasts(individuals, events) {
     const dadName = (lastMate && lastMate.data && lastMate.data.partnerName)
       || ((byId[(lastMate && lastMate.data && lastMate.data.partnerId)] || {}).name)
       || ((byId[lastLayD.sireId] || {}).name) || lastLayD.sireName || null;
+    const dadId = (lastMate && lastMate.data && lastMate.data.partnerId) || lastLayD.sireId || null;
     const pairKey = i.id + '|' + (dadName || '?');
     const nth = rows.filter(r => r.pairKey === pairKey).length + 1;
     const late = -daysUntil(eta);
     const ss = seasonState(i.id, evs);
     out.push({
-      indId: i.id, name: i.name, pairName: i.name + (dadName ? ' × ' + dadName : ''),
+      indId: i.id, name: i.name, pairName: i.name + (dadName ? ' × ' + dadName : ''), dadId, dadName,
       eta, interval, basis, count: ls.length, nth, lastLay: ls.length ? ls[ls.length - 1].date : null,
       late,                                   // 예정일에서 며칠 지났나 (음수면 아직 안 옴)
       overdue: late >= LAY_LATE_WARN,         // 확인해 달라고 할 때가 됐나
@@ -3115,9 +3138,10 @@ function feedSchedule(untilISO, plan) {
      서버는 규칙을 모릅니다 — 앱이 만들어 올린 일정표에서 오늘 날짜 줄만 꺼내 보냅니다.
      부화 예정일·밥 주는 날 계산이 두 군데로 갈라지지 않게 하기 위해서입니다.
 
-   보내는 것은 대표님이 고르신 두 가지뿐입니다 (2026-09-13 확정).
-     ① 부화 예정 — 사흘 전과 당일
+   보내는 것은 대표님이 고르신 세 가지뿐입니다 (2026-09-13 확정, 2026-11-03 산란 추가).
+     ① 부화 예정 — 3일 전과 당일
      ② 밥 주는 날 — 그날 아침
+     ③ 산란 예정 — 3일 전과 당일 (v1.9.44)
    매일 아침 8시에 그날 몫을 묶어서 한 통으로 보냅니다.
 
    제약 (지키지 않으면 알림이 안 옵니다)
@@ -3125,7 +3149,7 @@ function feedSchedule(untilISO, plan) {
      · 서버 동기화(로그인)가 켜져 있어야 합니다 — 누구에게 보낼지 알아야 하니까요
      · 권한 요청은 반드시 사용자가 버튼을 누른 직후에만 뜹니다
    ══════════════════════════════════════════ */
-const PUSH_AHEAD = 3;          // 부화 예정 며칠 전에 미리 알릴지
+const PUSH_AHEAD = 3;          // 부화·산란 예정 며칠 전에 미리 알릴지
 const PUSH_PLAN_MAX = 400;     // 일정표 한 사람당 최대 줄 수
 
 /* 서버가 준 공개키(base64url)를 브라우저가 원하는 바이트 배열로 */
@@ -3149,8 +3173,18 @@ function pushPlan(individuals, events) {
     const eggs = (r.units || []).length;
     const body = `${fmtDateShort(r.e.date)} 산란${eggs ? ` · 알 ${eggs}개` : ''}`;
     const pre = localISO(new Date(new Date(r.etaISO).getTime() - PUSH_AHEAD * 86400000));
-    if (pre >= today) out.push({ d: pre, k: 'hatch', t: `${r.pairName} ${r.nth}차 알, 사흘 뒤가 부화 예정이에요 🥚`, b: body });
+    if (pre >= today) out.push({ d: pre, k: 'hatch', t: `${r.pairName} ${r.nth}차 알, 3일 뒤가 부화 예정이에요 🐣`, b: body });
     if (r.etaISO >= today) out.push({ d: r.etaISO, k: 'hatch', t: `${r.pairName} ${r.nth}차 알이 나올 때가 됐어요 🐣`, b: body });
+  });
+
+  /* ③ v1.9.44 산란 예정 — 3일 전 한 번, 당일 한 번 (대표님 2026-11-03, 9월에 뺐던 것을 다시 넣음)
+     눌러서 들어오면 산란 체크표가 열립니다. 시즌을 닫은 아이는 보내지 않습니다. */
+  layingForecasts(individuals, events).forEach(f => {
+    if (f.seasonEnded || f.eta > until) return;
+    const t0 = `${f.pairName} ${f.nth}차`, b = `${fmtDateShort(f.eta)} 산란 예정 · 낳으면 산란 체크표에서 눌러 주세요`;
+    const pre = addDaysISO(f.eta, -PUSH_AHEAD);
+    if (pre >= today) out.push({ d: pre, k: 'lay', t: `${t0} 산란 예정이 3일 뒤예요 🥚`, b });
+    if (f.eta >= today) out.push({ d: f.eta, k: 'lay', t: `${t0} 오늘이 산란 예정일이에요 🥚`, b });
   });
 
   // ② 밥 주는 날 — 고정 요일이든 며칠 간격이든 feedSchedule 한 곳에서 나옵니다
@@ -3198,7 +3232,7 @@ const PUSH = {
 
   prefs() {
     const s = DB.getSettings() || {};
-    return { hatch: s.pushHatch !== false, feed: s.pushFeed !== false };
+    return { hatch: s.pushHatch !== false, feed: s.pushFeed !== false, lay: s.pushLay !== false };
   },
 
   /* ── 서버에서 공개키 받아오기 ──
@@ -3243,7 +3277,7 @@ const PUSH = {
         user_id: SYNC.userId(),
         p256dh: (j.keys && j.keys.p256dh) || '',
         auth: (j.keys && j.keys.auth) || '',
-        hatch: p.hatch, feed: p.feed,
+        hatch: p.hatch, feed: p.feed, lay: p.lay,
         label: this.isIOS() ? '아이폰' : '안드로이드/PC',
       }),
     });
@@ -3305,7 +3339,7 @@ const PUSH = {
       await SYNC.api('/rest/v1/cg_push_subs?endpoint=eq.' + encodeURIComponent(sub.endpoint), {
         method: 'PATCH',
         headers: { Prefer: 'return=minimal' },
-        body: JSON.stringify({ hatch: p.hatch, feed: p.feed }),
+        body: JSON.stringify({ hatch: p.hatch, feed: p.feed, lay: p.lay }),
       });
     } catch (e) {}
   },
@@ -3727,7 +3761,8 @@ function pickClutch(rows, text, dates) {
    ★ 화면 버튼이 부르는 것과 같은 함수만 부릅니다(DB.setKeep·recordSeasonCheck·PUB·EGG·moveHatchTo …).
    ★ 지우기·합치기는 말만으로 하지 않고 버튼으로 한 번 더 여쭙니다.
    ══════════════════════════════════════════ */
-const THEME_WORDS = [[/버건디|와인|빨강|빨간|기본\s*색/, 'burgundy'], [/그린|초록|녹색/, 'green'], [/브라운|갈색|우드/, 'brown'],
+const THEME_WORDS = [[/핫\s*핑크|진한\s*(?:핑크|분홍)/, 'hotpink'], [/연\s*핑크|핑크|분홍/, 'pink'], [/하늘|연\s*파랑|연\s*블루|스카이/, 'sky'],
+  [/화이트|흰\s*색|하얀|흰\s*화면/, 'white'], [/버건디|와인|빨강|빨간|기본\s*색/, 'burgundy'], [/그린|초록|녹색/, 'green'], [/브라운|갈색|우드/, 'brown'],
   [/블루|파랑|파란|코발트/, 'blue'], [/차콜|다크|어둡|어두운|검정|검은|블랙/, 'charcoal']];
 const EV_WORDS = [[/몸무게|무게|체중/, 'growth'], [/밥|먹이|피딩|급여/, 'feeding'], [/탈피/, 'shed'], [/메모/, 'memo'], [/사진/, 'photo'],
   [/이상\s*기록|증상/, 'health'], [/온습도|습도/, 'env'], [/컨디션/, 'condition'], [/산란/, 'laying'], [/메이팅|교배/, 'mating'],
@@ -4875,7 +4910,7 @@ function App() {
      앱이 꺼져 있었으면 주소에 ?go=… 가 붙어 오고, 켜져 있었으면 서비스워커가 말을 걸어옵니다. */
   useEffect(() => {
     const GO_OK = ['reminders', 'feeding', 'calendar', 'home', 'import', 'chat'];
-    const go = (name) => { if (GO_OK.includes(name)) navigate(name); };
+    const go = (name) => { if (name === 'laying') navigate('home', { view: 'laying' }); else if (GO_OK.includes(name)) navigate(name); };
     try {
       const q = new URLSearchParams(location.search).get('go');
       if (q) {
@@ -5245,6 +5280,7 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
   const [fb, setFb] = useState(() => fbDue(individuals.length));   // v1.9.33 의견 한 줄 — 감사 문구를 보여주는 동안은 닫기 전까지 그대로
   // 분양은 v3.8부터 가계부 탭으로 옮겼습니다 (옛 링크로 들어오면 축양으로 보냅니다)
   const [view, setView] = useState(initialView === 'sale' ? 'own' : (initialView || 'own')); // own | mating | laying | hatch
+  const layDueN = individuals.length ? layDueList(individuals).length : 0;   // v1.9.44 산란 체크표에 올라온 아이 수
   const [favOnly, setFavOnly] = useState(false);
   const [keepOnly, setKeepOnly] = useState(false);
   // 정렬은 골라둔 것을 기억합니다
@@ -5358,9 +5394,9 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
         {individuals.length > 0 && (
           <div className="chip-row" style={{padding:'10px 16px 2px', marginTop:0}}>
             {[['own','🏠 축양'],['mating','💞 메이팅'],['laying','🥚 산란'],['hatch','🐣 해칭']].map(([k, l]) => (
-              <button key={k} className="chip-btn"
+              <button key={k} className="chip-btn" data-testid={'hv-' + k}
                 style={{flexShrink:0, whiteSpace:'nowrap', ...(view === k ? {background:'var(--accent-soft)', fontWeight:700} : {})}}
-                onClick={() => setView(k)}>{l}</button>
+                onClick={() => setView(k)}>{l}{k === 'laying' && layDueN > 0 && <span className="lc-badge">{layDueN}</span>}</button>
             ))}
           </div>
         )}
@@ -5627,6 +5663,7 @@ function LayingView({ individuals, navigate, showToast }) {
   const [addOpen, setAddOpen] = useState(false);       // v1.9.15 산란 직접 적기
   const [, setVer] = useState(0);
   const all = clutchRows(individuals, DB.getEvents());
+  const chk = <Extra part="LayCheck" navigate={navigate} showToast={showToast} onSaved={() => setVer(v => v + 1)} />;   // v1.9.44 산란 체크표
   const addBtn = (
     <>
       <button className="btn btn-secondary" data-testid="lay-add" style={{margin:'0 0 10px'}} onClick={() => setAddOpen(true)}>＋ 산란 기록하기</button>
@@ -5659,15 +5696,17 @@ function LayingView({ individuals, navigate, showToast }) {
   const soon = rows.filter(r => r.waiting && r.d >= 0 && r.d <= 7).length;
 
   if (!all.length) return (
+    <>{layDueList(individuals).length > 0 && <div style={{padding:'0 16px'}}>{chk}</div>}
     <div className="empty" style={{padding:'40px 20px'}}>
       <div className="empty-icon">🥚</div>
       <p>{'아직 산란 기록이 없어요.\n아래 버튼으로 바로 적거나, 💬 대화에서 "크범이 알 낳았어" 처럼 말씀해보세요.'}</p>
       <div style={{maxWidth:280, margin:'0 auto'}}>{addBtn}</div>
-    </div>
+    </div></>
   );
 
   return (
     <div style={{padding:'0 16px'}}>
+      {chk}
       {/* 암컷별로 골라 보기 — "크밤이 산란만" 같은 식으로 */}
       {momList.length > 1 && (
         <div style={{display:'flex', gap:6, overflowX:'auto', padding:'2px 0 10px', WebkitOverflowScrolling:'touch'}}>

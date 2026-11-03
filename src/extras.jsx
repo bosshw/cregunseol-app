@@ -1684,7 +1684,7 @@ function PushCard({ showToast }) {
 
   if (st === 'off') return wrap(
     <div>
-      {note('앱을 켜지 않아도 잠금화면으로 알려드려요.\n부화 예정일과 밥 주는 날, 아침 8시에 한 번씩이에요.')}
+      {note('앱을 켜지 않아도 잠금화면으로 알려드려요.\n산란·부화 예정일과 밥 주는 날, 아침 8시에 한 번씩이에요.')}
       <button className="btn btn-primary" style={{marginTop:12}} data-testid="push-on"
         disabled={busy === 'on'} onClick={doEnable}>
         {busy === 'on' ? '켜는 중…' : '🔔 알림 받기'}
@@ -1695,7 +1695,7 @@ function PushCard({ showToast }) {
   // 켜져 있음
   const row = (key, label, sub, on) => (
     <button key={key} className="chip-btn" data-testid={'push-' + key}
-      onClick={() => PUSH.savePrefs(key === 'hatch' ? { pushHatch: !on } : { pushFeed: !on })}
+      onClick={() => PUSH.savePrefs({ [{ hatch: 'pushHatch', feed: 'pushFeed', lay: 'pushLay' }[key]]: !on })}
       style={{display:'flex', alignItems:'center', gap:10, width:'100%', textAlign:'left',
               padding:'11px 12px', ...(on ? CHIP_ON : CHIP_OFF)}}>
       <span style={{fontSize:15}}>{on ? '☑' : '☐'}</span>
@@ -1710,7 +1710,8 @@ function PushCard({ showToast }) {
     <div>
       <div style={{fontSize:12.5, color:'#2E7D46', fontWeight:600, marginBottom:10}}>● 이 기기로 알림을 받고 있어요</div>
       <div style={{display:'flex', flexDirection:'column', gap:8}}>
-        {row('hatch', '🥚 부화 예정', '사흘 전과 당일 아침', prefs.hatch)}
+        {row('lay', '🥚 산란 예정', '3일 전과 당일 아침 · 누르면 산란 체크표', prefs.lay)}
+        {row('hatch', '🐣 부화 예정', '3일 전과 당일 아침', prefs.hatch)}
         {row('feed', '🍽️ 밥 주는 날', '그날 아침', prefs.feed)}
       </div>
       <div style={{display:'flex', gap:8, marginTop:12}}>
@@ -1796,10 +1797,172 @@ function sibParents(text, c) {
 }
 
 
+/* ══════════════════════════════════════════
+   v1.9.44 산란 체크표 — 사용자 건의(2026-11-03 오픈채팅)를 대표님이 정리하신 것
+   "이번 산란 예정 차수만 모아서 체크리스트로 — 옆에 체크하면 빠지게, 체크한 날로 얼마나 늦었는지도"
+   ★ 체크 상태를 따로 저장하지 않습니다. [낳았어요] = 산란 기록(recordLaying) 한 줄.
+     그래서 대화로 "크안이 알 낳았어"라고 적어도 똑같이 빠지고, 캘린더·부화 예정·다음 차수·동기화가 전부 이어집니다.
+   ★ 예정일·늦은 날수는 recordLaying → layExpected 가 기록 안에 남깁니다(expectedDate · diffDays).
+   ★ 알림은 예정일 뒤 6~13일 조용히 있지만, 체크표는 숨기지 않습니다 — 겨울에 늦는 아이를 보려고 만든 것이니까요.
+   ══════════════════════════════════════════ */
+const LC_KEEP = 7;                     // 낳은 줄을 아래에 며칠 남겨 둘지
+const lcMD = (d) => (d ? +d.slice(5, 7) + '/' + +d.slice(8, 10) : '');
+const lcWhen = (late) => late < -2 ? `${-late}일 뒤` : late === -2 ? '모레' : late === -1 ? '내일' : late === 0 ? '오늘' : `${late}일 지남`;
+/* 체크표 한 벌 — 화면과 시험이 같이 씁니다 */
+function layCheckData(inds, evs) {
+  const list = inds || DB.getIndividuals(), all = evs || DB.getEvents();
+  const fcs = layingForecasts(list, all);
+  const due = fcs.filter(f => !f.seasonEnded && f.late >= -LAYCHK_AHEAD).sort((a, b) => b.late - a.late || (a.name > b.name ? 1 : -1));
+  const soon = fcs.filter(f => !f.seasonEnded && f.late < -LAYCHK_AHEAD).sort((a, b) => (a.eta > b.eta ? 1 : -1));
+  const rest = fcs.filter(f => f.seasonEnded);
+  const from = addDaysISO(todayStr(), -(LC_KEEP - 1));
+  const here = {}; list.forEach(i => { if (isHere(i)) here[i.id] = i; });
+  const rows = clutchRows(list, all);
+  const done = all.filter(e => e.type === 'laying' && e.date >= from && e.date <= todayStr() && here[e.individualId])
+    .sort((a, b) => (a.date < b.date ? 1 : -1))
+    .map(e => {
+      const r = rows.find(x => x.e.id === e.id) || {};
+      const d = e.data || {};
+      return { id: e.id, indId: e.individualId, name: here[e.individualId].name, dadName: d.sireName || r.dadName || '', nth: r.nth, date: e.date, diffDays: d.diffDays, eggs: d.eggCount };
+    });
+  return { due, done, soon, rest };
+}
+(function lcCss() {
+  try {
+    if (document.getElementById('cg-lc-css')) return;
+    const st = document.createElement('style');
+    st.id = 'cg-lc-css';
+    st.textContent = `.lc { margin: 0 0 12px; padding: 12px 12px 6px; border: 1.5px solid var(--accent-edge); }
+.lc-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.lc-top b { font-size: 15px; color: var(--text); } .lc-top span { font-size: 11.5px; color: var(--text3); }
+.lc-row { display: flex; align-items: center; gap: 9px; padding: 10px 0; border-top: 1px solid var(--border); }
+.lc-row:first-of-type { border-top: none; }
+.lc-box { width: 26px; height: 26px; flex-shrink: 0; border-radius: 7px; border: 2px solid var(--accent-dim); background: var(--card); cursor: pointer; padding: 0; font-size: 15px; line-height: 1; color: var(--on-accent); }
+.lc-box.on { background: var(--accent); border-color: var(--accent); }
+.lc-main { flex: 1; min-width: 0; }
+.lc-name { font-size: 14.5px; font-weight: 800; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lc-name i { font-style: normal; font-weight: 500; font-size: 12px; color: var(--text3); }
+.lc-sub { font-size: 12px; color: var(--text2); margin-top: 2px; }
+.lc-when { font-size: 12.5px; font-weight: 800; white-space: nowrap; }
+.lc-go { flex-shrink: 0; border: none; border-radius: 10px; background: var(--accent); color: var(--on-accent); font-size: 13px; font-weight: 800; padding: 8px 10px; cursor: pointer; }
+.lc-ask { display: inline-block; margin-top: 4px; border: none; background: none; padding: 0; font-size: 11.5px; font-weight: 700; color: var(--accent2); text-decoration: underline; cursor: pointer; }
+.lc-sec { font-size: 11.5px; font-weight: 700; color: var(--text3); padding: 8px 0 2px; border-top: 1px dashed var(--border); }
+.lc-row.done .lc-name, .lc-row.done .lc-sub { color: var(--text3); }
+.lc-fold { width: 100%; text-align: left; border: none; border-top: 1px dashed var(--border); background: none; padding: 9px 0; font-size: 12.5px; color: var(--text2); cursor: pointer; }
+.lc-fold small { display: block; color: var(--text3); font-size: 11.5px; margin-top: 3px; line-height: 1.6; }
+.lc-empty { font-size: 12.5px; color: var(--text2); padding: 8px 0 6px; }
+.lc-picks { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; }
+.lc-pick { border: 1.5px solid var(--border); background: var(--bg2); color: var(--text2); border-radius: 16px; padding: 7px 11px; font-size: 13.5px; font-weight: 700; cursor: pointer; }
+.lc-pick.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent2); }
+.lc-diff { font-size: 13px; font-weight: 700; color: var(--accent2); background: var(--accent-soft); border-radius: 10px; padding: 8px 10px; }`;
+    document.head.appendChild(st);
+  } catch (e) {}
+})();
+
+/* [낳았어요] 확인 창 — 날짜와 알 개수만 고르면 산란 기록이 됩니다 */
+function LayCheckSheet({ f, onClose, onSaved }) {
+  const t = todayStr();
+  const [date, setDate] = useState(t);
+  const [eggs, setEggs] = useState('2');
+  const [err, setErr] = useState('');
+  const diff = daysBetween(f.eta, date);
+  const dayBtns = [[t, '오늘'], [addDaysISO(t, -1), '어제'], [addDaysISO(t, -2), '그저께']];
+  const save = () => {
+    if (!date) return setErr('날짜를 골라 주세요');
+    if (date > t) return setErr('아직 오지 않은 날짜예요');
+    const n = parseInt(eggs || '0', 10) || 0;
+    if (eggs && (n < 1 || n > 20)) return setErr('알 개수는 1~20개로 적어 주세요');
+    const sire = f.dadId && DB.getIndividuals().some(i => i.id === f.dadId) ? { sireId: f.dadId } : (f.dadName ? { sireName: f.dadName } : {});
+    recordLaying({ momId: f.indId, date, eggCount: n, ...sire });
+    onSaved(`🥚 ${f.name} ${f.nth}차 산란 기록 · ${diffPhrase(diff)}`);
+  };
+  return (
+    <div className="pe-bg" onClick={onClose} data-testid="lc-sheet">
+      <div className="pe-sheet" onClick={e => e.stopPropagation()}>
+        <div className="pe-head"><b>🥚 {f.pairName} {f.nth}차 산란</b><button onClick={onClose} aria-label="닫기">×</button></div>
+        <div className="pe-body">
+          <div style={{fontSize:13, color:'var(--text2)'}}>예정일 {lcMD(f.eta)} · {f.basis}</div>
+          <div className="pe-row"><span>낳은 날</span>
+            <div className="lc-picks">
+              {dayBtns.map(([d, l]) => <button key={d} className={'lc-pick' + (date === d ? ' on' : '')} onClick={() => setDate(d)}>{l}</button>)}
+              <input className="input" type="date" value={date} max={t} onChange={e => setDate(e.target.value)} style={{flex:'1 1 130px', minWidth:0, padding:'7px 9px', fontSize:14}} data-testid="lc-date" />
+            </div>
+          </div>
+          <div className="pe-row"><span>알 개수</span>
+            <div className="lc-picks">
+              {['1', '2'].map(n => <button key={n} className={'lc-pick' + (eggs === n ? ' on' : '')} onClick={() => setEggs(n)} data-testid={'lc-eggs-' + n}>{n}개</button>)}
+              <input className="input" type="number" min="1" max="20" inputMode="numeric" value={eggs === '1' || eggs === '2' ? '' : eggs} placeholder="직접" onChange={e => setEggs(e.target.value)} style={{width:72, flex:'0 0 72px', padding:'7px 9px', fontSize:14}} />
+            </div>
+          </div>
+          {date && <div className="lc-diff" data-testid="lc-diff">🎯 {diffPhrase(diff)}</div>}
+          {err && <div style={{fontSize:12, color:'var(--danger)'}}>{err}</div>}
+        </div>
+        <div className="pe-foot">
+          <button className="btn btn-secondary" onClick={onClose}>취소</button>
+          <button className="btn btn-primary" onClick={save} data-testid="lc-save">기록하기</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* 산란 탭 맨 위 체크표 */
+function LayCheck({ navigate, showToast, onSaved }) {
+  const [open, setOpen] = useState(null);       // 확인 창을 연 예정(f)
+  const [fold, setFold] = useState('');         // 'soon' | 'rest'
+  const [, bump] = useState(0);
+  const { due, done, soon, rest } = layCheckData();
+  if (!due.length && !done.length && !soon.length) return null;
+  const goProfile = (id) => { const g = DB.getIndividuals().find(i => i.id === id); if (g) navigate('profile', { gecko: g }); };
+  const tone = (late) => late >= LAY_LATE_WARN ? 'var(--danger)' : late > 0 ? 'var(--warning)' : late === 0 ? 'var(--accent2)' : 'var(--text3)';
+  return (
+    <div className="card lc" data-testid="lay-check">
+      <div className="lc-top"><b>📋 산란 체크표</b><span>예정 {LAYCHK_AHEAD}일 전부터 · 낳으면 체크</span></div>
+      {!due.length && <div className="lc-empty">지금 체크할 아이는 없어요{soon[0] ? ` · 다음은 ${soon[0].name} ${lcMD(soon[0].eta)}` : ''}</div>}
+      {due.map(f => (
+        <div className="lc-row" key={f.indId} data-testid="lc-due">
+          <button className="lc-box" aria-label={`${f.name} 낳았어요`} onClick={() => setOpen(f)} />
+          <div className="lc-main">
+            <div className="lc-name">{f.name}{f.dadName && <i> × {f.dadName}</i>}</div>
+            <div className="lc-sub">{f.nth}차 · {lcMD(f.eta)} 예정 · <b className="lc-when" style={{color: tone(f.late)}}>{lcWhen(f.late)}</b></div>
+            {f.late >= LAY_LATE_WARN && <button className="lc-ask" onClick={() => goProfile(f.indId)}>🌙 시즌이 끝났나요? 상태 알려 주기</button>}
+          </div>
+          <button className="lc-go" onClick={() => setOpen(f)} data-testid="lc-go">낳았어요</button>
+        </div>
+      ))}
+      {done.length > 0 && <div className="lc-sec">이번에 낳은 아이</div>}
+      {done.map(d => (
+        <div className="lc-row done" key={d.id} data-testid="lc-done">
+          <span className="lc-box on" aria-hidden="true" style={{display:'flex', alignItems:'center', justifyContent:'center'}}>✓</span>
+          <div className="lc-main">
+            <div className="lc-name">{d.name}{d.dadName && <i> × {d.dadName}</i>}</div>
+            <div className="lc-sub">{d.nth ? `${d.nth}차 · ` : ''}{lcMD(d.date)} 낳음{d.eggs ? ` · 알 ${d.eggs}개` : ''}{d.diffDays !== undefined ? ` · ${diffPhrase(d.diffDays)}` : ''}</div>
+          </div>
+        </div>
+      ))}
+      {soon.length > 0 && (
+        <button className="lc-fold" onClick={() => setFold(fold === 'soon' ? '' : 'soon')}>
+          {fold === 'soon' ? '▾' : '▸'} 다가오는 예정 {soon.length}마리
+          {fold === 'soon' && <small>{soon.map(f => `${f.name} ${f.nth}차 ${lcMD(f.eta)}`).join(' · ')}</small>}
+        </button>
+      )}
+      {rest.length > 0 && (
+        <button className="lc-fold" onClick={() => setFold(fold === 'rest' ? '' : 'rest')}>
+          {fold === 'rest' ? '▾' : '▸'} 시즌 쉬는 아이 {rest.length}마리
+          {fold === 'rest' && <small>{rest.map(f => f.name).join(' · ')} — 다시 낳으면 저절로 체크표에 돌아와요</small>}
+        </button>
+      )}
+      {open && <LayCheckSheet f={open} onClose={() => setOpen(null)}
+        onSaved={(m) => { setOpen(null); bump(v => v + 1); showToast && showToast(m); onSaved && onSaved(); }} />}
+    </div>
+  );
+}
+
+
 window.CREG_EXTRAS = {
-  SeasonNoteSheet, BirthdayPopup, DupMergeCard, FeedbackCard, FeedbackInbox, fbPayload, FB_PICKS, morphFill, mfList, mfIntro, MF, TrackCard, StorageCard, PushCard, SyncCard, followUp, fuPrice, fuWho, FU, sibParents, sibGroupOf, sibParentsPlan, SIB_PAR_RE, SIB_MORE_RE, SIB, BDAY_LINES, bdayPick, SaleCardSheet, AdoptSendSheet, AdoptReceive, AddGeckoSheet, chat,
+  SeasonNoteSheet, BirthdayPopup, DupMergeCard, FeedbackCard, FeedbackInbox, fbPayload, FB_PICKS, morphFill, mfList, mfIntro, MF, TrackCard, StorageCard, PushCard, SyncCard, followUp, fuPrice, fuWho, FU, sibParents, sibGroupOf, sibParentsPlan, SIB_PAR_RE, SIB_MORE_RE, SIB, BDAY_LINES, bdayPick, SaleCardSheet, AdoptSendSheet, AdoptReceive, AddGeckoSheet, chat, LayCheck,
   // 시험(node)에서 쓰는 순수 함수들
   seasonYears, seasonNoteStats, seasonSummaryText, saveSeasonNote, toggleTrait, SEASON_TRAITS, SEASON_DIRS,
-  adoptSnapshot, adoptMemos, adoptImport, adoptCounts, looksPrivate, ADOPT, ADOPT_KINDS, ADOPT_NEVER, saleCardData,
+  layCheckData, adoptSnapshot, adoptMemos, adoptImport, adoptCounts, looksPrivate, ADOPT, ADOPT_KINDS, ADOPT_NEVER, saleCardData,
 };
 })();
