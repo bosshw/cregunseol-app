@@ -660,7 +660,7 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.48';
+const APP_VERSION = '1.9.49';
 const APP_PATCHED = '2026-10-31';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -1705,6 +1705,14 @@ function hatchLearn(samples) {
    ★ 부화 예정일은 저장하지 않고 "늘 지금 온도로" 다시 계산합니다.
      그래서 설정에서 인큐 온도를 바꾸면 산란기록·알림·캘린더가 한꺼번에 따라 바뀝니다.
    결과는 산란일 오래된 순입니다(몇 차인지 세려면 이 순서여야 합니다). */
+/* v1.9.49 이름으로만 적힌 아빠(엑셀 가져오기 등)를 등록된 수컷과 잇습니다 — 같은 이름이 딱 하나일 때만(대표님 2026-11-03 제보 "안1호")
+   ★ 아빠를 찾는 곳마다 아이디만 보던 것이 같은 종류의 오류를 냈습니다. 찾는 곳은 전부 이 함수를 거칩니다. */
+function sireByName(name, inds) {
+  const n = String(name || '').trim();
+  if (!n) return null;
+  const hit = (inds || DB.getIndividuals()).filter(i => i.name === n && i.gender !== 'female');
+  return hit.length === 1 ? hit[0] : null;
+}
 function clutchRows(individuals, events) {
   const inds = individuals || DB.getIndividuals();
   const evs = events || DB.getEvents();
@@ -1783,9 +1791,11 @@ function clutchRows(individuals, events) {
     const mom = byId[e.individualId] || null;
     const momName = mom ? mom.name : '(삭제된 개체)';
     const m = matings.find(x => x.individualId === e.individualId && x.date <= e.date);
-    const dadId = (e.data && e.data.sireId) || (m && m.data && m.data.partnerId) || null;
-    const dad = byId[dadId] || null;
-    const dadName = (dad && dad.name) || (e.data && e.data.sireName) || (m && m.data && m.data.partnerName) || null;
+    const dadId0 = (e.data && e.data.sireId) || (m && m.data && m.data.partnerId) || null;
+    const dadTxt = (e.data && e.data.sireName) || (m && m.data && m.data.partnerName) || '';
+    const dad = byId[dadId0] || (!dadId0 && dadTxt ? sireByName(dadTxt, inds) : null);
+    const dadId = dad ? dad.id : dadId0;
+    const dadName = (dad && dad.name) || dadTxt || null;
     const pairKey = e.individualId + '|' + (dadName || '?');
     seq[pairKey] = (seq[pairKey] || 0) + 1;
     const nth = seq[pairKey];
@@ -1972,7 +1982,7 @@ function layingForecasts(individuals, events) {
     const dadName = (lastMate && lastMate.data && lastMate.data.partnerName)
       || ((byId[(lastMate && lastMate.data && lastMate.data.partnerId)] || {}).name)
       || ((byId[lastLayD.sireId] || {}).name) || lastLayD.sireName || null;
-    const dadId = (lastMate && lastMate.data && lastMate.data.partnerId) || lastLayD.sireId || null;
+    const dadId = (lastMate && lastMate.data && lastMate.data.partnerId) || lastLayD.sireId || ((sireByName(dadName, inds) || {}).id) || null;
     const pairKey = i.id + '|' + (dadName || '?');
     const nth = rows.filter(r => r.pairKey === pairKey).length + 1;
     const late = -daysUntil(eta);
@@ -3430,7 +3440,7 @@ function hatchBabyPlan(f, all) {
   let dadId = d.sireId || (row && row.dadId) || (lay && lay.data.sireId) || (mate && mate.data.partnerId) || null;
   const dadName = (row && row.dadName) || (lay && lay.data.sireName) || (mate && mate.data.partnerName) || '';
   if (!all.some(i => i.id === dadId)) dadId = null;
-  if (!dadId && dadName) { const hit = all.find(i => i.name === dadName && i.gender !== 'female'); if (hit) dadId = hit.id; }
+  if (!dadId && dadName) { const hit = sireByName(dadName, all); if (hit) dadId = hit.id; }
   const dad = all.find(i => i.id === dadId);
   const count = parseInt(d.count || '0', 10) || (d.babyNames || []).length;
   const names = d.babyNames && d.babyNames.length ? d.babyNames : makeBabyNames(mom ? mom.name : '', dad ? dad.name : dadName, count, all.map(i => i.name));
@@ -6017,7 +6027,7 @@ function recordLaying(o) {
   const date = o.date || todayStr();
   const data = { eggCount: parseInt(o.eggCount || 0, 10) || undefined, notes: (o.notes || '').trim() };
   if (o.sireId) { const s = DB.getIndividuals().find(i => i.id === o.sireId); data.sireId = o.sireId; data.sireName = s ? s.name : ''; }
-  else if ((o.sireName || '').trim()) data.sireName = o.sireName.trim();
+  else if ((o.sireName || '').trim()) { data.sireName = o.sireName.trim(); const s = sireByName(data.sireName); if (s) data.sireId = s.id; }
   else {
     const mate = DB.getEventsFor(o.momId)
       .filter(e => e.type === 'mating' && e.date <= date && e.data && e.data.partnerId)
@@ -6282,8 +6292,9 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals, back,
   const otherClutches = allRows.filter(r => r.e.individualId === ev.individualId && r.e.id !== layingId);
   const mate = evs.filter(e => e.type === 'mating' && e.individualId === ev.individualId && e.date <= ev.date)
     .sort((a, b) => (a.date < b.date ? 1 : -1))[0];
-  const dadId = (ev.data && ev.data.sireId) || (mate && mate.data && mate.data.partnerId) || null;
-  const dad = inds.find(i => i.id === dadId) || null;
+  const dadId0 = (ev.data && ev.data.sireId) || (mate && mate.data && mate.data.partnerId) || null;
+  const dad = inds.find(i => i.id === dadId0) || (!dadId0 ? sireByName((ev.data && ev.data.sireName) || (mate && mate.data && mate.data.partnerName), inds) : null);
+  const dadId = dad ? dad.id : dadId0;
   // v1.9.15 산란 기록에 직접 적힌 아빠 이름(sireName)도 봅니다 — 등록 안 된 남의 집 수컷이면 이것뿐입니다
   const dadName = (dad && dad.name) || (ev.data && ev.data.sireName) || (mate && mate.data && mate.data.partnerName) || '';
 
@@ -6352,9 +6363,11 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals, back,
     let made = 0;
     {
       const names = makeBabyNames(mom ? mom.name : '', dadName, n, all.map(i => i.name));
-      names.slice(0, n).forEach(nm => {
+      const parts = mo.split(/\s*[,，、/]\s*/).filter(Boolean);   // v1.9.49 "릴리, 할리퀸"처럼 마릿수만큼 나뉘면 아기별로
+      names.slice(0, n).forEach((nm, k) => {
+        const m1 = n > 1 && parts.length === n ? parts[k] : mo;
         DB.addIndividual({
-          name: nm, gender: 'unknown', morph: mo, morphUnknown: !mo, hatchDate: date,
+          name: nm, gender: 'unknown', morph: m1, morphUnknown: !m1, hatchDate: date,
           isFromCreGunseol: true, status: 'own', sireId: dadId, damId: ev.individualId,
           shareCode: newShareCode(),
         });
@@ -6671,7 +6684,7 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals, back,
 
             {/* 모프 — 갓 나온 아이는 색이 안 잡혀 있으니 '아직 모르겠어요'를 눌러 비워둘 수 있습니다 */}
             <div style={{fontSize:11, color:'var(--text3)', margin:'8px 2px 4px'}}>모프</div>
-            <input className="input" placeholder="예) 릴리화이트 · 할리퀸 · 50헷초초"
+            <input className="input" placeholder={parseInt(count || eggs || 1, 10) > 1 ? '같으면 하나 · 다르면 쉼표로 예) 릴리, 할리퀸' : '예) 릴리화이트'}
               value={morph} disabled={morphUnknown}
               style={morphUnknown ? {opacity:.5} : undefined}
               onChange={e => setMorph(e.target.value)} />
@@ -8225,6 +8238,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       const f = value.count ? { ...value.fact, data: { ...value.fact.data, eggCount: Number(value.count) } } : value.fact;
       pushPending([f], { name: value.fact.targetName });
     } else if (kind === 'reply' && value) {   // v1.9.47 이어 묻기의 [모름] 같은 대답 칩
+      if (!fuRef.current) { bot('그 질문은 이미 지나갔어요 🙂'); return; }   // v1.9.49 지난 말풍선의 칩을 눌러도 엉뚱한 기록이 생기지 않게
       addMsg({ role: 'user', text: value });
       setTimeout(() => process(value), 120);
     } else if (kind === 'memo-skip') {
