@@ -78,15 +78,20 @@ const vapidOf = (k: Keys) => ({ subject: SUBJECT, publicKey: k.vapid_public, pri
 /* 한국 날짜 — 서버는 세계표준시로 돌기 때문에 아홉 시간을 더해서 봅니다 */
 const todayKST = () => new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
 
-type Row = { endpoint: string; user_id: string; p256dh: string; auth: string; hatch: boolean; feed: boolean };
-type Item = { d: string; k: 'hatch' | 'feed'; t: string; b?: string };
+type Row = { endpoint: string; user_id: string; p256dh: string; auth: string; hatch: boolean; feed: boolean; lay?: boolean };
+type Item = { d: string; k: 'hatch' | 'feed' | 'lay'; t: string; b?: string };
+/* 눌렀을 때 열 화면 — 산란 예정(v1.9.44)은 산란 체크표 */
+const GO: Record<string, string> = { feed: 'feeding', lay: 'laying', hatch: 'reminders' };
+/* 이 기기가 받기로 한 종류인가 — 산란 칸이 없던 옛 줄(null)은 받는 것으로 봅니다 */
+const wants = (s: Row, k: string) => (k === 'feed' ? s.feed : k === 'lay' ? s.lay !== false : s.hatch);
 
 /* 여러 건이면 한 통으로 묶습니다 — 알림이 여러 개 쌓이지 않게 */
 function compose(items: Item[], tag: string) {
   if (items.length === 1) {
-    return { t: items[0].t, b: items[0].b || '', u: items[0].k === 'feed' ? 'feeding' : 'reminders', g: tag };
+    return { t: items[0].t, b: items[0].b || '', u: GO[items[0].k] || 'reminders', g: tag };
   }
-  return { t: `오늘 챙길 것 ${items.length}가지`, b: items.map(i => '· ' + i.t).join('\n'), u: 'reminders', g: tag };
+  const same = items.every(i => i.k === items[0].k);
+  return { t: `오늘 챙길 것 ${items.length}가지`, b: items.map(i => '· ' + i.t).join('\n'), u: same ? (GO[items[0].k] || 'reminders') : 'reminders', g: tag };
 }
 
 async function deliver(subs: Row[], k: Keys, payloadFor: (s: Row) => unknown | null) {
@@ -125,7 +130,7 @@ Deno.serve(async (req) => {
       const today = todayKST();
       const tag = 'cg-daily-' + today;
       const plans: { user_id: string; plan: Item[] }[] = await db('cg_push_plan?select=user_id,plan');
-      const subs: Row[] = await db('cg_push_subs?select=endpoint,user_id,p256dh,auth,hatch,feed');
+      const subs: Row[] = await db('cg_push_subs?select=endpoint,user_id,p256dh,auth,hatch,feed,lay');
 
       const byUser: Record<string, Row[]> = {};
       subs.forEach(s => (byUser[s.user_id] = byUser[s.user_id] || []).push(s));
@@ -138,7 +143,7 @@ Deno.serve(async (req) => {
         if (!dueToday.length) continue;
         users++;
         const r = await deliver(mine, k, (s) => {
-          const on = dueToday.filter(i => (i.k === 'feed' ? s.feed : s.hatch));
+          const on = dueToday.filter(i => wants(s, i.k));
           return on.length ? compose(on, tag) : null;
         });
         sent += r.sent; removed += r.removed;
