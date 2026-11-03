@@ -74,3 +74,9 @@ test("hatch checklist mirrors the laying one; menu order 축양·해칭·산란�
   assert.match(app, /<Extra part="HatchCheck" navigate=\{navigate\}/);
   assert.match(app, /\[\['own','🏠 축양'\],\['hatch','🐣 해칭'\],\['laying','🥚 산란'\],\['mating','💞 메이팅'\]\]/);
 });
+
+test("'just laid / just hatched' rows fold behind an arrow; one hatch row per clutch per day", () => {
+  assert.match(ex, /<DoneHead label="이번에 낳은 아이"/); assert.match(ex, /<DoneHead label="이번에 나온 아이"/);
+  assert.match(ex, /\{dOpen && done\.map\(/);
+  assert.match(ex, /const k = r\.e\.id \+ '\|' \+ h\.date;/);
+});
