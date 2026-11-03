@@ -31,7 +31,7 @@ test("chat turns it into the mother's 1-baby hatching and does not touch the mot
   assert.match(blk, /!names\.length && facts\.find\(f => f\.type === 'hatching'\)/);
   assert.match(blk, /count: '1', babyNames: \[sib\.name\], sireId: sib\.dad && sib\.dad\.id/);
   assert.match(blk, /\(엄마\)\$\{sib\.dad \? ' × ' \+ sib\.dad\.name \+ '\(아빠\)' : ''\}/, "엄마·아빠를 둘 다 말합니다");
-  assert.match(app, /const dadId = f\.data\.sireId \|\| \(lay && lay\.data\.sireId\)/, "저장 때 형제들 아빠");
+  assert.match(app, /let dadId = d\.sireId \|\| \(row && row\.dadId\)/, "저장 때 형제들 아빠(담을 때 정한 아빠가 먼저)");
   assert.match(blk, /target = sib\.mom; setTarget\(sib\.mom\); newSubject = null;/);
   assert.match(app, /if \(!sib\) \{   \/\/ v1\.9\.36[^\n]*\n\s*const cur = DB\.getIndividuals\(\)\.find\(i => i\.id === target\.id\) \|\| target;\n\s*const plan = planProfileFix/);
   assert.match(app, /if \(hf && babyNamingMode\(\) === 'ask' && !hf\.data\.babyNames\)/, "이름을 이미 알면 다시 묻지 않음");

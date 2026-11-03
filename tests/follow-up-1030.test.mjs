@@ -34,7 +34,7 @@ test("questions per record and where answers go", () => {
   assert.match(b, /얼마에 데려오셨나요\?/); assert.match(b, /어디서\(누구에게서\) 데려오셨나요\?/);
   assert.match(b, /setAdoptMemo\(ind\.id, v\.source, v\.price\)/);
   assert.match(b, /data: \{ \.\.\.m\.data, dated: true \}/, "가계부 그 달 '개체 구입'");
-  assert.match(b, /모프는 무엇인가요\?/); assert.match(b, /c\.patch\(f, \{ morph: t \}\)/);
+  assert.match(b, /모프는 무엇인가요\?/); assert.match(b, /c\.patch\(f, \{ morph: t, morphs: undefined \}\)/);
   const f = ex.slice(ex.indexOf("function followUp("), ex.indexOf("function followUp(") + 800);
   assert.match(f, /if \(r == null\) \{ FU\.q = \[\]; fuNext\(\); return 'pass'; \}/, "다른 이야기면 멈추고 평소대로");
 });
