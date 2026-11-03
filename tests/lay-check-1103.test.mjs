@@ -26,7 +26,7 @@ test("checking = a real laying record (no separate check store)", () => {
 
 test("laying tab shows the checklist and the chip shows how many to check", () => {
   assert.match(app, /<Extra part="LayCheck" navigate=\{navigate\}/);
-  assert.match(app, /k === 'laying' && layDueN > 0 && <span className="lc-badge">/);
+  assert.match(app, /\(k === 'laying' \? layDueN : k === 'hatch' \? hatchDueN : 0\) > 0 && <span className="lc-badge">/);
   assert.match(ex, /AddGeckoSheet, chat, LayCheck,/);
 });
 
@@ -64,4 +64,13 @@ test("winter laying push also 3 days after the due date", () => {
   assert.match(p, /const post = addDaysISO\(f\.eta, PUSH_AHEAD\);/);
   assert.match(p, /if \(layWarnDays\(f\.eta\) === LAY_LATE_WARN_WINTER && post >= today && post <= until\)/);
   assert.match(p, /산란 예정일이 3일 지났어요 🥚/);
+});
+
+test("hatch checklist mirrors the laying one; menu order 축양·해칭·산란·메이팅", () => {
+  const h = ex.slice(ex.indexOf("function hatchCheckData("), ex.lastIndexOf("window.CREG_EXTRAS"));
+  assert.match(h, /r\.waiting && r\.nPending > 0 && r\.d <= LAYCHK_AHEAD/);
+  assert.match(h, /<EggHatchSheet layingId=\{open\.layingId\} egg=\{open\.egg\}/, "알둥지 화면과 같은 부화 기록 길");
+  assert.match(h, /data-testid="hc-go">해칭<\/button>/);
+  assert.match(app, /<Extra part="HatchCheck" navigate=\{navigate\}/);
+  assert.match(app, /\[\['own','🏠 축양'\],\['hatch','🐣 해칭'\],\['laying','🥚 산란'\],\['mating','💞 메이팅'\]\]/);
 });
