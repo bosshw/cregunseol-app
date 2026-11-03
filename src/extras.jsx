@@ -1405,7 +1405,7 @@ const fuWho = (t) => {
 };
 const fuWon = (p) => p.free ? '무료' : wonText(p.won);
 function fuBuild(job, c) {
-  const Q = [], add = (g, ask, take) => { Q.push({ g, ask: (Q.some(x => x.g === g) ? '' : g.intro + '\n') + ask, take }); };
+  const Q = [], add = (g, ask, take, chips) => { Q.push({ g, ask: (Q.some(x => x.g === g) ? '' : g.intro + '\n') + ask, take, chips }); };
   (job.facts || []).forEach(f => {
     const d = f.data || {}, nm = f.targetName || '';
     if (f.type === 'distribution') {
@@ -1417,7 +1417,14 @@ function fuBuild(job, c) {
     if (f.type === 'hatching' && Number(d.count) > 0 && !String(d.morph || '').trim() && (babyNamingMode() !== 'ask' || (d.babyNames || []).length)) {
       const who = (d.babyNames || []).length ? d.babyNames.join(', ') : `아기들(${d.count}마리)`;
       const g = { got: [], intro: `🐣 축하드려요!`, end: () => c.bot(`✅ 모프 "${g.got[0]}"로 담았어요. 저장하면 ${who} 프로필에 들어가요.`) };
-      add(g, `${who} 모프는 무엇인가요? (모르면 "모름")`, t => { if (t.length > 30 || /\n/.test(t) || FU_NOT.test(t)) return null; c.patch(f, { morph: t }); return t; });
+      const n = Number(d.count);
+      /* v1.9.47 아기마다 모프가 다르면 쉼표로 — 마릿수만큼 나뉘면 아기별로 담습니다. [모름] 칩으로 바로 넘어갈 수 있게 */
+      add(g, `${who} 모프는 무엇인가요?${n > 1 ? `\n서로 다르면 쉼표로 나눠 주세요. 예) 릴리화이트, 할리퀸` : ''}\n(모르면 "모름" — 저장 화면에서 아기마다 적을 수 있어요)`, t => {
+        if (t.length > 60 || /\n/.test(t) || FU_NOT.test(t)) return null;
+        const parts = t.split(/\s*[,，、/]\s*/).filter(Boolean);
+        if (n > 1 && parts.length === n) { c.patch(f, { morph: '', morphs: parts }); return parts.join(' / '); }
+        c.patch(f, { morph: t, morphs: undefined }); return t;
+      }, [{ label: '🤷 모름 (나중에)', kind: 'reply', value: '모름' }]);
     }
   });
   if (job.adopt) {
@@ -1443,7 +1450,7 @@ function fuNext() {
   const q = FU.q[0], c = FU.ctx;
   if (FU.g && (!q || q.g !== FU.g)) { if (FU.g.got.length) FU.g.end(); FU.g = null; }
   if (!q) return false;
-  FU.g = q.g; c.bot(q.ask);
+  FU.g = q.g; c.bot(q.ask, q.chips);
   return true;
 }
 function followUp(text, job, ctx) {

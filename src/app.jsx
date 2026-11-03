@@ -660,7 +660,7 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.46';
+const APP_VERSION = '1.9.47';
 const APP_PATCHED = '2026-10-31';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -3417,6 +3417,26 @@ const nameCore = (n) => {
   if (s.length > 1 && s.endsWith('이')) s = s.slice(0, -1);
   return s.length ? s[s.length - 1] : '';
 };
+/* v1.9.47 대화로 담은 부화의 아빠·아기 이름·아기별 모프 — 확인 화면 미리보기와 저장이 같은 답을 씁니다 (대표님 2026-11-03 제보)
+   ★ 아빠는 "그 알둥지(클러치)의 아빠"가 먼저입니다. 예전엔 아이디로 적힌 아빠만 찾아서,
+     이름으로만 적힌 아빠(엑셀 가져오기·남의 아이)면 아빠 없이 "안1호"가 됐습니다(형제는 "안울1호"). */
+function hatchBabyPlan(f, all) {
+  all = all || DB.getIndividuals();
+  const d = f.data || {}, mom = all.find(i => i.id === f.targetId);
+  const row = d.layingId ? clutchRows().find(c => c.e.id === d.layingId) : null;
+  const evs = DB.getEventsFor(f.targetId).sort((a, b) => (b.date > a.date ? 1 : -1));
+  const lay = evs.find(e => e.type === 'laying' && e.data && (e.data.sireId || e.data.sireName));
+  const mate = evs.find(e => e.type === 'mating' && e.data && (e.data.partnerId || e.data.partnerName));
+  let dadId = d.sireId || (row && row.dadId) || (lay && lay.data.sireId) || (mate && mate.data.partnerId) || null;
+  const dadName = (row && row.dadName) || (lay && lay.data.sireName) || (mate && mate.data.partnerName) || '';
+  if (!all.some(i => i.id === dadId)) dadId = null;
+  if (!dadId && dadName) { const hit = all.find(i => i.name === dadName && i.gender !== 'female'); if (hit) dadId = hit.id; }
+  const dad = all.find(i => i.id === dadId);
+  const count = parseInt(d.count || '0', 10) || (d.babyNames || []).length;
+  const names = d.babyNames && d.babyNames.length ? d.babyNames : makeBabyNames(mom ? mom.name : '', dad ? dad.name : dadName, count, all.map(i => i.name));
+  const morphOf = (k) => String((Array.isArray(d.morphs) ? d.morphs[k] : d.morph) || '').trim();
+  return { dadId, count, names: names.slice(0, count), morphOf };
+}
 function makeBabyNames(momName, dadName, count, existingNames) {
   const base = (nameCore(momName) + nameCore(dadName)) || '베이비';
   const names = [];
@@ -4346,8 +4366,12 @@ function nameFixPlan(individuals) {
     // 형제들이 가장 많이 쓰는 접두어를 기준으로 삼습니다
     const cnt = {};
     parsed.forEach(x => { cnt[x.p.prefix] = (cnt[x.p.prefix] || 0) + 1; });
-    const ranked = Object.entries(cnt).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    /* v1.9.47 수가 같으면 먼저 태어난 형제들의 이름이 기준입니다 — 예전엔 가나다순이라 새로 잘못 지어진 "안1호" 쪽으로 기존 "안울1호"를 바꾸자고 했습니다 */
+    const first = {};
+    parsed.forEach(x => { const h = x.i.hatchDate || '9999'; if (!first[x.p.prefix] || h < first[x.p.prefix]) first[x.p.prefix] = h; });
+    const ranked = Object.entries(cnt).sort((a, b) => b[1] - a[1] || first[a[0]].localeCompare(first[b[0]]) || a[0].localeCompare(b[0]));
     const main = ranked[0][0];
+    const sp = parsed.filter(x => x.p.prefix === main && /\s\d+\s*호$/.test(x.i.name)).length * 2 > ranked[0][1] ? ' ' : '';
     if (ranked[0][1] < 2) return;                       // 기준이라 할 만큼 많지 않으면 건드리지 않습니다
     const odd = parsed.filter(x => x.p.prefix !== main)
       .sort((a, b) => (a.i.hatchDate || '').localeCompare(b.i.hatchDate || '') || a.p.no - b.p.no);
@@ -4357,7 +4381,7 @@ function nameFixPlan(individuals) {
     let next = 1;
     odd.forEach(x => {
       while (used.has(next) || taken.has(`${main} ${next}호`) || taken.has(`${main}${next}호`)) next++;
-      const to = `${main} ${next}호`;
+      const to = `${main}${sp}${next}호`;
       used.add(next); taken.add(to);
       out.push({ id: x.i.id, from: x.i.name, to, prefix: main });
     });
@@ -8200,6 +8224,9 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       layAskRef.current = null;
       const f = value.count ? { ...value.fact, data: { ...value.fact.data, eggCount: Number(value.count) } } : value.fact;
       pushPending([f], { name: value.fact.targetName });
+    } else if (kind === 'reply' && value) {   // v1.9.47 이어 묻기의 [모름] 같은 대답 칩
+      addMsg({ role: 'user', text: value });
+      setTimeout(() => process(value), 120);
     } else if (kind === 'memo-skip') {
       hatchAskRef.current = null;
       bot('네, 기록 없이 넘어갈게요 🙂 다른 이야기 들려주세요.');
@@ -9067,19 +9094,10 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
         if (fem) reminderMsg = ' · 🔔 산란 예정 알림 설정';   // 예정일은 layingForecasts 가 계산(저장 안 함)
       }
       if (f.type === 'hatching') {
-        const named = f.data.babyNames && f.data.babyNames.length ? f.data.babyNames : null;
-        const count = parseInt(f.data.count || '0', 10) || (named ? named.length : 0);
+        const { dadId, count, names, morphOf } = hatchBabyPlan(f);   // v1.9.47 그 알둥지의 아빠 · 아기마다 모프
         if (count > 0) {
-          const all = DB.getIndividuals();
-          const mom = all.find(i => i.id === f.targetId);
-          const evs2 = DB.getEventsFor(f.targetId).sort((a, b) => b.date > a.date ? 1 : -1);
-          const lay = evs2.find(e => e.type === 'laying' && e.data && e.data.sireId);
-          const mate2 = evs2.find(e => e.type === 'mating' && e.data && e.data.partnerId);
-          const dadId = f.data.sireId || (lay && lay.data.sireId) || (mate2 && mate2.data.partnerId) || null;   // v1.9.37 형제 이름으로 담은 해칭은 형제들 아빠
-          const dad = all.find(i => i.id === dadId) || null;
-          const names = named || makeBabyNames(mom ? mom.name : '', dad ? dad.name : '', count, all.map(i => i.name));
-          const mo = (f.data.morph || '').trim();
-          names.slice(0, count).forEach(nm => {
+          names.forEach((nm, k) => {
+            const mo = morphOf(k);
             DB.addIndividual({
               name: nm, gender: 'unknown', morph: mo, morphUnknown: !mo, hatchDate: f.date || todayStr(),
               isFromCreGunseol: true, status: 'own',
@@ -9268,8 +9286,18 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
           {pending.filter(f => f.type === 'hatching').map((f, i) => (
             <div key={'hm' + i} style={{margin:'0 4px 14px'}}>
               <div style={{fontSize:12, color:'var(--text2)', marginBottom:6}}>🐣 나온 아이들 모프는요? <span style={{color:'var(--text3)'}}>(모르면 비워두세요)</span></div>
-              <input className="input" placeholder="예) 릴리화이트 · 할리퀸" value={f.data.morph || ''}
-                onChange={e => { const v = e.target.value; updatePending(p => p.map(x => x === f ? { ...x, data: { ...x.data, morph: v } } : x)); }} />
+              {(() => {   /* v1.9.47 아기마다 한 칸 — 이름도 미리 보여 드립니다 */
+                const pl = hatchBabyPlan(f), n = Math.max(1, pl.names.length || 1);
+                const put = (k, v) => updatePending(p => p.map(x => x !== f ? x : { ...x, data: { ...x.data, morph: '',
+                  morphs: Array.from({ length: n }, (_, j) => (j === k ? v : pl.morphOf(j))) } }));
+                return Array.from({ length: n }, (_, k) => (
+                  <div key={k} className="pe-row" style={{marginBottom:6}}>
+                    <span style={{width:'auto', minWidth:64, fontSize:12.5}}>{pl.names[k] || '아기'}</span>
+                    <input className="input" data-testid={'hm-' + k} placeholder={k ? '모프 (다르면 적어 주세요)' : '모프 · 예) 릴리화이트'}
+                      value={pl.morphOf(k)} onChange={e => put(k, e.target.value)} />
+                  </div>
+                ));
+              })()}
               <div style={{fontSize:11, color:'var(--text3)', marginTop:5}}>
                 비워두면 <b>아직 모르겠어요</b>로 남고, 홈 목록에는 모프 줄이 뜨지 않습니다.
               </div>
