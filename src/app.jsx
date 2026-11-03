@@ -660,7 +660,7 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.44';
+const APP_VERSION = '1.9.45';
 const APP_PATCHED = '2026-10-31';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -1859,6 +1859,9 @@ function layingGaps(layDates) {
        14일~  : "시즌이 끝났는지" 여쭤봅니다 */
 const LAY_GRACE     = 5;         // 예정일에서 이만큼까지는 오차로 보고 그대로 알립니다
 const LAY_LATE_WARN = 14;        // 예정일에서 이만큼 지나면 "확인해 주세요"
+/* v1.9.44 겨울철(10월~4월 예정일)은 산란이 느려지니 3주까지 기다렸다 여쭙니다 (대표님 2026-11-03) */
+const LAY_LATE_WARN_WINTER = 21;
+const layWarnDays = (eta) => { const m = +String(eta || '').slice(5, 7); return m >= 10 || m <= 4 ? LAY_LATE_WARN_WINTER : LAY_LATE_WARN; };
 const LAY_GIVE_UP   = 365;       // 마지막 기록에서 이만큼 지나면 계산 자체를 접습니다
 const SEASON_SNOOZE = { ok: 7, trouble: 3, bad: 3 };   // 답한 뒤 며칠 쉬어갈지
 
@@ -1973,13 +1976,14 @@ function layingForecasts(individuals, events) {
     const pairKey = i.id + '|' + (dadName || '?');
     const nth = rows.filter(r => r.pairKey === pairKey).length + 1;
     const late = -daysUntil(eta);
+    const warn = layWarnDays(eta);
     const ss = seasonState(i.id, evs);
     out.push({
       indId: i.id, name: i.name, pairName: i.name + (dadName ? ' × ' + dadName : ''), dadId, dadName,
       eta, interval, basis, count: ls.length, nth, lastLay: ls.length ? ls[ls.length - 1].date : null,
       late,                                   // 예정일에서 며칠 지났나 (음수면 아직 안 옴)
-      overdue: late >= LAY_LATE_WARN,         // 확인해 달라고 할 때가 됐나
-      quiet: late > LAY_GRACE && late < LAY_LATE_WARN,   // 조용히 있을 구간 (계산은 계속합니다)
+      overdue: late >= warn,                  // 확인해 달라고 할 때가 됐나 (겨울 21일 · 그 밖 14일)
+      quiet: late > LAY_GRACE && late < warn,   // 조용히 있을 구간 (계산은 계속합니다)
       seasonEnded: ss.ended,                  // ★ 계산은 했지만 화면에는 안 보일 아이
       snoozeLeft: ss.snoozeLeft,              // 방금 확인해서 잠시 쉬는 중
       season: ss,
@@ -3141,7 +3145,7 @@ function feedSchedule(untilISO, plan) {
    보내는 것은 대표님이 고르신 세 가지뿐입니다 (2026-09-13 확정, 2026-11-03 산란 추가).
      ① 부화 예정 — 3일 전과 당일
      ② 밥 주는 날 — 그날 아침
-     ③ 산란 예정 — 3일 전과 당일 (v1.9.44)
+     ③ 산란 예정 — 3일 전과 당일, 10~4월 예정일은 3일 뒤에도 (v1.9.44~45)
    매일 아침 8시에 그날 몫을 묶어서 한 통으로 보냅니다.
 
    제약 (지키지 않으면 알림이 안 옵니다)
@@ -3185,6 +3189,10 @@ function pushPlan(individuals, events) {
     const pre = addDaysISO(f.eta, -PUSH_AHEAD);
     if (pre >= today) out.push({ d: pre, k: 'lay', t: `${t0} 산란 예정이 3일 뒤예요 🥚`, b });
     if (f.eta >= today) out.push({ d: f.eta, k: 'lay', t: `${t0} 오늘이 산란 예정일이에요 🥚`, b });
+    /* 10~4월(겨울철 예정일)은 3일 뒤에도 한 번 더 — 아직 안 낳았으면 그때도 예정이 그대로라 이 줄이 남습니다 (대표님 2026-11-03) */
+    const post = addDaysISO(f.eta, PUSH_AHEAD);
+    if (layWarnDays(f.eta) === LAY_LATE_WARN_WINTER && post >= today && post <= until)
+      out.push({ d: post, k: 'lay', t: `${t0} 산란 예정일이 3일 지났어요 🥚`, b: `${fmtDateShort(f.eta)} 예정 · 아직이면 겨울이라 늦을 수 있어요. 낳았으면 체크표에서 눌러 주세요` });
   });
 
   // ② 밥 주는 날 — 고정 요일이든 며칠 간격이든 feedSchedule 한 곳에서 나옵니다
@@ -9699,7 +9707,7 @@ function ProfileScreen({ gecko: initialGecko, navigate, showToast, refreshIndivi
       </div>
 
       {/* ── 산란 시즌 ──
-          예정일이 2주 넘게 지나면 한 번 물어보고, 답한 내용에 따라 예정일 표시를 멈춥니다.
+          예정일이 2주(10~4월은 3주) 넘게 지나면 한 번 물어보고, 답한 내용에 따라 예정일 표시를 멈춥니다.
           ★ v1.5 — 시즌을 닫은 뒤에는 여기에 아무것도 띄우지 않습니다.
             닫는 그 순간에 한 번 알려드리는 것으로 끝입니다(토스트).
             백그라운드 계산은 계속하지만 그것도 굳이 보여드리지 않습니다.

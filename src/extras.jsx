@@ -1710,7 +1710,7 @@ function PushCard({ showToast }) {
     <div>
       <div style={{fontSize:12.5, color:'#2E7D46', fontWeight:600, marginBottom:10}}>● 이 기기로 알림을 받고 있어요</div>
       <div style={{display:'flex', flexDirection:'column', gap:8}}>
-        {row('lay', '🥚 산란 예정', '3일 전과 당일 아침 · 누르면 산란 체크표', prefs.lay)}
+        {row('lay', '🥚 산란 예정', '3일 전·당일 아침 (10~4월은 3일 뒤도) · 누르면 산란 체크표', prefs.lay)}
         {row('hatch', '🐣 부화 예정', '3일 전과 당일 아침', prefs.hatch)}
         {row('feed', '🍽️ 밥 주는 날', '그날 아침', prefs.feed)}
       </div>
@@ -1800,7 +1800,7 @@ function sibParents(text, c) {
 /* ══════════════════════════════════════════
    v1.9.44 산란 체크표 — 사용자 건의(2026-11-03 오픈채팅)를 대표님이 정리하신 것
    "이번 산란 예정 차수만 모아서 체크리스트로 — 옆에 체크하면 빠지게, 체크한 날로 얼마나 늦었는지도"
-   ★ 체크 상태를 따로 저장하지 않습니다. [낳았어요] = 산란 기록(recordLaying) 한 줄.
+   ★ 체크 상태를 따로 저장하지 않습니다. [산란] = 산란 기록(recordLaying) 한 줄.
      그래서 대화로 "크안이 알 낳았어"라고 적어도 똑같이 빠지고, 캘린더·부화 예정·다음 차수·동기화가 전부 이어집니다.
    ★ 예정일·늦은 날수는 recordLaying → layExpected 가 기록 안에 남깁니다(expectedDate · diffDays).
    ★ 알림은 예정일 뒤 6~13일 조용히 있지만, 체크표는 숨기지 않습니다 — 겨울에 늦는 아이를 보려고 만든 것이니까요.
@@ -1859,7 +1859,7 @@ function layCheckData(inds, evs) {
   } catch (e) {}
 })();
 
-/* [낳았어요] 확인 창 — 날짜와 알 개수만 고르면 산란 기록이 됩니다 */
+/* [산란] 확인 창 — 날짜와 알 개수만 고르면 산란 기록이 됩니다 */
 function LayCheckSheet({ f, onClose, onSaved }) {
   const t = todayStr();
   const [date, setDate] = useState(t);
@@ -1914,20 +1914,20 @@ function LayCheck({ navigate, showToast, onSaved }) {
   const { due, done, soon, rest } = layCheckData();
   if (!due.length && !done.length && !soon.length) return null;
   const goProfile = (id) => { const g = DB.getIndividuals().find(i => i.id === id); if (g) navigate('profile', { gecko: g }); };
-  const tone = (late) => late >= LAY_LATE_WARN ? 'var(--danger)' : late > 0 ? 'var(--warning)' : late === 0 ? 'var(--accent2)' : 'var(--text3)';
+  const tone = (f) => f.overdue ? 'var(--danger)' : f.late > 0 ? 'var(--warning)' : f.late === 0 ? 'var(--accent2)' : 'var(--text3)';
   return (
     <div className="card lc" data-testid="lay-check">
-      <div className="lc-top"><b>📋 산란 체크표</b><span>예정 {LAYCHK_AHEAD}일 전부터 · 낳으면 체크</span></div>
+      <div className="lc-top"><b>📋 산란 체크표</b><span>예정 {LAYCHK_AHEAD}일 전부터 · 산란하면 체크</span></div>
       {!due.length && <div className="lc-empty">지금 체크할 아이는 없어요{soon[0] ? ` · 다음은 ${soon[0].name} ${lcMD(soon[0].eta)}` : ''}</div>}
       {due.map(f => (
         <div className="lc-row" key={f.indId} data-testid="lc-due">
-          <button className="lc-box" aria-label={`${f.name} 낳았어요`} onClick={() => setOpen(f)} />
+          <button className="lc-box" aria-label={`${f.name} 산란`} onClick={() => setOpen(f)} />
           <div className="lc-main">
             <div className="lc-name">{f.name}{f.dadName && <i> × {f.dadName}</i>}</div>
-            <div className="lc-sub">{f.nth}차 · {lcMD(f.eta)} 예정 · <b className="lc-when" style={{color: tone(f.late)}}>{lcWhen(f.late)}</b></div>
-            {f.late >= LAY_LATE_WARN && <button className="lc-ask" onClick={() => goProfile(f.indId)}>🌙 시즌이 끝났나요? 상태 알려 주기</button>}
+            <div className="lc-sub">{f.nth}차 · {lcMD(f.eta)} 예정 · <b className="lc-when" style={{color: tone(f)}}>{lcWhen(f.late)}</b></div>
+            {f.overdue && <button className="lc-ask" onClick={() => goProfile(f.indId)}>🌙 시즌이 끝났나요? 상태 알려 주기</button>}
           </div>
-          <button className="lc-go" onClick={() => setOpen(f)} data-testid="lc-go">낳았어요</button>
+          <button className="lc-go" onClick={() => setOpen(f)} data-testid="lc-go">산란</button>
         </div>
       ))}
       {done.length > 0 && <div className="lc-sec">이번에 낳은 아이</div>}
