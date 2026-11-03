@@ -19,6 +19,8 @@ create table if not exists public.cg_push_subs (
   updated_at timestamptz not null default now()
 );
 create index if not exists cg_push_subs_user on public.cg_push_subs(user_id);
+-- v1.9.44 산란 예정 알림 받기 (기본 켬 — 이미 알림을 켜 둔 분도 받습니다. 설정에서 끌 수 있어요)
+alter table public.cg_push_subs add column if not exists lay boolean not null default true;
 
 -- ── 2. 알림 일정표 ──
 -- 무엇을 언제 보낼지는 앱이 계산해서 여기 올려둡니다. 서버는 오늘 날짜 줄만 꺼내 씁니다.
