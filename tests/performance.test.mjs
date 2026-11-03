@@ -23,8 +23,10 @@ test("ships precompiled application code without runtime Babel", async () => {
   assert.match(app, /React\.createElement/);
   /* 원본 크기는 참고용 한도입니다. 실제로 오가는 건 gzip 이라
      진짜 관문은 아래 "첫 화면 묶음 gzip 150KB" 쪽입니다.
-     2026-09-25 대표님 결정: 300KB → 400KB (v1.9.2 에서 307,013B 로 거의 닿음. gzip 150KB 관문은 그대로) */
-  assert.ok(Buffer.byteLength(app) < 400 * 1024, `app.min.js is ${Buffer.byteLength(app)} bytes`);
+     2026-09-25 대표님 결정: 300KB → 400KB (v1.9.2 에서 307,013B 로 거의 닿음. gzip 150KB 관문은 그대로)
+     2026-11-04 대표님 결정: 400KB → 500KB, gzip 150KB → 180KB (v1.9.49 에서 408,302B · gzip 151,212B 로 둘 다 거의 닿음).
+       첫 로딩만 늘고(이후는 서비스워커 캐시), gzip +30KB 는 LTE 에서 대략 0.1초 안팎입니다. */
+  assert.ok(Buffer.byteLength(app) < 500 * 1024, `app.min.js is ${Buffer.byteLength(app)} bytes`);
 
   const shim = await readFile(file("vendor/preact-shim.min.js"), "utf8");
   assert.match(shim, /window\.React\s*=/, "the shim must define React");
@@ -42,7 +44,7 @@ test("keeps the first-load application shell within budget", async () => {
   ];
   const buffers = await Promise.all(paths.map((name) => readFile(file(name))));
   const gzipBytes = buffers.reduce((sum, body) => sum + gzipSync(body).length, 0);
-  assert.ok(gzipBytes < 150 * 1024, `application shell gzip total is ${gzipBytes} bytes`);
+  assert.ok(gzipBytes < 180 * 1024, `application shell gzip total is ${gzipBytes} bytes`);   // 2026-11-04 150KB → 180KB
 });
 
 test("keeps install icons within their delivery budgets", async () => {
