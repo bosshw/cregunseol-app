@@ -50,3 +50,18 @@ test("themes: 연하늘 · 연핑크 · 핫핑크 · 화이트, readable buttons
   const cr = (a, b) => { const x = L(a), y = L(b); return (Math.max(x, y) + .05) / (Math.min(x, y) + .05); };
   for (const m of app.matchAll(/tv\(\[(?:'#[0-9A-F]{6}',){5}'(#[0-9A-F]{6})'/g)) assert.ok(cr(m[1], "#FFFFFF") >= 4.5, `버튼 글씨가 읽혀야 함 ${m[1]}`);
 });
+
+test("winter (Oct–Apr due dates) waits 3 weeks before asking about the season; button says 산란", () => {
+  assert.match(app, /const LAY_LATE_WARN_WINTER = 21;/);
+  assert.match(app, /return m >= 10 \|\| m <= 4 \? LAY_LATE_WARN_WINTER : LAY_LATE_WARN;/);
+  assert.match(app, /overdue: late >= warn,/);
+  assert.match(ex, /data-testid="lc-go">산란<\/button>/);
+  assert.doesNotMatch(ex, />낳았어요</);
+});
+
+test("winter laying push also 3 days after the due date", () => {
+  const p = app.slice(app.indexOf("function pushPlan("), app.indexOf("const PUSH = {"));
+  assert.match(p, /const post = addDaysISO\(f\.eta, PUSH_AHEAD\);/);
+  assert.match(p, /if \(layWarnDays\(f\.eta\) === LAY_LATE_WARN_WINTER && post >= today && post <= until\)/);
+  assert.match(p, /산란 예정일이 3일 지났어요 🥚/);
+});
