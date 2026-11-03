@@ -1959,10 +1959,77 @@ function LayCheck({ navigate, showToast, onSaved }) {
 }
 
 
+/* ══════════════════════════════════════════
+   v1.9.46 해칭 체크표 — 산란 체크표와 같은 모양 (대표님 2026-11-03 "해칭도 비슷하게")
+   부화 예정 3일 전부터, 아직 안 나온 알이 있는 알둥지만 모읍니다.
+   [해칭] = 알 하나 부화 기록(EggHatchSheet → EGG.set). 알둥지 화면에서 적는 것과 같은 길이라
+   아기 등록·혈통·부화 예정 학습·캘린더가 그대로 이어집니다. 다 나오면 저절로 빠집니다.
+   ══════════════════════════════════════════ */
+function hatchCheckData(inds, evs) {
+  const rows = clutchRows(inds, evs);
+  const due = rows.filter(r => r.waiting && r.nPending > 0 && r.d <= LAYCHK_AHEAD)
+    .sort((a, b) => a.d - b.d || (a.momName > b.momName ? 1 : -1));
+  const soon = rows.filter(r => r.waiting && r.nPending > 0 && r.d > LAYCHK_AHEAD).sort((a, b) => a.d - b.d);
+  const from = addDaysISO(todayStr(), -(LC_KEEP - 1));
+  const done = [];
+  rows.forEach(r => r.hatches.forEach(h => { if (h.date >= from && h.date <= todayStr()) done.push({ r, h }); }));
+  done.sort((a, b) => (a.h.date < b.h.date ? 1 : -1));
+  return { due, soon, done };
+}
+const hcWhen = (d) => lcWhen(-d);
+function HatchCheck({ navigate, showToast, onSaved }) {
+  const [open, setOpen] = useState(null);       // { layingId, egg }
+  const [fold, setFold] = useState(false);
+  const [, bump] = useState(0);
+  const { due, soon, done } = hatchCheckData();
+  if (!due.length && !done.length && !soon.length) return null;
+  const tone = (d) => d < -LAY_GRACE ? 'var(--danger)' : d < 0 ? 'var(--warning)' : d === 0 ? 'var(--accent2)' : 'var(--text3)';
+  const go = (r) => { const k = r.units.findIndex(u => u.status === 'pending'); setOpen({ layingId: r.e.id, egg: k < 0 ? 0 : k }); };
+  return (
+    <div className="card lc" data-testid="hatch-check" style={{margin:'0 16px 12px'}}>
+      <div className="lc-top"><b>📋 해칭 체크표</b><span>예정 {LAYCHK_AHEAD}일 전부터 · 나오면 체크</span></div>
+      {!due.length && <div className="lc-empty">지금 체크할 알은 없어요{soon[0] ? ` · 다음은 ${soon[0].momName} ${soon[0].nth}차 ${lcMD(soon[0].etaISO)}` : ''}</div>}
+      {due.map(r => (
+        <div className="lc-row" key={r.e.id} data-testid="hc-due">
+          <button className="lc-box" aria-label={`${r.momName} ${r.nth}차 해칭`} onClick={() => go(r)} />
+          <div className="lc-main" style={{cursor:'pointer'}} onClick={() => navigate('clutch', { layingId: r.e.id, back: { name: 'home', props: { view: 'hatch' } } })}>
+            <div className="lc-name">{r.momName}{r.dadName && <i> × {r.dadName}</i>}</div>
+            <div className="lc-sub">{r.nth}차 · {lcMD(r.etaISO)} 예정 · <b className="lc-when" style={{color: tone(r.d)}}>{hcWhen(r.d)}</b>
+              {r.nPending < r.units.length ? ` · ${r.nPending}개 남음` : r.units.length ? ` · 알 ${r.units.length}개` : ''}</div>
+          </div>
+          <button className="lc-go" onClick={() => go(r)} data-testid="hc-go">해칭</button>
+        </div>
+      ))}
+      {done.length > 0 && <div className="lc-sec">이번에 나온 아이</div>}
+      {done.map(({ r, h }) => {
+        const d = h.data || {};
+        return (
+          <div className="lc-row done" key={h.id} data-testid="hc-done">
+            <span className="lc-box on" aria-hidden="true" style={{display:'flex', alignItems:'center', justifyContent:'center'}}>✓</span>
+            <div className="lc-main">
+              <div className="lc-name">{r.momName}{r.dadName && <i> × {r.dadName}</i>}</div>
+              <div className="lc-sub">{r.nth}차 · {lcMD(h.date)} 해칭{(() => { const n = (r.babies || []).filter(b => b.hatchDate === h.date).map(b => b.name); return n.length ? ` · ${n.join(', ')}` : ''; })()}{d.diffDays !== undefined ? ` · ${diffPhrase(d.diffDays)}` : ''}</div>
+            </div>
+          </div>
+        );
+      })}
+      {soon.length > 0 && (
+        <button className="lc-fold" onClick={() => setFold(!fold)}>
+          {fold ? '▾' : '▸'} 다가오는 부화 {soon.length}묶음
+          {fold && <small>{soon.map(r => `${r.momName} ${r.nth}차 ${lcMD(r.etaISO)}`).join(' · ')}</small>}
+        </button>
+      )}
+      {open && <EggHatchSheet layingId={open.layingId} egg={open.egg} showToast={showToast} onClose={() => setOpen(null)}
+        onDone={(m) => { setOpen(null); bump(v => v + 1); showToast && showToast(m); onSaved && onSaved(); }} />}
+    </div>
+  );
+}
+
+
 window.CREG_EXTRAS = {
-  SeasonNoteSheet, BirthdayPopup, DupMergeCard, FeedbackCard, FeedbackInbox, fbPayload, FB_PICKS, morphFill, mfList, mfIntro, MF, TrackCard, StorageCard, PushCard, SyncCard, followUp, fuPrice, fuWho, FU, sibParents, sibGroupOf, sibParentsPlan, SIB_PAR_RE, SIB_MORE_RE, SIB, BDAY_LINES, bdayPick, SaleCardSheet, AdoptSendSheet, AdoptReceive, AddGeckoSheet, chat, LayCheck,
+  SeasonNoteSheet, BirthdayPopup, DupMergeCard, FeedbackCard, FeedbackInbox, fbPayload, FB_PICKS, morphFill, mfList, mfIntro, MF, TrackCard, StorageCard, PushCard, SyncCard, followUp, fuPrice, fuWho, FU, sibParents, sibGroupOf, sibParentsPlan, SIB_PAR_RE, SIB_MORE_RE, SIB, BDAY_LINES, bdayPick, SaleCardSheet, AdoptSendSheet, AdoptReceive, AddGeckoSheet, chat, LayCheck, HatchCheck,
   // 시험(node)에서 쓰는 순수 함수들
   seasonYears, seasonNoteStats, seasonSummaryText, saveSeasonNote, toggleTrait, SEASON_TRAITS, SEASON_DIRS,
-  layCheckData, adoptSnapshot, adoptMemos, adoptImport, adoptCounts, looksPrivate, ADOPT, ADOPT_KINDS, ADOPT_NEVER, saleCardData,
+  layCheckData, hatchCheckData, adoptSnapshot, adoptMemos, adoptImport, adoptCounts, looksPrivate, ADOPT, ADOPT_KINDS, ADOPT_NEVER, saleCardData,
 };
 })();

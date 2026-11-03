@@ -660,7 +660,7 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.45';
+const APP_VERSION = '1.9.46';
 const APP_PATCHED = '2026-10-31';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -5289,6 +5289,7 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
   // 분양은 v3.8부터 가계부 탭으로 옮겼습니다 (옛 링크로 들어오면 축양으로 보냅니다)
   const [view, setView] = useState(initialView === 'sale' ? 'own' : (initialView || 'own')); // own | mating | laying | hatch
   const layDueN = individuals.length ? layDueList(individuals).length : 0;   // v1.9.44 산란 체크표에 올라온 아이 수
+  const hatchDueN = individuals.length ? clutchRows(individuals).filter(r => r.waiting && r.nPending > 0 && r.d <= LAYCHK_AHEAD).length : 0;   // v1.9.46 해칭 체크표
   const [favOnly, setFavOnly] = useState(false);
   const [keepOnly, setKeepOnly] = useState(false);
   // 정렬은 골라둔 것을 기억합니다
@@ -5401,10 +5402,10 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
 
         {individuals.length > 0 && (
           <div className="chip-row" style={{padding:'10px 16px 2px', marginTop:0}}>
-            {[['own','🏠 축양'],['mating','💞 메이팅'],['laying','🥚 산란'],['hatch','🐣 해칭']].map(([k, l]) => (
+            {[['own','🏠 축양'],['hatch','🐣 해칭'],['laying','🥚 산란'],['mating','💞 메이팅']].map(([k, l]) => (
               <button key={k} className="chip-btn" data-testid={'hv-' + k}
                 style={{flexShrink:0, whiteSpace:'nowrap', ...(view === k ? {background:'var(--accent-soft)', fontWeight:700} : {})}}
-                onClick={() => setView(k)}>{l}{k === 'laying' && layDueN > 0 && <span className="lc-badge">{layDueN}</span>}</button>
+                onClick={() => setView(k)}>{l}{(k === 'laying' ? layDueN : k === 'hatch' ? hatchDueN : 0) > 0 && <span className="lc-badge">{k === 'laying' ? layDueN : hatchDueN}</span>}</button>
             ))}
           </div>
         )}
@@ -5469,6 +5470,7 @@ function HomeScreen({ individuals, navigate, showToast, refreshIndividuals, view
 
         {view === 'mating' && <MatingView individuals={individuals} navigate={navigate} showToast={showToast} />}
         {view === 'laying' && <LayingView individuals={individuals} navigate={navigate} showToast={showToast} />}
+        {view === 'hatch' && <Extra part="HatchCheck" navigate={navigate} showToast={showToast} onSaved={refreshIndividuals} />}
         {view === 'hatch' && <HatchView individuals={individuals} refreshIndividuals={refreshIndividuals} showToast={showToast} navigate={navigate} />}
 
         <div style={{height: 16}} />
