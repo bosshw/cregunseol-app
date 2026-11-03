@@ -28,3 +28,15 @@ test("name fix: older siblings' names win a tie and keep their spacing", () => {
   assert.match(n, /b\[1\] - a\[1\] \|\| first\[a\[0\]\]\.localeCompare\(first\[b\[0\]\]\)/);
   assert.match(n, /const to = `\$\{main\}\$\{sp\}\$\{next\}호`;/);
 });
+
+test("every place that finds a father also matches a name-only father to the one registered male (v1.9.49)", () => {
+  const f = app.slice(app.indexOf("function sireByName("), app.indexOf("function clutchRows("));
+  assert.match(f, /i\.name === n && i\.gender !== 'female'/);
+  assert.match(f, /hit\.length === 1 \? hit\[0\] : null/, "같은 이름이 둘이면 잇지 않음");
+  assert.match(app, /const dad = byId\[dadId0\] \|\| \(!dadId0 && dadTxt \? sireByName\(dadTxt, inds\) : null\);/, "알둥지(체크표·알 화면·부화)");
+  assert.match(app, /\(\(sireByName\(dadName, inds\) \|\| \{\}\)\.id\)/, "산란 예정·체크표 산란");
+  assert.match(app, /const s = sireByName\(data\.sireName\); if \(s\) data\.sireId = s\.id;/, "산란 기록");
+  assert.match(app, /const hit = sireByName\(dadName, all\);/, "대화 부화");
+  assert.match(app, /const m1 = n > 1 && parts\.length === n \? parts\[k\] : mo;/, "알 화면 부화도 아기별 모프");
+  assert.match(app, /if \(!fuRef\.current\) \{ bot\('그 질문은 이미 지나갔어요/, "지난 [모름] 칩");
+});
