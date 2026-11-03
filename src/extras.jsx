@@ -1813,6 +1813,15 @@ function sibParents(text, c) {
    ★ 알림은 예정일 뒤 6~13일 조용히 있지만, 체크표는 숨기지 않습니다 — 겨울에 늦는 아이를 보려고 만든 것이니까요.
    ══════════════════════════════════════════ */
 const LC_KEEP = 7;                     // 낳은 줄을 아래에 며칠 남겨 둘지
+/* v1.9.48 "이번에 낳은/나온 아이"는 화살표로 접습니다 — 처음엔 접힌 채, 펼친 걸 기억합니다(대표님 2026-11-03) */
+function useDoneOpen(key) {
+  const [o, setO] = useState(() => { try { return localStorage.getItem(key) === '1'; } catch (e) { return false; } });
+  return [o, () => { const v = !o; setO(v); try { v ? localStorage.setItem(key, '1') : localStorage.removeItem(key); } catch (e) {} }];
+}
+function DoneHead({ label, n, open, toggle, tid }) {
+  return <button className="lc-fold" style={{borderTop:'1px dashed var(--border)'}} onClick={toggle} data-testid={tid}>
+    {open ? '▾' : '▸'} {label} {n}{open ? '' : '  · 7일 지나면 저절로 빠져요'}</button>;
+}
 const lcMD = (d) => (d ? +d.slice(5, 7) + '/' + +d.slice(8, 10) : '');
 const lcWhen = (late) => late < -2 ? `${-late}일 뒤` : late === -2 ? '모레' : late === -1 ? '내일' : late === 0 ? '오늘' : `${late}일 지남`;
 /* 체크표 한 벌 — 화면과 시험이 같이 씁니다 */
@@ -1915,6 +1924,7 @@ function LayCheckSheet({ f, onClose, onSaved }) {
 
 /* 산란 탭 맨 위 체크표 */
 function LayCheck({ navigate, showToast, onSaved }) {
+  const [dOpen, dToggle] = useDoneOpen('cg_lc_done');
   const [open, setOpen] = useState(null);       // 확인 창을 연 예정(f)
   const [fold, setFold] = useState('');         // 'soon' | 'rest'
   const [, bump] = useState(0);
@@ -1937,8 +1947,8 @@ function LayCheck({ navigate, showToast, onSaved }) {
           <button className="lc-go" onClick={() => setOpen(f)} data-testid="lc-go">산란</button>
         </div>
       ))}
-      {done.length > 0 && <div className="lc-sec">이번에 낳은 아이</div>}
-      {done.map(d => (
+      {done.length > 0 && <DoneHead label="이번에 낳은 아이" n={done.length} open={dOpen} toggle={dToggle} tid="lc-done-fold" />}
+      {dOpen && done.map(d => (
         <div className="lc-row done" key={d.id} data-testid="lc-done">
           <span className="lc-box on" aria-hidden="true" style={{display:'flex', alignItems:'center', justifyContent:'center'}}>✓</span>
           <div className="lc-main">
@@ -1979,12 +1989,14 @@ function hatchCheckData(inds, evs) {
   const soon = rows.filter(r => r.waiting && r.nPending > 0 && r.d > LAYCHK_AHEAD).sort((a, b) => a.d - b.d);
   const from = addDaysISO(todayStr(), -(LC_KEEP - 1));
   const done = [];
-  rows.forEach(r => r.hatches.forEach(h => { if (h.date >= from && h.date <= todayStr()) done.push({ r, h }); }));
+  const seen = {};   // v1.9.48 같은 알둥지·같은 날 부화 기록이 여럿이어도 한 줄로
+  rows.forEach(r => r.hatches.forEach(h => { const k = r.e.id + '|' + h.date; if (h.date >= from && h.date <= todayStr() && !seen[k]) { seen[k] = 1; done.push({ r, h }); } }));
   done.sort((a, b) => (a.h.date < b.h.date ? 1 : -1));
   return { due, soon, done };
 }
 const hcWhen = (d) => lcWhen(-d);
 function HatchCheck({ navigate, showToast, onSaved }) {
+  const [dOpen, dToggle] = useDoneOpen('cg_hc_done');
   const [open, setOpen] = useState(null);       // { layingId, egg }
   const [fold, setFold] = useState(false);
   const [, bump] = useState(0);
@@ -2007,8 +2019,8 @@ function HatchCheck({ navigate, showToast, onSaved }) {
           <button className="lc-go" onClick={() => go(r)} data-testid="hc-go">해칭</button>
         </div>
       ))}
-      {done.length > 0 && <div className="lc-sec">이번에 나온 아이</div>}
-      {done.map(({ r, h }) => {
+      {done.length > 0 && <DoneHead label="이번에 나온 아이" n={done.length} open={dOpen} toggle={dToggle} tid="hc-done-fold" />}
+      {dOpen && done.map(({ r, h }) => {
         const d = h.data || {};
         return (
           <div className="lc-row done" key={h.id} data-testid="hc-done">
