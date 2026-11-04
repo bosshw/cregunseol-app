@@ -38,5 +38,5 @@ test("every place that finds a father also matches a name-only father to the one
   assert.match(app, /const s = sireByName\(data\.sireName\); if \(s\) data\.sireId = s\.id;/, "산란 기록");
   assert.match(app, /const hit = sireByName\(dadName, all\);/, "대화 부화");
   assert.match(app, /const m1 = n > 1 && parts\.length === n \? parts\[k\] : mo;/, "알 화면 부화도 아기별 모프");
-  assert.match(app, /if \(!fuRef\.current\) \{ bot\('그 질문은 이미 지나갔어요/, "지난 [모름] 칩");
+  assert.match(app, /if \(!fuRef\.current && !cmdChip\) \{ bot\('그 질문은 이미 지나갔어요/, "지난 [모름] 칩");
 });
