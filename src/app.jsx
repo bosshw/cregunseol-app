@@ -660,7 +660,7 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.49';
+const APP_VERSION = '1.9.50';
 const APP_PATCHED = '2026-10-31';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -1850,6 +1850,16 @@ function layingGaps(layDates) {
   }
   return gaps;
 }
+/* v1.9.50 아이별 산란 리듬 — 겨울(10~4월)과 봄·여름 간격을 따로 셉니다 (간격이 끝난 날 기준) */
+const isWinterDay = (d) => { const m = +String(d || '').slice(5, 7); return m >= 10 || m <= 4; };
+function layingGapsW(layDates, w) {
+  const ds = [...layDates].sort(), out = [];
+  for (let i = 1; i < ds.length; i++) {
+    const g = Math.round((new Date(ds[i]) - new Date(ds[i - 1])) / 86400000);
+    if (g >= 14 && g <= 90 && isWinterDay(ds[i]) === w) out.push(g);
+  }
+  return out;
+}
 /* 암컷별 다음 산란 예정 — 저장하지 않고 매번 계산합니다(기록이 쌓이면 저절로 정확해집니다) */
 /* ══════════════════════════════════════════
    산란 시즌 — 언제 끝났는지 적어두는 자리
@@ -1872,6 +1882,9 @@ const LAY_LATE_WARN = 14;        // 예정일에서 이만큼 지나면 "확인�
 /* v1.9.44 겨울철(10월~4월 예정일)은 산란이 느려지니 3주까지 기다렸다 여쭙니다 (대표님 2026-11-03) */
 const LAY_LATE_WARN_WINTER = 21;
 const layWarnDays = (eta) => { const m = +String(eta || '').slice(5, 7); return m >= 10 || m <= 4 ? LAY_LATE_WARN_WINTER : LAY_LATE_WARN; };
+/* v1.9.50 대화 명령 — 무게체크명령 · 기록점검명령 · 분양준비명령 · 명령어 (extras.min.js, 모프누락명령과 같은 방식) */
+const CMD_RUN = [[/무게\s*체크\s*명령/, 'weightCheck'], [/기록\s*점검\s*명령/, 'healthCheck'], [/분양\s*준비\s*명령/, 'saleReady'],
+  [/^(명령어|명령\s*목록|명령어?\s*(알려|뭐|목록|보여))/, 'cmdHelp']];
 const LAY_GIVE_UP   = 365;       // 마지막 기록에서 이만큼 지나면 계산 자체를 접습니다
 const SEASON_SNOOZE = { ok: 7, trouble: 3, bad: 3 };   // 답한 뒤 며칠 쉬어갈지
 
@@ -1952,6 +1965,8 @@ function layingForecasts(individuals, events) {
   const allGaps = [];
   Object.values(laysBy).forEach(ls => allGaps.push(...layingGaps(ls.map(e => e.date))));
   const herdAvg = median(allGaps);
+  const herdW = { true: [], false: [] };
+  Object.values(laysBy).forEach(ls => [true, false].forEach(w => herdW[w].push(...layingGapsW(ls.map(e => e.date), w))));
 
   const out = [];
   inds.forEach(i => {
@@ -1964,7 +1979,12 @@ function layingForecasts(individuals, events) {
     const own = layingGaps(ls.map(e => e.date));
     if (ls.length) {
       base = ls[ls.length - 1].date;
-      if (own.length) { interval = median(own); basis = `본인 ${own.length + 1}회 기록 평균`; }
+      /* v1.9.50 다음 예정이 겨울이면 겨울 간격, 봄·여름이면 그 간격을 먼저 씁니다 (대표님 2026-11-04 "아이별 산란 리듬") */
+      const w = isWinterDay(addDaysISO(base, own.length ? median(own) : (herdAvg || LAYING_INTERVAL)));
+      const ownW = layingGapsW(ls.map(e => e.date), w), sw = w ? '겨울' : '봄·여름';
+      if (ownW.length >= 2) { interval = median(ownW); basis = `본인 ${sw} 간격 ${ownW.length}번 평균`; }
+      else if (own.length) { interval = median(own); basis = `본인 ${own.length + 1}회 기록 평균`; }
+      else if (herdW[w].length >= 3) { interval = median(herdW[w]); basis = `다른 아이들 ${sw} 평균`; }
       else if (herdAvg) { interval = herdAvg; basis = '다른 아이들 평균'; }
       else { interval = LAYING_INTERVAL; basis = '기본값'; }
     } else {
@@ -6963,6 +6983,7 @@ function SaleSection({ individuals, navigate, showToast, refreshIndividuals }) {
   const toggleFav = (g) => { DB.updateIndividual(g.id, { favorite: !g.favorite }); refreshIndividuals(); };
   return (
     <>
+      <Extra part="SaleReady" navigate={navigate} showToast={showToast} refreshIndividuals={refreshIndividuals} />
       <div style={{padding:'12px 16px 0'}}>
         <input className="input brand-search" placeholder=" 이름 또는 모프 검색" value={search} onChange={e => setSearch(e.target.value)} />
       </div>
@@ -7501,6 +7522,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
   const hatchAskRef = useRef(null);                  // v1.9.19 부화 마릿수 답 대기 ("2마리"라고 적으셔도 됩니다)
   const layAskRef = useRef(null);                    // v1.9.19 알 개수 답 대기 (칩 대신 "2개"라고 적으셔도 됩니다)
   const mfRef = useRef(false);                       // v1.9.34 모프누락명령 진행 중 (extras.min.js morphFill)
+  const cmdRef = useRef(null);                       // v1.9.50 무게체크명령 등 진행 중인 명령 이름
   const fuRef = useRef(false);                       // v1.9.39 이어 묻기 진행 중 (extras.min.js followUp)
   const pendingRetargetRef = useRef(null);           // 등록 후 옮길 기록 (주인 정정 대기)
   const pendingBabyRef = useRef(null);               // 해칭 베이비 이름 답변 대기
@@ -8238,7 +8260,8 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       const f = value.count ? { ...value.fact, data: { ...value.fact.data, eggCount: Number(value.count) } } : value.fact;
       pushPending([f], { name: value.fact.targetName });
     } else if (kind === 'reply' && value) {   // v1.9.47 이어 묻기의 [모름] 같은 대답 칩
-      if (!fuRef.current) { bot('그 질문은 이미 지나갔어요 🙂'); return; }   // v1.9.49 지난 말풍선의 칩을 눌러도 엉뚱한 기록이 생기지 않게
+      const cmdChip = cmdRef.current || mfRef.current || /모프\s*누락\s*명령/.test(value) || CMD_RUN.some(([re]) => re.test(value));   // v1.9.50 명령 칩
+      if (!fuRef.current && !cmdChip) { bot('그 질문은 이미 지나갔어요 🙂'); return; }   // v1.9.49 지난 말풍선의 칩을 눌러도 엉뚱한 기록이 생기지 않게
       addMsg({ role: 'user', text: value });
       setTimeout(() => process(value), 120);
     } else if (kind === 'memo-skip') {
@@ -8249,10 +8272,21 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
 
   /* ── 문장 해석 본체 ── */
   const process = (text) => {
+    /* v1.9.50 새 명령을 치면 하던 명령은 내려놓습니다 (모프누락명령 ↔ 무게체크명령 등) */
+    if (/모프\s*누락\s*명령/.test(text)) cmdRef.current = null; else if (CMD_RUN.some(([re]) => re.test(text))) mfRef.current = false;
     /* v1.9.34 모프누락명령 — 묻는 동안의 답은 전부 그쪽으로 (그만·취소·모름 포함) */
     if (mfRef.current || /모프\s*누락\s*명령/.test(text)) {
       loadExtras().then(X => { mfRef.current = X.morphFill(text, { bot, refreshIndividuals }); }).catch(() => missBot('잠깐 연결이 안 됐어요. 한 번 더 말씀해 주세요 🙂'));
       return;
+    }
+    /* v1.9.50 다른 명령들 — 묻는 동안의 답은 그 명령으로 */
+    {
+      const cmd = (CMD_RUN.find(([re]) => re.test(text)) || [])[1] || cmdRef.current;
+      if (cmd) {
+        loadExtras().then(X => { cmdRef.current = X[cmd](text, { bot, refreshIndividuals, navigate }) ? cmd : null; })
+          .catch(() => missBot('잠깐 연결이 안 됐어요. 한 번 더 말씀해 주세요 🙂'));
+        return;
+      }
     }
     /* v1.9.39 이어 묻는 중이면 대답부터. 대답이 아니면('pass') 묻기를 멈추고 그 말을 평소대로 */
     if (fuRef.current && window.CREG_EXTRAS) {
@@ -11514,6 +11548,7 @@ function SettingsScreen({ navigate, showToast, refreshIndividuals }) {
         <Extra part="TrackCard" showToast={showToast} />
         {canUseCrevalue() && <Extra part="FeedbackInbox" />}
         <Extra part="StorageCard" showToast={showToast} />
+        <Extra part="HealthCard" showToast={showToast} refreshIndividuals={refreshIndividuals} />
         <div className="card" style={{margin:0}}>
           <div style={{fontSize:13, fontWeight:700, marginBottom:12, color:'var(--text2)'}}>데이터</div>
           <div style={{display:'flex', flexDirection:'column', gap:8}}>

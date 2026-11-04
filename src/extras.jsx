@@ -1296,6 +1296,308 @@ function morphFill(text, ctx) {
 }
 
 
+/* ══════════════════════════════════════════
+   v1.9.50 대화 명령 묶음 — 대표님 요청(2026-11-04) "모프누락명령처럼 한 번에"
+   무게체크명령 · 기록점검명령 · 분양준비명령 · 명령어
+   ★ 돌려주는 값이 true 면 아직 묻는 중 — app 이 다음 말을 다시 이리로 보냅니다(morphFill 과 같은 약속).
+   ★ 어떤 명령이든 "그만"이면 멈춥니다. 지우는 일은 하지 않습니다(무게 '취소'는 방금 적은 것만 되돌립니다).
+   ══════════════════════════════════════════ */
+const CMD_STOP = /^(그만|멈춰|중단|끝내|그만할래|그만해|종료)/;
+const CMD_UNDO = /^(취소|되돌려|방금\s*(거|것)?\s*취소|잘못)/;
+const CMD_SKIP = /^(모름|모르겠|몰라|넘어가|넘어|패스|스킵|다음|건너|없어|안\s*쟀)/;
+const CMD_YES = /^(네|예|응|어|ㅇㅇ|ㅇ|좋아|고쳐|해\s*줘|해줘|그래|전부|다|모두|진행|ok|오케이)/i;
+const CMD_NO = /^(아니|아뇨|ㄴㄴ|싫어|놔둬|그냥\s*둬|됐어|안\s*해)/;
+const ageDays = (g) => (g && /^\d{4}-\d\d-\d\d/.test(g.hatchDate || '') ? daysBetween(g.hatchDate, todayStr()) : null);
+const isBaby = (g) => { const a = ageDays(g); return a !== null && a < 365; };
+/* 가장 최근 몸무게 기록 — { w, date, ev } */
+function lastWeigh(id, evs) {
+  const e = (evs || DB.getEvents()).filter(x => x.individualId === id && x.type === 'growth' && x.data && x.data.weight)
+    .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : (a.createdAt || '') < (b.createdAt || '') ? 1 : -1))[0];
+  return e ? { w: Number(e.data.weight), date: e.date, ev: e } : null;
+}
+const fmtG = (n) => String(Math.round(n * 10) / 10);
+const CMD_LIST = [
+  ['무게체크명령', '아이들을 한 마리씩 불러 드려요. 숫자만 말하면 몸무게가 적혀요 (아기만: "무게체크명령 아기")'],
+  ['모프누락명령', '모프가 빈 아이를 한 마리씩 여쭤봐요'],
+  ['기록점검명령', '이름으로만 적힌 아빠 잇기 · 아기 아빠 연결 · 같은 이름 · 빈 칸을 한 번에 살펴요'],
+  ['분양준비명령', '나이·몸무게 기준을 넘긴 아이를 모아 분양가능으로 바꿔 드려요'],
+];
+function cmdHelp(text, ctx) {
+  ctx.bot('📋 한 번에 하는 명령이에요. 대화창에 그대로 치시면 돼요.\n\n' + CMD_LIST.map(([k, v]) => `• ${k}\n   ${v}`).join('\n') + '\n\n(진행 중에 "그만"이라고 하시면 언제든 멈춰요)',
+    CMD_LIST.map(([k]) => ({ label: k, kind: 'reply', value: k })));
+  return false;
+}
+
+/* ── 무게체크명령 ── */
+const WC = { ids: [], i: 0, done: 0, skip: 0, drops: [], last: null };
+const WC_NUM = /^(\d+(?:\.\d+)?)\s*(g|그램|그람|지)?\s*(이요|요|이에요|예요)?$/i;
+function wcList(t) {
+  const only = /아기|베이비|새끼/.test(t) ? 'baby' : /성체|어른|큰\s*애/.test(t) ? 'adult' : '';
+  const key = (g) => (isBaby(g) ? '0' + (g.hatchDate || '') : '1' + (g.name || ''));
+  return DB.getIndividuals().filter(g => isHere(g) && (!only || (only === 'baby') === isBaby(g)))
+    .sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0)).map(g => g.id);
+}
+function wcAsk(bot) {
+  const all = DB.getIndividuals();
+  while (WC.i < WC.ids.length) {
+    const g = all.find(x => x.id === WC.ids[WC.i]);
+    if (g && isHere(g)) {
+      const lw = lastWeigh(g.id), a = ageDays(g);
+      const was = lw ? `지난번 ${fmtG(lw.w)}g (${mfDate(lw.date)} · ${daysBetween(lw.date, todayStr())}일 전)` : '아직 잰 적 없어요';
+      bot(`${WC.i + 1}/${WC.ids.length} ${g.name}${g.morph ? ' · ' + g.morph : ''}${a !== null ? ` · ${a}일` : ''}\n${was}\n지금 몇 g인가요?`,
+        [{ label: '넘어가기', kind: 'reply', value: '넘어가' }, { label: '그만', kind: 'reply', value: '그만' }]);
+      return true;
+    }
+    WC.i++;
+  }
+  bot(wcSummary(true));
+  WC.ids = [];
+  return false;
+}
+function wcSummary(all) {
+  const L = [`${all ? '🎉 끝났어요!' : '여기까지 할게요.'} ${WC.done}마리 몸무게를 적었어요${WC.skip ? ` · 넘어간 아이 ${WC.skip}마리` : ''}.`];
+  if (WC.drops.length) L.push(`⚠️ 지난번보다 줄어든 아이: ${WC.drops.map(d => `${d.name}(${d.diff}g)`).join(', ')}\n   며칠 뒤 한 번 더 재 보시는 걸 권해요.`);
+  try { const n = saleReadyData().list.length; if (n) L.push(`🏷️ 분양 기준을 넘긴 아이가 ${n}마리예요. "분양준비명령"으로 모아 볼 수 있어요.`); } catch (e) {}
+  return L.join('\n');
+}
+function weightCheck(text, ctx) {
+  const { bot, refreshIndividuals } = ctx;
+  const t = String(text || '').trim();
+  if (/무게\s*체크\s*명령/.test(t) || !WC.ids.length) {
+    WC.ids = wcList(t); WC.i = 0; WC.done = 0; WC.skip = 0; WC.drops = []; WC.last = null;
+    if (!WC.ids.length) { bot('잴 아이가 없어요 🙂'); return false; }
+    bot(`⚖️ 무게 체크를 시작할게요. 총 ${WC.ids.length}마리예요.\n저울에 올리고 숫자만 말씀해 주세요 (예: 12.5)\n(못 쟀으면 "넘어가" · 멈추려면 "그만" · 방금 것 되돌리려면 "취소")`);
+    return wcAsk(bot);
+  }
+  if (CMD_STOP.test(t)) { bot(wcSummary(false)); WC.ids = []; return false; }
+  if (CMD_UNDO.test(t)) {
+    if (!WC.last) { bot('되돌릴 게 아직 없어요 🙂'); return wcAsk(bot); }
+    const { k, evId, prevW, skipped, name } = WC.last; WC.last = null;
+    if (skipped) WC.skip = Math.max(0, WC.skip - 1);
+    else {
+      if (prevW !== null) { const e = DB.getEvents().find(x => x.id === evId); if (e) DB.updateEvent(evId, { data: { ...e.data, weight: prevW } }); }
+      else DB.deleteEvent(evId);
+      WC.done = Math.max(0, WC.done - 1); WC.drops = WC.drops.filter(d => d.name !== name);
+      refreshIndividuals && refreshIndividuals();
+    }
+    WC.i = k;
+    bot(`↩️ ${name} ${skipped ? '다시 여쭐게요.' : '방금 적은 몸무게를 되돌렸어요.'}`);
+    return wcAsk(bot);
+  }
+  const g = DB.getIndividuals().find(x => x.id === WC.ids[WC.i]);
+  if (!g) return wcAsk(bot);
+  if (CMD_SKIP.test(t)) { WC.last = { k: WC.i, skipped: true, name: g.name }; WC.skip++; WC.i++; return wcAsk(bot); }
+  const m = t.replace(/,/g, '.').match(WC_NUM);
+  const w = m ? Number(m[1]) : NaN;
+  if (!m || !(w > 0) || w > 300) { bot('숫자만 말씀해 주세요 🙂 (예: 12.5) · 못 쟀으면 "넘어가"'); return true; }
+  const today = todayStr(), evs = DB.getEvents();
+  const same = evs.find(e => e.individualId === g.id && e.type === 'growth' && e.date === today && e.data && e.data.weight);
+  const before = (() => { const l = lastWeigh(g.id, evs.filter(e => !same || e.id !== same.id)); return l && l.date < today ? l : null; })();
+  let evId;
+  if (same) { DB.updateEvent(same.id, { data: { ...same.data, weight: String(w) } }); evId = same.id; }
+  else { const e = DB.addEvent({ individualId: g.id, type: 'growth', date: today, data: { weight: String(w) } }); evId = e && e.id; }
+  WC.last = { k: WC.i, evId, prevW: same ? same.data.weight : null, skipped: false, name: g.name };
+  WC.done++; WC.i++;
+  refreshIndividuals && refreshIndividuals();
+  let say = `✅ ${g.name} ${fmtG(w)}g`;
+  if (before) {
+    const d = Math.round((w - before.w) * 10) / 10;
+    say += d > 0 ? ` (+${fmtG(d)}g)` : d < 0 ? ` (${fmtG(d)}g)` : ' (그대로)';
+    if (d <= -1 || (before.w > 0 && d / before.w <= -0.05)) { say += '\n⚠️ 지난번보다 줄었어요.'; WC.drops.push({ name: g.name, diff: fmtG(d) }); }
+  }
+  bot(say);
+  return wcAsk(bot);
+}
+
+/* ── 기록점검명령 · 데이터 건강검진 ──
+   ★ 고치는 것은 "연결"만입니다 — 이름으로만 적힌 아빠를 등록된 아이와 잇고, 알둥지에서 나온 아기에 아빠를 잇습니다.
+     이름·모프·날짜는 바꾸지 않습니다(같은 이름·빈 모프는 알려만 드리고, 고치는 곳을 알려 드립니다). */
+function healthPlan() {
+  const inds = DB.getIndividuals(), evs = DB.getEvents(), byId = {};
+  inds.forEach(i => { byId[i.id] = i; });
+  const evFix = [];
+  evs.forEach(e => {
+    const d = e.data || {}, mom = byId[e.individualId];
+    if (!mom || mom.gender === 'male') return;
+    if (e.type === 'laying' && !d.sireId && d.sireName) { const s = sireByName(d.sireName, inds); if (s) evFix.push({ id: e.id, patch: { sireId: s.id }, what: `${mom.name} 산란(${mfDate(e.date)}) 아빠 → ${s.name}` }); }
+    if (e.type === 'mating' && !d.partnerId && d.partnerName) { const s = sireByName(d.partnerName, inds); if (s) evFix.push({ id: e.id, patch: { partnerId: s.id }, what: `${mom.name} 메이팅(${mfDate(e.date)}) 짝 → ${s.name}` }); }
+  });
+  const kidFix = [];
+  try {
+    clutchRows(inds, evs).forEach(r => {
+      if (!r.dadId || !byId[r.dadId]) return;
+      r.babies.forEach(b => { if (!b.sireId) kidFix.push({ id: b.id, sireId: r.dadId, what: `${b.name} 아빠 → ${byId[r.dadId].name}` }); });
+    });
+  } catch (e) {}
+  const here = inds.filter(isHere);
+  let names = 0; try { names = nameFixPlan(inds).length; } catch (e) {}
+  let dups = 0; try { dups = DB.findDuplicateNames().length; } catch (e) {}
+  return {
+    evFix, kidFix, names, dups,
+    noMorph: here.filter(g => !String(g.morph || '').trim()).length,
+    noGender: here.filter(g => !isBaby(g) && (!g.gender || g.gender === 'unknown')).length,
+    fixN: evFix.length + kidFix.length,
+  };
+}
+function healthApply(p) {
+  const evs = DB.getEvents();
+  p.evFix.forEach(f => { const e = evs.find(x => x.id === f.id); if (e) DB.updateEvent(f.id, { data: { ...e.data, ...f.patch } }); });
+  p.kidFix.forEach(f => DB.updateIndividual(f.id, { sireId: f.sireId }));
+  return p.fixN;
+}
+function healthLines(p) {
+  const L = [];
+  if (p.evFix.length) L.push(`🔗 이름으로만 적힌 아빠 ${p.evFix.length}건 — 등록된 아이와 이을 수 있어요`);
+  if (p.kidFix.length) L.push(`👪 아빠가 안 이어진 아기 ${p.kidFix.length}마리 — 알둥지 기록으로 이을 수 있어요`);
+  if (p.names) L.push(`🏷️ 형제와 이름이 다른 아이 ${p.names}마리 — 홈 화면 "이름 맞추기"에서 고칠 수 있어요`);
+  if (p.dups) L.push(`👯 같은 이름 ${p.dups}쌍 — 설정의 "같은 이름 합치기"에서 볼 수 있어요`);
+  if (p.noMorph) L.push(`🧬 모프가 빈 아이 ${p.noMorph}마리 — "모프누락명령"으로 채울 수 있어요`);
+  if (p.noGender) L.push(`⚥ 성별이 비어 있는 성체 ${p.noGender}마리`);
+  return L;
+}
+const HC = { plan: null };
+function healthCheck(text, ctx) {
+  const { bot, refreshIndividuals } = ctx;
+  const t = String(text || '').trim();
+  if (/기록\s*점검\s*명령/.test(t) || !HC.plan) {
+    const p = healthPlan(), L = healthLines(p);
+    if (!L.length) { bot('🩺 기록을 살펴봤어요. 고칠 곳이 없어요 👍'); HC.plan = null; return false; }
+    bot('🩺 기록을 살펴봤어요.\n\n' + L.join('\n') + (p.fixN ? `\n\n위의 연결 ${p.fixN}건을 지금 이어 둘까요? (이름·모프는 건드리지 않아요)` : ''),
+      p.fixN ? [{ label: '네, 이어 주세요', kind: 'reply', value: '네' }, { label: '자세히', kind: 'reply', value: '자세히' }, { label: '아니요', kind: 'reply', value: '아니요' }] : undefined);
+    HC.plan = p.fixN ? p : null;
+    return !!HC.plan;
+  }
+  if (/자세히|목록|뭐|어떤/.test(t)) {
+    const all = [...HC.plan.evFix, ...HC.plan.kidFix].map(f => '• ' + f.what);
+    bot(all.slice(0, 30).join('\n') + (all.length > 30 ? `\n…외 ${all.length - 30}건` : '') + '\n\n이어 둘까요?',
+      [{ label: '네', kind: 'reply', value: '네' }, { label: '아니요', kind: 'reply', value: '아니요' }]);
+    return true;
+  }
+  if (CMD_YES.test(t)) {
+    const n = healthApply(HC.plan); HC.plan = null;
+    refreshIndividuals && refreshIndividuals();
+    bot(`✅ ${n}건 이어 뒀어요. 혈통·근친 판정·알둥지에 바로 반영돼요.`);
+    return false;
+  }
+  if (CMD_NO.test(t) || CMD_STOP.test(t)) { HC.plan = null; bot('그대로 둘게요 🙂 다음에 "기록점검명령"이라고 하시면 다시 살펴봐요.'); return false; }
+  HC.plan = null;
+  bot('점검은 여기까지 할게요 🙂');
+  return false;
+}
+function HealthCard({ showToast, refreshIndividuals }) {
+  const [, bump] = useState(0);
+  const [more, setMore] = useState(false);
+  const p = healthPlan(), L = healthLines(p);
+  return (
+    <div className="card" style={{margin:0}} data-testid="health-card">
+      <div style={{fontSize:13, fontWeight:700, marginBottom:4, color:'var(--text2)'}}>🩺 기록 점검</div>
+      {!L.length && <div style={{fontSize:12.5, color:'var(--text3)'}}>고칠 곳이 없어요 👍</div>}
+      {L.length > 0 && <div style={{fontSize:12.5, color:'var(--text2)', lineHeight:1.7, whiteSpace:'pre-line'}} data-testid="health-lines">{L.join('\n')}</div>}
+      {p.fixN > 0 && <>
+        <button className="lc-fold" onClick={() => setMore(!more)} style={{marginTop:6}}>{more ? '▾' : '▸'} 이을 것 {p.fixN}건 보기
+          {more && <small>{[...p.evFix, ...p.kidFix].map(f => f.what).join(' · ')}</small>}</button>
+        <button className="btn btn-primary" style={{width:'100%', marginTop:8}} data-testid="health-fix"
+          onClick={() => { const n = healthApply(p); bump(v => v + 1); refreshIndividuals && refreshIndividuals(); showToast && showToast(`✅ ${n}건 이어 뒀어요`); }}>🔗 {p.fixN}건 이어 두기</button>
+      </>}
+      <div style={{fontSize:11, color:'var(--text3)', marginTop:6}}>대화창에 "기록점검명령"이라고 하셔도 돼요</div>
+    </div>
+  );
+}
+
+/* ── 분양 준비 목록 ──
+   ★ 기준(설정 저장): 몸무게 saleMinWeight g 이상 · 나이 saleMinDays 일 이상. 1년 넘은 아이·짝짓기/산란 기록이 있는 아이·'계속 키울 아이'는 뺍니다.
+   ★ 분양가능으로 바꾸는 것만 합니다(가격·분양처는 그대로). */
+const SALE_DEF = { w: 5, d: 90 };
+function saleRule() { const s = DB.getSettings() || {}; return { w: Number(s.saleMinWeight) || SALE_DEF.w, d: Number(s.saleMinDays) || SALE_DEF.d }; }
+function saleReadyData() {
+  const r = saleRule(), evs = DB.getEvents();
+  const bred = new Set(evs.filter(e => e.type === 'mating' || e.type === 'laying').map(e => e.individualId));
+  const list = [], near = [];
+  DB.getIndividuals().forEach(g => {
+    if (!isHere(g) || statusOf(g) !== 'own' || g.keep || bred.has(g.id)) return;
+    const a = ageDays(g); if (a === null || a >= 365) return;
+    const lw = lastWeigh(g.id, evs);
+    const row = { id: g.id, name: g.name, morph: g.morph || '', age: a, w: lw ? lw.w : null, wDate: lw ? lw.date : '', stale: lw ? daysBetween(lw.date, todayStr()) > 30 : true };
+    if (a >= r.d && lw && lw.w >= r.w) list.push(row);
+    else if (a >= r.d - 21 && (!lw || lw.w >= r.w * 0.8)) near.push(row);
+  });
+  list.sort((x, y) => y.age - x.age); near.sort((x, y) => y.age - x.age);
+  return { rule: r, list, near };
+}
+const srLine = (x) => `${x.name}${x.morph ? ' · ' + x.morph : ''} · ${x.age}일 · ${x.w !== null ? fmtG(x.w) + 'g' : '무게 없음'}${x.w !== null && x.stale ? ` (${mfDate(x.wDate)})` : ''}`;
+const SR = { ids: null };
+function saleReady(text, ctx) {
+  const { bot, refreshIndividuals } = ctx;
+  const t = String(text || '').trim();
+  if (/분양\s*준비\s*명령/.test(t) || !SR.ids) {
+    const { rule, list, near } = saleReadyData();
+    if (!list.length) {
+      bot(`🏷️ 기준(${rule.w}g 이상 · ${rule.d}일 이상)을 넘긴 아이가 아직 없어요.` + (near.length ? `\n곧 될 아이: ${near.slice(0, 8).map(x => x.name).join(', ')}` : '') + '\n(기준은 분양 화면 위 카드에서 바꿀 수 있어요)');
+      SR.ids = null; return false;
+    }
+    SR.ids = list.map(x => x.id);
+    const stale = list.filter(x => x.stale).length;
+    bot(`🏷️ 분양 준비된 아이 ${list.length}마리예요 (${rule.w}g 이상 · ${rule.d}일 이상)\n\n` + list.map((x, k) => `${k + 1}. ${srLine(x)}`).join('\n')
+      + (stale ? `\n\n📏 무게를 잰 지 한 달 넘은 아이가 ${stale}마리 있어요 — "무게체크명령 아기"로 다시 재 보셔도 좋아요.` : '')
+      + '\n\n분양가능으로 바꿀까요? "전부" 또는 번호(예: 1, 3) · 그대로 두려면 "아니요"',
+      [{ label: '전부', kind: 'reply', value: '전부' }, { label: '아니요', kind: 'reply', value: '아니요' }]);
+    return true;
+  }
+  let pick = null;
+  const nums = t.match(/\d+/g);
+  if (nums && /^[\d\s,.번과와및그리고]+$/.test(t)) pick = nums.map(n => SR.ids[Number(n) - 1]).filter(Boolean);
+  else if (/^(전부|다|모두|네|예|응|좋아)/.test(t)) pick = SR.ids;
+  if (!pick) { SR.ids = null; bot(CMD_NO.test(t) || CMD_STOP.test(t) ? '그대로 둘게요 🙂' : '분양 준비는 여기까지 할게요 🙂'); return false; }
+  const names = [];
+  pick.forEach(id => { const g = DB.getIndividuals().find(x => x.id === id); if (g && statusOf(g) === 'own') { DB.updateIndividual(id, { status: 'available' }); names.push(g.name); } });
+  SR.ids = null;
+  refreshIndividuals && refreshIndividuals();
+  bot(names.length ? `✅ ${names.length}마리를 분양가능으로 바꿨어요: ${names.join(', ')}\n분양 화면에서 가격과 분양 카드를 준비할 수 있어요.` : '바꿀 아이가 없었어요 🙂');
+  return false;
+}
+function SaleReady({ navigate, showToast, refreshIndividuals }) {
+  const [, bump] = useState(0);
+  const [open, setOpen] = useState(() => { try { return localStorage.getItem('cg_sr_open') !== '0'; } catch (e) { return true; } });
+  const [edit, setEdit] = useState(false);
+  const [card, setCard] = useState(null);
+  const { rule, list, near } = saleReadyData();
+  if (!list.length && !near.length && !edit) return null;
+  const tog = () => { const v = !open; setOpen(v); try { localStorage.setItem('cg_sr_open', v ? '1' : '0'); } catch (e) {} };
+  const setRule = (k, v) => { const n = Number(v); if (!(n > 0)) return; DB.saveSettings({ ...DB.getSettings(), [k]: n }); bump(x => x + 1); };
+  const avail = (id) => { DB.updateIndividual(id, { status: 'available' }); bump(x => x + 1); refreshIndividuals && refreshIndividuals(); showToast && showToast('🏷️ 분양가능으로 바꿨어요'); };
+  const gk = (id) => DB.getIndividuals().find(i => i.id === id);
+  return (
+    <div className="card lc" style={{margin:'12px 16px 0'}} data-testid="sale-ready">
+      <button className="lc-fold" style={{marginTop:0, paddingTop:0, borderTop:'none', fontWeight:800, color:'var(--text)'}} onClick={tog} data-testid="sr-fold">
+        {open ? '▾' : '▸'} 🏷️ 분양 준비된 아이 {list.length}마리{near.length ? ` · 곧 ${near.length}마리` : ''}
+      </button>
+      {open && <>
+        <div className="lc-sub" style={{margin:'2px 0 6px'}}>
+          기준 {rule.w}g 이상 · {rule.d}일 이상 <button className="onb-link" onClick={() => setEdit(!edit)} data-testid="sr-rule">{edit ? '닫기' : '바꾸기'}</button>
+        </div>
+        {edit && <div style={{display:'flex', gap:8, marginBottom:8, fontSize:12.5, alignItems:'center'}}>
+          <input className="input" style={{width:70}} type="number" inputMode="decimal" defaultValue={rule.w} onBlur={e => setRule('saleMinWeight', e.target.value)} data-testid="sr-w" />g 이상
+          <input className="input" style={{width:70}} type="number" inputMode="numeric" defaultValue={rule.d} onBlur={e => setRule('saleMinDays', e.target.value)} data-testid="sr-d" />일 이상
+        </div>}
+        {list.map(x => (
+          <div className="lc-row" key={x.id} data-testid="sr-row">
+            <div className="lc-main" onClick={() => { const g = gk(x.id); if (g && navigate) navigate('profile', { gecko: g }); }} style={{cursor:'pointer'}}>
+              <div className="lc-name">{x.name}{x.morph && <i> · {x.morph}</i>}</div>
+              <div className="lc-sub">{x.age}일 · {fmtG(x.w)}g{x.stale ? ` · 📏 ${mfDate(x.wDate)} 잰 무게` : ''}</div>
+            </div>
+            <button className="lc-go" style={{background:'var(--card)', color:'var(--accent2)', border:'1.5px solid var(--accent)'}} onClick={() => { const g = gk(x.id); if (g) setCard(g); }} data-testid="sr-card">카드</button>
+            <button className="lc-go" onClick={() => avail(x.id)} data-testid="sr-avail">분양가능</button>
+          </div>
+        ))}
+        {near.length > 0 && <div className="lc-sub" style={{marginTop:6}}>곧 될 아이: {near.slice(0, 10).map(x => `${x.name}(${x.age}일${x.w !== null ? ' · ' + fmtG(x.w) + 'g' : ''})`).join(' · ')}</div>}
+        <div style={{fontSize:11, color:'var(--text3)', marginTop:6}}>대화창에 "분양준비명령"이라고 하셔도 돼요</div>
+      </>}
+      {card && <SaleCardSheet gecko={card} showToast={showToast} onClose={() => setCard(null)}
+        onMakeShare={() => { setCard(null); if (navigate) navigate('profile', { gecko: card }); }} />}
+    </div>
+  );
+}
+
 /* v1.9.35 설정 · 익명 방문 집계 카드 — app.min.js 에서 옮겨 왔습니다(첫 화면 크기 한도). TRACK·CHIP_ON/OFF 는 app 것을 씁니다 */
 function TrackCard({ showToast }) {
   const [off, setOff] = useState(() => TRACK.isOff());
@@ -2047,6 +2349,7 @@ function HatchCheck({ navigate, showToast, onSaved }) {
 
 window.CREG_EXTRAS = {
   SeasonNoteSheet, BirthdayPopup, DupMergeCard, FeedbackCard, FeedbackInbox, fbPayload, FB_PICKS, morphFill, mfList, mfIntro, MF, TrackCard, StorageCard, PushCard, SyncCard, followUp, fuPrice, fuWho, FU, sibParents, sibGroupOf, sibParentsPlan, SIB_PAR_RE, SIB_MORE_RE, SIB, BDAY_LINES, bdayPick, SaleCardSheet, AdoptSendSheet, AdoptReceive, AddGeckoSheet, chat, LayCheck, HatchCheck,
+  weightCheck, healthCheck, saleReady, cmdHelp, HealthCard, SaleReady, healthPlan, healthApply, saleReadyData, WC, HC, SR, CMD_LIST,
   // 시험(node)에서 쓰는 순수 함수들
   seasonYears, seasonNoteStats, seasonSummaryText, saveSeasonNote, toggleTrait, SEASON_TRAITS, SEASON_DIRS,
   layCheckData, hatchCheckData, adoptSnapshot, adoptMemos, adoptImport, adoptCounts, looksPrivate, ADOPT, ADOPT_KINDS, ADOPT_NEVER, saleCardData,
