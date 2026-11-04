@@ -660,7 +660,7 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.50';
+const APP_VERSION = '1.9.51';
 const APP_PATCHED = '2026-10-31';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -1882,8 +1882,9 @@ const LAY_LATE_WARN = 14;        // 예정일에서 이만큼 지나면 "확인�
 /* v1.9.44 겨울철(10월~4월 예정일)은 산란이 느려지니 3주까지 기다렸다 여쭙니다 (대표님 2026-11-03) */
 const LAY_LATE_WARN_WINTER = 21;
 const layWarnDays = (eta) => { const m = +String(eta || '').slice(5, 7); return m >= 10 || m <= 4 ? LAY_LATE_WARN_WINTER : LAY_LATE_WARN; };
-/* v1.9.50 대화 명령 — 무게체크명령 · 기록점검명령 · 분양준비명령 · 명령어 (extras.min.js, 모프누락명령과 같은 방식) */
+/* v1.9.50 대화 명령 — 무게체크명령 · 기록점검명령 · 분양준비명령 · 명령어 · v1.9.51 근친점검명령 · 월간보고명령 (extras.min.js, 모프누락명령과 같은 방식) */
 const CMD_RUN = [[/무게\s*체크\s*명령/, 'weightCheck'], [/기록\s*점검\s*명령/, 'healthCheck'], [/분양\s*준비\s*명령/, 'saleReady'],
+  [/근친\s*점검\s*명령/, 'kinCheck'], [/월간\s*보고\s*명령/, 'monthReport'],
   [/^(명령어|명령\s*목록|명령어?\s*(알려|뭐|목록|보여))/, 'cmdHelp']];
 const LAY_GIVE_UP   = 365;       // 마지막 기록에서 이만큼 지나면 계산 자체를 접습니다
 const SEASON_SNOOZE = { ok: 7, trouble: 3, bad: 3 };   // 답한 뒤 며칠 쉬어갈지

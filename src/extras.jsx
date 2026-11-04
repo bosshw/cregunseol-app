@@ -1321,6 +1321,8 @@ const CMD_LIST = [
   ['모프누락명령', '모프가 빈 아이를 한 마리씩 여쭤봐요'],
   ['기록점검명령', '이름으로만 적힌 아빠 잇기 · 아기 아빠 연결 · 같은 이름 · 빈 칸을 한 번에 살펴요'],
   ['분양준비명령', '나이·몸무게 기준을 넘긴 아이를 모아 분양가능으로 바꿔 드려요'],
+  ['근친점검명령', '메이팅한 짝·앞으로 붙일 짝 중 피가 가까운 사이를 찾아요 (한 아이만: "근친점검명령 크안이")'],
+  ['월간보고명령', '이번 달 메이팅·산란·해칭·분양·돌봄·가계부를 한 장으로 (지난달: "월간보고명령 지난달")'],
 ];
 function cmdHelp(text, ctx) {
   ctx.bot('📋 한 번에 하는 명령이에요. 대화창에 그대로 치시면 돼요.\n\n' + CMD_LIST.map(([k, v]) => `• ${k}\n   ${v}`).join('\n') + '\n\n(진행 중에 "그만"이라고 하시면 언제든 멈춰요)',
@@ -1596,6 +1598,160 @@ function SaleReady({ navigate, showToast, refreshIndividuals }) {
         onMakeShare={() => { setCard(null); if (navigate) navigate('profile', { gecko: card }); }} />}
     </div>
   );
+}
+
+/* ── 근친점검명령 (v1.9.51 대표님 2026-11-04) ──
+   ★ 판정은 relationOf 한 곳 것을 그대로 씁니다(화면·대화·짝 추천과 같은 결론).
+   ★ 부모 연결이 빈 아이는 판정할 근거가 없으니 "모른다"고 솔직히 말합니다 — 남남이라고 하지 않습니다.
+   "근친점검명령" = 최근 1년 메이팅 짝 + 앞으로 피할 짝 · "근친점검명령 크안이" = 그 아이 기준 */
+const isGrown = (g) => !isBaby(g);
+function kinPartner(e, a, inds, byId) {
+  const d = e.data || {};
+  if (d.partnerId && byId[d.partnerId]) return byId[d.partnerId];
+  const n = String(d.partnerName || '').trim(); if (!n) return null;
+  const hit = inds.filter(i => i.id !== a.id && i.name === n && (!a.gender || a.gender === 'unknown' || i.gender !== a.gender));
+  return hit.length === 1 ? hit[0] : null;
+}
+function kinData(focusId) {
+  const inds = DB.getIndividuals(), evs = DB.getEvents(), byId = {};
+  inds.forEach(i => { byId[i.id] = i; });
+  const since = (() => { const d = new Date(todayStr()); d.setFullYear(d.getFullYear() - 1); return localISO(d); })();
+  const seen = new Set(), mated = [];
+  evs.filter(e => e.type === 'mating' && e.date >= since).sort((x, y) => (x.date < y.date ? 1 : -1)).forEach(e => {
+    const a = byId[e.individualId]; if (!a) return;
+    const b = kinPartner(e, a, inds, byId); if (!b) return;
+    const k = [a.id, b.id].sort().join('|'); if (seen.has(k)) return; seen.add(k);
+    if (focusId && a.id !== focusId && b.id !== focusId) return;
+    const [f, m] = a.gender === 'male' ? [b, a] : [a, b];
+    mated.push({ f, m, date: e.date, r: relationOf(f, m, inds) });
+  });
+  const here = inds.filter(g => isHere(g) && isGrown(g));
+  const fem = here.filter(g => g.gender === 'female'), mal = here.filter(g => g.gender === 'male');
+  const avoid = [];
+  fem.forEach(f => mal.forEach(m => {
+    if (focusId && f.id !== focusId && m.id !== focusId) return;
+    const r = relationOf(f, m, inds); if (r) avoid.push({ f, m, r });
+  }));
+  avoid.sort((x, y) => (x.r.level === y.r.level ? 0 : x.r.level === 'danger' ? -1 : 1));
+  const noParents = here.filter(g => !g.sireId && !g.damId).length;
+  const halfParents = here.filter(g => !!g.sireId !== !!g.damId).length;
+  return { mated, avoid, here, fem, mal, noParents, halfParents };
+}
+const kinPair = (p) => `${p.f.name} × ${p.m.name}`;
+function kinCheck(text, ctx) {
+  const { bot } = ctx;
+  const rest = String(text || '').replace(/근친\s*점검\s*명령/, '').trim();
+  const all = DB.getIndividuals();
+  const focus = rest ? (all.find(i => i.name === rest) || all.filter(i => rest.indexOf(i.name) >= 0 && i.name.length >= 2).sort((a, b) => b.name.length - a.name.length)[0]) : null;
+  if (rest && !focus) { bot(`"${rest}"라는 아이를 못 찾았어요 🙂 이름을 그대로 적어 주세요. (예: 근친점검명령 ${(all.find(isHere) || { name: '크안이' }).name})`); return false; }
+  const K = kinData(focus && focus.id);
+  const L = [focus ? `🧬 ${focus.name} 근친 점검이에요.` : '🧬 근친 점검이에요.'];
+  const bad = K.mated.filter(p => p.r && p.r.level === 'danger'), warn = K.mated.filter(p => p.r && p.r.level === 'caution'), ok = K.mated.filter(p => !p.r);
+  if (K.mated.length) {
+    L.push(`\n💞 최근 1년 메이팅 짝 ${K.mated.length}쌍`);
+    bad.forEach(p => L.push(`⛔ ${kinPair(p)} — ${p.r.label}`));
+    warn.forEach(p => L.push(`⚠️ ${kinPair(p)} — ${p.r.label}`));
+    if (ok.length) L.push(`✅ ${ok.length}쌍은 기록상 남남이에요${ok.length <= 4 ? ` (${ok.map(kinPair).join(', ')})` : ''}`);
+  } else L.push('\n💞 최근 1년 메이팅 기록에서 이름이 이어진 짝이 없어요.');
+  const dang = K.avoid.filter(p => p.r.level === 'danger'), caut = K.avoid.filter(p => p.r.level === 'caution');
+  if (focus && focus.gender !== 'male' && focus.gender !== 'female') L.push(`\n⚥ ${focus.name}는 성별이 비어 있어서 앞으로의 짝은 따져 볼 수 없어요.`);
+  else if (K.avoid.length) {
+    L.push(`\n🚫 앞으로 붙이면 안 되는 짝 (지금 곁에 있는 성체 기준)`);
+    dang.slice(0, 12).forEach(p => L.push(`⛔ ${kinPair(p)} — ${p.r.label}`));
+    if (dang.length > 12) L.push(`   …외 ${dang.length - 12}쌍`);
+    caut.slice(0, 8).forEach(p => L.push(`⚠️ ${kinPair(p)} — ${p.r.label}`));
+    if (caut.length > 8) L.push(`   …외 ${caut.length - 8}쌍`);
+  } else if (K.fem.length && K.mal.length) L.push(`\n✅ 곁에 있는 성체 암컷 ${K.fem.length} × 수컷 ${K.mal.length} 중 혈연으로 걸리는 짝이 없어요.`);
+  if (focus) { if (!focus.sireId || !focus.damId) L.push(`\n❔ ${focus.name}는 부모 기록이 ${focus.sireId || focus.damId ? "한쪽" : "모두"} 없어서 윗대로 이어지는 사이(삼촌·사촌 등)는 다 알 수 없어요.`); }
+  else if (K.noParents || K.halfParents) L.push(`\n❔ 부모가 비어 있는 성체 ${K.noParents}마리${K.halfParents ? ` · 한쪽만 있는 ${K.halfParents}마리` : ''}는 혈연을 알 수 없어 판정에서 빠져요.\n   (외부에서 데려온 아이는 정상이에요. 내 집 아이라면 "기록점검명령"으로 이어 보세요)`);
+  bot(L.join('\n'), [{ label: '기록점검명령', kind: 'reply', value: '기록점검명령' }]);
+  return false;
+}
+
+/* ── 월간보고명령 (v1.9.51) ──
+   ★ 저장하지 않고 그 달 기록에서 바로 셉니다. 기록이 없는 칸은 말하지 않습니다(0을 지어내지 않음).
+   "월간보고명령" 이번 달 · "월간보고명령 지난달" · "월간보고명령 10월" · "월간보고명령 2026년 9월" */
+function mrMonth(t) {
+  const now = todayStr(), y0 = +now.slice(0, 4), m0 = +now.slice(5, 7);
+  const pad = (n) => String(n).padStart(2, '0');
+  let m = t.match(/(20\d\d)\s*[년.\-/]\s*(\d{1,2})/);
+  if (m) return `${m[1]}-${pad(+m[2])}`;
+  if (/지난\s*달|저번\s*달|전달/.test(t)) return m0 === 1 ? `${y0 - 1}-12` : `${y0}-${pad(m0 - 1)}`;
+  m = t.match(/(\d{1,2})\s*월/);
+  if (m && +m[1] >= 1 && +m[1] <= 12) return +m[1] > m0 ? `${y0 - 1}-${pad(+m[1])}` : `${y0}-${pad(+m[1])}`;
+  return now.slice(0, 7);
+}
+const mrShift = (ym, k) => { const d = new Date(+ym.slice(0, 4), +ym.slice(5, 7) - 1 + k, 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; };
+function monthData(ym) {
+  const inds = DB.getIndividuals(), evs = DB.getEvents(), byId = {};
+  inds.forEach(i => { byId[i.id] = i; });
+  const inM = (d) => String(d || '').slice(0, 7) === ym;
+  const E = (type) => evs.filter(e => e.type === type && inM(e.date));
+  const lay = E('laying'), hat = E('hatching'), mate = E('mating'), dist = E('distribution');
+  const eggs = lay.reduce((a, e) => a + (parseInt((e.data || {}).eggCount, 10) || 0), 0);
+  const hatchN = Math.max(hat.reduce((a, e) => a + (parseInt((e.data || {}).count, 10) || 1), 0), inds.filter(i => inM(i.hatchDate) && (i.damId || i.sireId)).length);
+  const names = (list) => [...new Set(list.map(e => (byId[e.individualId] || {}).name).filter(Boolean))];
+  /* 이 달에 가장 많이 자란 아이 — 그 달 마지막 무게 − 그 이전 마지막 무게 */
+  let grow = null;
+  const gw = evs.filter(e => e.type === 'growth' && e.data && e.data.weight);
+  [...new Set(gw.filter(e => inM(e.date)).map(e => e.individualId))].forEach(id => {
+    const mine = gw.filter(e => e.individualId === id).sort((a, b) => (a.date < b.date ? -1 : 1));
+    const last = mine.filter(e => inM(e.date)).pop(), before = mine.filter(e => e.date < ym + '-01').pop() || mine.find(e => inM(e.date));
+    if (!last || !before || last === before) return;
+    const d = Math.round((Number(last.data.weight) - Number(before.data.weight)) * 10) / 10;
+    if (byId[id] && (!grow || d > grow.d)) grow = { name: byId[id].name, d, to: Number(last.data.weight) };
+  });
+  let money = null;
+  try { const rows = ledgerRows(evs, inds).filter(r => !r.opening && inM(r.date)); if (rows.length) {
+    const s = ledgerSum(rows), top = {};
+    rows.filter(r => r.flow === 'out').forEach(r => { top[r.category] = (top[r.category] || 0) + r.amount; });
+    money = { ...s, top: Object.entries(top).sort((a, b) => b[1] - a[1]).slice(0, 2) };
+  } } catch (e) {}
+  const gone = inds.filter(i => statusOf(i) === 'gone' && inM(i.goneDate));
+  return {
+    ym, lay: lay.length, eggs, layMoms: names(lay), hatch: hat.length, hatchN, mate: mate.length, mateMoms: names(mate),
+    sold: dist.length, soldNames: names(dist), gone: gone.map(i => i.name),
+    weigh: E('growth').length, feed: E('feeding').length, shed: E('shed').length, grow, money,
+  };
+}
+const won = (n) => Number(n || 0).toLocaleString() + '원';
+const vsPrev = (a, b) => (b === undefined || b === null || a === b ? '' : ` (지난달보다 ${a > b ? '+' : ''}${a - b})`);
+function monthReport(text, ctx) {
+  const { bot } = ctx;
+  const ym = mrMonth(String(text || '')), cur = todayStr().slice(0, 7);
+  if (ym > cur) { bot('아직 오지 않은 달이에요 🙂'); return false; }
+  const D = monthData(ym), P = monthData(mrShift(ym, -1));
+  const label = `${ym.slice(0, 4)}년 ${+ym.slice(5)}월`;
+  const L = [`📅 ${label} 브리딩 보고${ym === cur ? ' (오늘까지)' : ''}`];
+  const B = [];
+  if (D.mate) B.push(`💞 메이팅 ${D.mate}번 · ${D.mateMoms.join(', ')}`);
+  if (D.lay) B.push(`🥚 산란 ${D.lay}번 · 알 ${D.eggs}개${vsPrev(D.eggs, P.eggs)}\n   ${D.layMoms.join(', ')}`);
+  if (D.hatchN) B.push(`🐣 해칭 ${D.hatchN}마리${vsPrev(D.hatchN, P.hatchN)}`);
+  if (D.sold) B.push(`🤝 분양 ${D.sold}마리 · ${D.soldNames.join(', ')}`);
+  if (D.gone.length) B.push(`🌈 떠난 아이 ${D.gone.join(', ')}`);
+  if (B.length) L.push('', ...B); else L.push('', '이 달에는 메이팅·산란·해칭·분양 기록이 없어요.');
+  const C = [];
+  if (D.weigh) C.push(`무게 ${D.weigh}번`); if (D.feed) C.push(`먹이 ${D.feed}번`); if (D.shed) C.push(`탈피 ${D.shed}번`);
+  if (C.length) L.push('', `📝 돌봄 기록 ${C.join(' · ')}`);
+  if (D.grow && D.grow.d > 0) L.push(`📏 가장 많이 자란 아이: ${D.grow.name} +${fmtG(D.grow.d)}g (지금 ${fmtG(D.grow.to)}g)`);
+  if (D.money) {
+    L.push('', `💰 수입 ${won(D.money.income)} · 지출 ${won(D.money.expense)} · 남은 것 ${D.money.net >= 0 ? '+' : ''}${won(D.money.net)}`);
+    if (D.money.top.length) L.push(`   많이 쓴 곳: ${D.money.top.map(([k, v]) => `${k} ${won(v)}`).join(' · ')}`);
+  }
+  if (ym === cur) {
+    const nx = mrShift(ym, 1);
+    try {
+      const lf = layingForecasts().filter(f => !f.seasonEnded && String(f.eta).slice(0, 7) <= nx && f.eta >= todayStr());
+      const hr = clutchRows().filter(r => r.waiting && r.nPending > 0 && String(r.etaISO).slice(0, 7) <= nx && r.etaISO >= todayStr());
+      if (lf.length || hr.length) {
+        L.push('', `🔭 다음 달까지 예정`);
+        if (lf.length) L.push(`   🥚 산란 ${lf.length}마리 · ${lf.slice(0, 6).map(f => `${f.name} ${mfDate(f.eta).slice(3)}`).join(', ')}`);
+        if (hr.length) L.push(`   🐣 해칭 ${hr.length}둥지 · ${hr.slice(0, 6).map(r => `${r.momName} ${mfDate(r.etaISO).slice(3)}`).join(', ')}`);
+      }
+    } catch (e) {}
+  }
+  bot(L.join('\n'), [{ label: '◀ 지난달', kind: 'reply', value: `월간보고명령 ${mrShift(ym, -1).slice(0, 4)}년 ${+mrShift(ym, -1).slice(5)}월` }].concat(ym < cur ? [{ label: '이번 달', kind: 'reply', value: '월간보고명령' }] : []));
+  return false;
 }
 
 /* v1.9.35 설정 · 익명 방문 집계 카드 — app.min.js 에서 옮겨 왔습니다(첫 화면 크기 한도). TRACK·CHIP_ON/OFF 는 app 것을 씁니다 */
@@ -2349,7 +2505,7 @@ function HatchCheck({ navigate, showToast, onSaved }) {
 
 window.CREG_EXTRAS = {
   SeasonNoteSheet, BirthdayPopup, DupMergeCard, FeedbackCard, FeedbackInbox, fbPayload, FB_PICKS, morphFill, mfList, mfIntro, MF, TrackCard, StorageCard, PushCard, SyncCard, followUp, fuPrice, fuWho, FU, sibParents, sibGroupOf, sibParentsPlan, SIB_PAR_RE, SIB_MORE_RE, SIB, BDAY_LINES, bdayPick, SaleCardSheet, AdoptSendSheet, AdoptReceive, AddGeckoSheet, chat, LayCheck, HatchCheck,
-  weightCheck, healthCheck, saleReady, cmdHelp, HealthCard, SaleReady, healthPlan, healthApply, saleReadyData, WC, HC, SR, CMD_LIST,
+  weightCheck, healthCheck, saleReady, cmdHelp, kinCheck, monthReport, kinData, monthData, mrMonth, HealthCard, SaleReady, healthPlan, healthApply, saleReadyData, WC, HC, SR, CMD_LIST,
   // 시험(node)에서 쓰는 순수 함수들
   seasonYears, seasonNoteStats, seasonSummaryText, saveSeasonNote, toggleTrait, SEASON_TRAITS, SEASON_DIRS,
   layCheckData, hatchCheckData, adoptSnapshot, adoptMemos, adoptImport, adoptCounts, looksPrivate, ADOPT, ADOPT_KINDS, ADOPT_NEVER, saleCardData,
