@@ -51,3 +51,22 @@ test("laying rhythm: winter and spring/summer gaps are learned separately per an
   assert.match(app, /if \(ownW\.length >= 2\) \{ interval = median\(ownW\); basis = `본인 \$\{sw\} 간격/);
   assert.match(app, /else if \(herdW\[w\]\.length >= 3\)/);
 });
+
+/* v1.9.51 근친점검명령 · 월간보고명령 (대표님 2026-11-04) */
+test("kin check uses the one relationOf judge and is honest about missing parents", () => {
+  assert.match(app, /\[\/근친\\s\*점검\\s\*명령\/, 'kinCheck'\]/);
+  const p = part.slice(part.indexOf("function kinData("), part.indexOf("function mrMonth("));
+  assert.match(p, /relationOf\(f, m, inds\)/);
+  assert.doesNotMatch(p, /function relationOf/, "판정을 따로 만들지 않음");
+  assert.match(p, /혈연을 알 수 없어 판정에서 빠져요/);
+  assert.match(p, /isHere\(g\) && isGrown\(g\)/);
+});
+
+test("monthly report counts records of that month only and never invents zeros", () => {
+  assert.match(app, /\[\/월간\\s\*보고\\s\*명령\/, 'monthReport'\]/);
+  const p = part.slice(part.indexOf("function mrMonth("), part.lastIndexOf("/* v1.9.35"));
+  assert.match(p, /if \(\/지난\\s\*달\|저번\\s\*달\|전달\/\.test\(t\)\)/);
+  assert.match(p, /ledgerRows\(evs, inds\)\.filter\(r => !r\.opening && inM\(r\.date\)\)/);
+  assert.match(p, /if \(D\.lay\) B\.push/, "기록이 있는 칸만 말함");
+  assert.match(p, /월간보고명령 \$\{mrShift\(ym, -1\)\.slice\(0, 4\)\}년/, "지난달 칩은 해까지 적어 1년 넘게 거슬러가도 맞음");
+});
