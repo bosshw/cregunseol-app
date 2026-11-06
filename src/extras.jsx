@@ -1320,7 +1320,7 @@ const CMD_LIST = [
   ['무게체크명령', '아이들을 한 마리씩 불러 드려요. 숫자만 말하면 몸무게가 적혀요 (아기만: "무게체크명령 아기")'],
   ['모프누락명령', '모프가 빈 아이를 한 마리씩 여쭤봐요'],
   ['기록점검명령', '이름으로만 적힌 아빠 잇기 · 아기 아빠 연결 · 같은 이름 · 빈 칸을 한 번에 살펴요'],
-  ['분양준비명령', '나이·몸무게 기준을 넘긴 아이를 모아 분양가능으로 바꿔 드려요'],
+  ['킵체크명령', '키울 아이 번호만 말하면 🔒 KEEP, 나머지 중 기준 넘긴 아이를 분양가능으로 올려 드려요 (분양준비명령도 같아요)'],
   ['근친점검명령', '메이팅한 짝·앞으로 붙일 짝 중 피가 가까운 사이를 찾아요 (한 아이만: "근친점검명령 크안이")'],
   ['월간보고명령', '이번 달 메이팅·산란·해칭·분양·돌봄·가계부를 한 장으로 (지난달: "월간보고명령 지난달")'],
 ];
@@ -1359,7 +1359,7 @@ function wcAsk(bot) {
 function wcSummary(all) {
   const L = [`${all ? '🎉 끝났어요!' : '여기까지 할게요.'} ${WC.done}마리 몸무게를 적었어요${WC.skip ? ` · 넘어간 아이 ${WC.skip}마리` : ''}.`];
   if (WC.drops.length) L.push(`⚠️ 지난번보다 줄어든 아이: ${WC.drops.map(d => `${d.name}(${d.diff}g)`).join(', ')}\n   며칠 뒤 한 번 더 재 보시는 걸 권해요.`);
-  try { const n = saleReadyData().list.length; if (n) L.push(`🏷️ 분양 기준을 넘긴 아이가 ${n}마리예요. "분양준비명령"으로 모아 볼 수 있어요.`); } catch (e) {}
+  try { const n = saleReadyData().list.length; if (n) L.push(`🏷️ KEEP 아닌 아이 중 분양 기준을 넘긴 아이가 ${n}마리예요. "킵체크명령"으로 정리할 수 있어요.`); } catch (e) {}
   return L.join('\n');
 }
 function weightCheck(text, ctx) {
@@ -1506,96 +1506,142 @@ function HealthCard({ showToast, refreshIndividuals }) {
   );
 }
 
-/* ── 분양 준비 목록 ──
-   ★ 기준(설정 저장): 몸무게 saleMinWeight g 이상 · 나이 saleMinDays 일 이상. 1년 넘은 아이·짝짓기/산란 기록이 있는 아이·'계속 키울 아이'는 뺍니다.
-   ★ 분양가능으로 바꾸는 것만 합니다(가격·분양처는 그대로). */
+/* ── 분양 준비 = KEEP 체크 (v1.9.52 대표님 2026-11-06) ──
+   "분양 보낼 아이를 고르는 게 아니라, 안 보내는 내 축양 아이(KEEP)를 한 번에 체크하고
+    체크 안 된 나머지를 분양 리스트에 올린다 — 킵하는 아이가 더 많으니까."
+   ★ 대상: 내 집에서 태어나 날짜가 있는 아이(부화일 있음) · 지금 곁에 있음 · 상태 '보유' · 메이팅/산란 기록 없음
+   ★ 🔒 KEEP 은 앱에 원래 있던 keep 표시 그대로(프로필 KEEP 배지·홈 KEEP 모아보기와 같은 값)
+   ★ KEEP 아닌 아이 중 기준(saleMinWeight g · saleMinDays 일)을 넘긴 아이만 분양가능으로 — 한 번 더 묻고 바꿉니다
+   ★ 바꾸는 것은 status 와 keep 뿐(가격·분양처·기록은 그대로) */
 const SALE_DEF = { w: 5, d: 90 };
 function saleRule() { const s = DB.getSettings() || {}; return { w: Number(s.saleMinWeight) || SALE_DEF.w, d: Number(s.saleMinDays) || SALE_DEF.d }; }
 function saleReadyData() {
   const r = saleRule(), evs = DB.getEvents();
   const bred = new Set(evs.filter(e => e.type === 'mating' || e.type === 'laying').map(e => e.individualId));
-  const list = [], near = [];
+  const all = [];
   DB.getIndividuals().forEach(g => {
-    if (!isHere(g) || statusOf(g) !== 'own' || g.keep || bred.has(g.id)) return;
-    const a = ageDays(g); if (a === null || a >= 365) return;
+    if (!isHere(g) || statusOf(g) !== 'own' || g.isExternal || bred.has(g.id)) return;
+    const a = ageDays(g); if (a === null) return;
     const lw = lastWeigh(g.id, evs);
-    const row = { id: g.id, name: g.name, morph: g.morph || '', age: a, w: lw ? lw.w : null, wDate: lw ? lw.date : '', stale: lw ? daysBetween(lw.date, todayStr()) > 30 : true };
-    if (a >= r.d && lw && lw.w >= r.w) list.push(row);
-    else if (a >= r.d - 21 && (!lw || lw.w >= r.w * 0.8)) near.push(row);
+    const ready = a >= r.d && !!lw && lw.w >= r.w;
+    all.push({ id: g.id, name: g.name, morph: g.morph || '', age: a, keep: !!g.keep, ready, w: lw ? lw.w : null, wDate: lw ? lw.date : '', stale: lw ? daysBetween(lw.date, todayStr()) > 30 : true });
   });
-  list.sort((x, y) => y.age - x.age); near.sort((x, y) => y.age - x.age);
-  return { rule: r, list, near };
+  all.sort((x, y) => y.age - x.age || (x.name < y.name ? -1 : 1));
+  const list = all.filter(x => !x.keep && x.ready), near = all.filter(x => !x.keep && !x.ready), keep = all.filter(x => x.keep);
+  return { rule: r, all, list, near, keep };
 }
-const srLine = (x) => `${x.name}${x.morph ? ' · ' + x.morph : ''} · ${x.age}일 · ${x.w !== null ? fmtG(x.w) + 'g' : '무게 없음'}${x.w !== null && x.stale ? ` (${mfDate(x.wDate)})` : ''}`;
-const SR = { ids: null };
+function saleMove(ids) {
+  const names = [];
+  ids.forEach(id => { const g = DB.getIndividuals().find(x => x.id === id); if (g && statusOf(g) === 'own' && !g.keep) { DB.updateIndividual(id, { status: 'available' }); names.push(g.name); } });
+  return names;
+}
+const srMark = (x) => (x.keep ? '🔒 ' : x.ready ? '🏷️ ' : '');
+const srLine = (x) => `${x.name} · ${x.age}일 · ${x.w !== null ? fmtG(x.w) + 'g' : '무게 없음'}`;
+const SR = { stage: null, ids: [], move: [] };
+function srAskMove(bot) {
+  const { rule, list } = saleReadyData();
+  if (!list.length) { SR.stage = null; bot(`👍 KEEP 아닌 아이 중 기준(${rule.w}g 이상 · ${rule.d}일 이상)을 넘긴 아이는 아직 없어요.\n기준을 넘기면 분양 화면 위 카드에 🏷️로 떠요.`); return false; }
+  SR.stage = 'move'; SR.move = list.map(x => x.id);
+  const stale = list.filter(x => x.stale).length;
+  bot(`🏷️ KEEP 아닌 아이 중 기준을 넘긴 ${list.length}마리예요\n${list.map(x => '• ' + srLine(x)).join('\n')}`
+    + (stale ? `\n📏 무게를 잰 지 한 달 넘은 아이가 ${stale}마리 있어요.` : '')
+    + '\n\n이 아이들을 분양가능으로 올릴까요?',
+    [{ label: '네, 올려 주세요', kind: 'reply', value: '네' }, { label: '아니요', kind: 'reply', value: '아니요' }]);
+  return true;
+}
 function saleReady(text, ctx) {
   const { bot, refreshIndividuals } = ctx;
   const t = String(text || '').trim();
-  if (/분양\s*준비\s*명령/.test(t) || !SR.ids) {
-    const { rule, list, near } = saleReadyData();
-    if (!list.length) {
-      bot(`🏷️ 기준(${rule.w}g 이상 · ${rule.d}일 이상)을 넘긴 아이가 아직 없어요.` + (near.length ? `\n곧 될 아이: ${near.slice(0, 8).map(x => x.name).join(', ')}` : '') + '\n(기준은 분양 화면 위 카드에서 바꿀 수 있어요)');
-      SR.ids = null; return false;
-    }
-    SR.ids = list.map(x => x.id);
-    const stale = list.filter(x => x.stale).length;
-    bot(`🏷️ 분양 준비된 아이 ${list.length}마리예요 (${rule.w}g 이상 · ${rule.d}일 이상)\n\n` + list.map((x, k) => `${k + 1}. ${srLine(x)}`).join('\n')
-      + (stale ? `\n\n📏 무게를 잰 지 한 달 넘은 아이가 ${stale}마리 있어요 — "무게체크명령 아기"로 다시 재 보셔도 좋아요.` : '')
-      + '\n\n분양가능으로 바꿀까요? "전부" 또는 번호(예: 1, 3) · 그대로 두려면 "아니요"',
-      [{ label: '전부', kind: 'reply', value: '전부' }, { label: '아니요', kind: 'reply', value: '아니요' }]);
+  if (/분양\s*준비\s*명령|킵\s*체크\s*명령|KEEP\s*체크\s*명령/i.test(t) || !SR.stage) {
+    const { rule, all, keep } = saleReadyData();
+    if (!all.length) { SR.stage = null; bot('🔒 살펴볼 아이가 없어요 🙂 (부화일이 있고, 메이팅·산란 기록이 없는 보유 중인 아이만 봐요)'); return false; }
+    SR.stage = 'keep'; SR.ids = all.map(x => x.id);
+    bot(`🔒 KEEP 체크예요. 키울 아이 번호만 말씀해 주세요 (예: 1, 4, 7)\n이미 🔒인 아이 번호를 말하면 풀려요. 그대로면 "그대로".\n\n`
+      + all.map((x, k) => `${k + 1}. ${srMark(x)}${srLine(x)}`).join('\n')
+      + `\n\n🔒 KEEP ${keep.length}마리 · 🏷️ 기준(${rule.w}g·${rule.d}일) 넘김`,
+      [{ label: '그대로', kind: 'reply', value: '그대로' }, { label: '그만', kind: 'reply', value: '그만' }]);
     return true;
   }
-  let pick = null;
-  const nums = t.match(/\d+/g);
-  if (nums && /^[\d\s,.번과와및그리고]+$/.test(t)) pick = nums.map(n => SR.ids[Number(n) - 1]).filter(Boolean);
-  else if (/^(전부|다|모두|네|예|응|좋아)/.test(t)) pick = SR.ids;
-  if (!pick) { SR.ids = null; bot(CMD_NO.test(t) || CMD_STOP.test(t) ? '그대로 둘게요 🙂' : '분양 준비는 여기까지 할게요 🙂'); return false; }
-  const names = [];
-  pick.forEach(id => { const g = DB.getIndividuals().find(x => x.id === id); if (g && statusOf(g) === 'own') { DB.updateIndividual(id, { status: 'available' }); names.push(g.name); } });
-  SR.ids = null;
-  refreshIndividuals && refreshIndividuals();
-  bot(names.length ? `✅ ${names.length}마리를 분양가능으로 바꿨어요: ${names.join(', ')}\n분양 화면에서 가격과 분양 카드를 준비할 수 있어요.` : '바꿀 아이가 없었어요 🙂');
-  return false;
+  if (CMD_STOP.test(t)) { SR.stage = null; bot('여기까지 할게요 🙂'); return false; }
+  if (SR.stage === 'keep') {
+    const nums = t.match(/\d+/g);
+    if (nums && /^[\d\s,.번과와및그리고]+$/.test(t)) {
+      const on = [], off = [];
+      nums.map(n => SR.ids[Number(n) - 1]).filter(Boolean).forEach(id => {
+        const g = DB.getIndividuals().find(x => x.id === id); if (!g) return;
+        DB.updateIndividual(id, { keep: !g.keep }); (g.keep ? off : on).push(g.name);
+      });
+      refreshIndividuals && refreshIndividuals();
+      bot([on.length ? `🔒 KEEP: ${on.join(', ')}` : '', off.length ? `🔓 KEEP 풀림: ${off.join(', ')}` : ''].filter(Boolean).join('\n') || '바뀐 게 없어요 🙂');
+      return srAskMove(bot);
+    }
+    if (/^(그대로|없어|없음|됐어|다음|패스|넘어가)/.test(t)) return srAskMove(bot);
+    bot('키울 아이 번호만 말씀해 주세요 🙂 (예: 1, 4, 7) · 그대로면 "그대로"');
+    return true;
+  }
+  if (SR.stage === 'move') {
+    SR.stage = null;
+    if (CMD_YES.test(t)) {
+      const names = saleMove(SR.move);
+      refreshIndividuals && refreshIndividuals();
+      bot(names.length ? `✅ ${names.length}마리를 분양가능으로 올렸어요: ${names.join(', ')}\n분양 화면에서 가격과 분양 카드를 준비할 수 있어요.` : '올릴 아이가 없었어요 🙂');
+      return false;
+    }
+    bot('그대로 둘게요 🙂 KEEP 표시는 저장해 뒀어요.');
+    return false;
+  }
+  SR.stage = null; return false;
 }
-function SaleReady({ navigate, showToast, refreshIndividuals }) {
+function SaleReady({ showToast, refreshIndividuals }) {
   const [, bump] = useState(0);
   const [open, setOpen] = useState(() => { try { return localStorage.getItem('cg_sr_open') !== '0'; } catch (e) { return true; } });
   const [edit, setEdit] = useState(false);
-  const [card, setCard] = useState(null);
-  const { rule, list, near } = saleReadyData();
-  if (!list.length && !near.length && !edit) return null;
+  const [ask, setAsk] = useState(false);
+  const { rule, all, list, near, keep } = saleReadyData();
+  if (!all.length) return null;
   const tog = () => { const v = !open; setOpen(v); try { localStorage.setItem('cg_sr_open', v ? '1' : '0'); } catch (e) {} };
   const setRule = (k, v) => { const n = Number(v); if (!(n > 0)) return; DB.saveSettings({ ...DB.getSettings(), [k]: n }); bump(x => x + 1); };
-  const avail = (id) => { DB.updateIndividual(id, { status: 'available' }); bump(x => x + 1); refreshIndividuals && refreshIndividuals(); showToast && showToast('🏷️ 분양가능으로 바꿨어요'); };
-  const gk = (id) => DB.getIndividuals().find(i => i.id === id);
+  const keepTog = (x) => { DB.updateIndividual(x.id, { keep: !x.keep }); setAsk(false); bump(n => n + 1); refreshIndividuals && refreshIndividuals(); };
+  const move = () => { const names = saleMove(list.map(x => x.id)); setAsk(false); bump(n => n + 1); refreshIndividuals && refreshIndividuals(); showToast && showToast(`🏷️ ${names.length}마리를 분양가능으로 올렸어요`); };
   return (
     <div className="card lc" style={{margin:'12px 16px 0'}} data-testid="sale-ready">
+      <style>{`.sr-grid{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 8px}
+.sr-chip{border:1.5px solid var(--border);background:var(--card);border-radius:12px;padding:6px 10px;font:inherit;font-size:13px;font-weight:700;color:var(--text);text-align:left;line-height:1.25;cursor:pointer}
+.sr-chip small{display:block;font-size:10.5px;font-weight:600;color:var(--text3)}
+.sr-chip.rd{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+.sr-chip.kp{background:linear-gradient(135deg,#2F6F4A 0%,#1E4A31 100%);border-color:#14361F;color:#FFEFC2}
+.sr-chip.kp small{color:#CFE6D5}`}</style>
       <button className="lc-fold" style={{marginTop:0, paddingTop:0, borderTop:'none', fontWeight:800, color:'var(--text)'}} onClick={tog} data-testid="sr-fold">
-        {open ? '▾' : '▸'} 🏷️ 분양 준비된 아이 {list.length}마리{near.length ? ` · 곧 ${near.length}마리` : ''}
+        {open ? '▾' : '▸'} 🔒 KEEP 체크 · 분양 준비 {list.length}마리 · KEEP {keep.length}
       </button>
       {open && <>
-        <div className="lc-sub" style={{margin:'2px 0 6px'}}>
-          기준 {rule.w}g 이상 · {rule.d}일 이상 <button className="onb-link" onClick={() => setEdit(!edit)} data-testid="sr-rule">{edit ? '닫기' : '바꾸기'}</button>
+        <div className="lc-sub" style={{margin:'2px 0 4px', lineHeight:1.5}}>
+          키울 아이만 눌러 🔒 KEEP으로 두세요. 나머지 중 기준({rule.w}g 이상 · {rule.d}일 이상)을 넘긴 🏷️ 아이를 한 번에 분양가능으로 올려요.
+          {' '}<button className="onb-link" onClick={() => setEdit(!edit)} data-testid="sr-rule">{edit ? '닫기' : '기준 바꾸기'}</button>
         </div>
         {edit && <div style={{display:'flex', gap:8, marginBottom:8, fontSize:12.5, alignItems:'center'}}>
           <input className="input" style={{width:70}} type="number" inputMode="decimal" defaultValue={rule.w} onBlur={e => setRule('saleMinWeight', e.target.value)} data-testid="sr-w" />g 이상
           <input className="input" style={{width:70}} type="number" inputMode="numeric" defaultValue={rule.d} onBlur={e => setRule('saleMinDays', e.target.value)} data-testid="sr-d" />일 이상
         </div>}
-        {list.map(x => (
-          <div className="lc-row" key={x.id} data-testid="sr-row">
-            <div className="lc-main" onClick={() => { const g = gk(x.id); if (g && navigate) navigate('profile', { gecko: g }); }} style={{cursor:'pointer'}}>
-              <div className="lc-name">{x.name}{x.morph && <i> · {x.morph}</i>}</div>
-              <div className="lc-sub">{x.age}일 · {fmtG(x.w)}g{x.stale ? ` · 📏 ${mfDate(x.wDate)} 잰 무게` : ''}</div>
-            </div>
-            <button className="lc-go" style={{background:'var(--card)', color:'var(--accent2)', border:'1.5px solid var(--accent)'}} onClick={() => { const g = gk(x.id); if (g) setCard(g); }} data-testid="sr-card">카드</button>
-            <button className="lc-go" onClick={() => avail(x.id)} data-testid="sr-avail">분양가능</button>
+        <div className="sr-grid">
+          {all.map(x => (
+            <button key={x.id} className={'sr-chip' + (x.keep ? ' kp' : x.ready ? ' rd' : '')} onClick={() => keepTog(x)} data-testid="sr-chip">
+              {x.keep ? '🔒 ' : x.ready ? '🏷️ ' : ''}{x.name}
+              <small>{x.age}일{x.w !== null ? ` · ${fmtG(x.w)}g` : ' · 무게 없음'}</small>
+            </button>
+          ))}
+        </div>
+        {list.length > 0 && !ask && <button className="btn btn-primary" style={{width:'100%'}} onClick={() => setAsk(true)} data-testid="sr-move">🏷️ KEEP 아닌 {list.length}마리 분양가능으로 올리기</button>}
+        {ask && <div style={{border:'1.5px solid var(--accent)', borderRadius:12, padding:10}} data-testid="sr-ask">
+          <div style={{fontSize:13, fontWeight:700, marginBottom:8, lineHeight:1.5}}>{list.map(x => x.name).join(', ')}<br/>{list.length}마리를 분양가능으로 올릴까요?</div>
+          <div style={{display:'flex', gap:8}}>
+            <button className="btn btn-primary" style={{flex:1}} onClick={move} data-testid="sr-move-yes">올리기</button>
+            <button className="btn" style={{flex:1}} onClick={() => setAsk(false)}>취소</button>
           </div>
-        ))}
-        {near.length > 0 && <div className="lc-sub" style={{marginTop:6}}>곧 될 아이: {near.slice(0, 10).map(x => `${x.name}(${x.age}일${x.w !== null ? ' · ' + fmtG(x.w) + 'g' : ''})`).join(' · ')}</div>}
-        <div style={{fontSize:11, color:'var(--text3)', marginTop:6}}>대화창에 "분양준비명령"이라고 하셔도 돼요</div>
+        </div>}
+        {!list.length && <div className="lc-sub">🏷️ 기준을 넘긴 KEEP 아닌 아이가 아직 없어요{near.length ? ` · 곧 될 아이 ${near.length}마리` : ''}</div>}
+        <div style={{fontSize:11, color:'var(--text3)', marginTop:6}}>대화창에 "킵체크명령"이라고 하셔도 돼요</div>
       </>}
-      {card && <SaleCardSheet gecko={card} showToast={showToast} onClose={() => setCard(null)}
-        onMakeShare={() => { setCard(null); if (navigate) navigate('profile', { gecko: card }); }} />}
     </div>
   );
 }
@@ -2504,7 +2550,7 @@ function HatchCheck({ navigate, showToast, onSaved }) {
 
 
 window.CREG_EXTRAS = {
-  SeasonNoteSheet, BirthdayPopup, DupMergeCard, FeedbackCard, FeedbackInbox, fbPayload, FB_PICKS, morphFill, mfList, mfIntro, MF, TrackCard, StorageCard, PushCard, SyncCard, followUp, fuPrice, fuWho, FU, sibParents, sibGroupOf, sibParentsPlan, SIB_PAR_RE, SIB_MORE_RE, SIB, BDAY_LINES, bdayPick, SaleCardSheet, AdoptSendSheet, AdoptReceive, AddGeckoSheet, chat, LayCheck, HatchCheck,
+  SeasonNoteSheet, BirthdayPopup, DupMergeCard, FeedbackCard, FeedbackInbox, fbPayload, FB_PICKS, morphFill, mfList, mfIntro, MF, TrackCard, StorageCard, PushCard, SyncCard, followUp, fuPrice, fuWho, FU, sibParents, sibGroupOf, sibParentsPlan, SIB_PAR_RE, SIB_MORE_RE, SIB, BDAY_LINES, bdayPick, SaleCardSheet, AdoptSendSheet, AdoptReceive, AddGeckoSheet, chat, LayCheck, HatchCheck, saleMove,
   weightCheck, healthCheck, saleReady, cmdHelp, kinCheck, monthReport, kinData, monthData, mrMonth, HealthCard, SaleReady, healthPlan, healthApply, saleReadyData, WC, HC, SR, CMD_LIST,
   // 시험(node)에서 쓰는 순수 함수들
   seasonYears, seasonNoteStats, seasonSummaryText, saveSeasonNote, toggleTrait, SEASON_TRAITS, SEASON_DIRS,
