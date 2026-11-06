@@ -37,16 +37,16 @@ test("health check only links (never renames) and asks before fixing", () => {
   assert.match(app, /<Extra part="HealthCard"/);
 });
 
-test("KEEP check (v1.9.52): mark the keepers, the rest that pass the rule go up for sale after asking", () => {
+test("sale decision inbox (v1.9.53): one line only when something to decide, KEEP or sale makes it disappear", () => {
   const p = part.slice(part.indexOf("const SALE_DEF"), part.indexOf("/* ── 근친점검명령"));
   assert.match(p, /const SALE_DEF = \{ w: 5, d: 90 \};/);
   assert.match(p, /s\.saleMinWeight/); assert.match(p, /s\.saleMinDays/);
-  assert.match(p, /statusOf\(g\) !== 'own' \|\| g\.isExternal \|\| bred\.has\(g\.id\)/, "보유·내 집·번식 기록 없는 아이만");
-  assert.match(p, /const list = all\.filter\(x => !x\.keep && x\.ready\)/, "KEEP 아닌 + 기준 넘긴 아이만 분양 후보");
-  assert.match(p, /if \(g && statusOf\(g\) === 'own' && !g\.keep\) \{ DB\.updateIndividual\(id, \{ status: 'available' \}\)/, "KEEP은 절대 올리지 않음");
-  assert.match(p, /DB\.updateIndividual\(x\.id, \{ keep: !x\.keep \}\)/, "칩 한 번에 KEEP 켜고 끔");
-  assert.match(p, /setAsk\(true\)/, "올리기 전에 한 번 더 물음");
-  assert.match(p, /이 아이들을 분양가능으로 올릴까요\?/);
+  assert.match(p, /statusOf\(g\) !== 'own' \|\| g\.isExternal \|\| g\.keep \|\| bred\.has\(g\.id\)/, "KEEP·번식 아이는 대기함에 안 뜸");
+  assert.match(p, /if \(!list\.length && !open\) return null;/, "정할 게 없으면 아무것도 안 보임");
+  assert.match(p, /how === 'keep' \? \{ keep: true \} : \{ status: 'available', keep: false \}/);
+  assert.match(p, /나머지 전부 🔒 KEEP/);
+  assert.match(p, /나머지는 🔒 KEEP으로 둘게요/);
+  assert.match(p, /이렇게 할까요\?/, "대화는 한 번 더 묻고 바꿈");
   assert.match(app, /<Extra part="SaleReady" navigate=\{navigate\}/);
 });
 
