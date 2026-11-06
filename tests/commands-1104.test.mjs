@@ -11,7 +11,7 @@ const part = ex.slice(ex.indexOf("v1.9.50 대화 명령 묶음"), ex.lastIndexOf
 test("command words end with 명령 and the chat keeps routing answers to the running command", () => {
   assert.match(app, /\[\/무게\\s\*체크\\s\*명령\/, 'weightCheck'\]/);
   assert.match(app, /\[\/기록\\s\*점검\\s\*명령\/, 'healthCheck'\]/);
-  assert.match(app, /\[\/분양\\s\*준비\\s\*명령\/, 'saleReady'\]/);
+  assert.match(app, /\[\/분양\\s\*준비\\s\*명령\|킵\\s\*체크\\s\*명령\|KEEP\\s\*체크\\s\*명령\/i, 'saleReady'\]/);
   assert.match(app, /cmdRef\.current = X\[cmd\]\(text, \{ bot, refreshIndividuals, navigate \}\) \? cmd : null;/);
   assert.match(app, /if \(\/모프\\s\*누락\\s\*명령\/\.test\(text\)\) cmdRef\.current = null; else if \(CMD_RUN\.some/, "새 명령이 하던 명령을 내려놓음");
   assert.doesNotMatch("무게 체크", /무게\s*체크\s*명령/, "'무게 체크'만으로는 명령이 아님");
@@ -37,12 +37,16 @@ test("health check only links (never renames) and asks before fixing", () => {
   assert.match(app, /<Extra part="HealthCard"/);
 });
 
-test("sale-ready list: rule from settings, babies only, never bred, status own only", () => {
-  const p = part.slice(part.indexOf("const SALE_DEF"), part.indexOf("const srLine"));
+test("KEEP check (v1.9.52): mark the keepers, the rest that pass the rule go up for sale after asking", () => {
+  const p = part.slice(part.indexOf("const SALE_DEF"), part.indexOf("/* ── 근친점검명령"));
   assert.match(p, /const SALE_DEF = \{ w: 5, d: 90 \};/);
   assert.match(p, /s\.saleMinWeight/); assert.match(p, /s\.saleMinDays/);
-  assert.match(p, /statusOf\(g\) !== 'own' \|\| g\.keep \|\| bred\.has\(g\.id\)/);
-  assert.match(p, /a >= 365\) return;/);
+  assert.match(p, /statusOf\(g\) !== 'own' \|\| g\.isExternal \|\| bred\.has\(g\.id\)/, "보유·내 집·번식 기록 없는 아이만");
+  assert.match(p, /const list = all\.filter\(x => !x\.keep && x\.ready\)/, "KEEP 아닌 + 기준 넘긴 아이만 분양 후보");
+  assert.match(p, /if \(g && statusOf\(g\) === 'own' && !g\.keep\) \{ DB\.updateIndividual\(id, \{ status: 'available' \}\)/, "KEEP은 절대 올리지 않음");
+  assert.match(p, /DB\.updateIndividual\(x\.id, \{ keep: !x\.keep \}\)/, "칩 한 번에 KEEP 켜고 끔");
+  assert.match(p, /setAsk\(true\)/, "올리기 전에 한 번 더 물음");
+  assert.match(p, /이 아이들을 분양가능으로 올릴까요\?/);
   assert.match(app, /<Extra part="SaleReady" navigate=\{navigate\}/);
 });
 
