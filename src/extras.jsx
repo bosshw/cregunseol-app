@@ -1521,8 +1521,9 @@ function saleReadyData() {
   DB.getIndividuals().forEach(g => {
     if (!isHere(g) || statusOf(g) !== 'own' || g.isExternal || g.keep || bred.has(g.id)) return;
     const a = ageDays(g); if (a === null || a < r.d) return;
-    const lw = lastWeigh(g.id, evs); if (!lw || lw.w < r.w) return;
-    list.push({ id: g.id, name: g.name, morph: g.morph || '', age: a, w: lw.w, wDate: lw.date, stale: daysBetween(lw.date, todayStr()) > 30 });
+    /* v1.9.54 무게를 안 재는 분도 있으니 — 무게 기록이 없으면 나이만, 있으면 나이+무게 (대표님 2026-11-07) */
+    const lw = lastWeigh(g.id, evs); if (lw && lw.w < r.w) return;
+    list.push({ id: g.id, name: g.name, morph: g.morph || '', age: a, w: lw ? lw.w : null, wDate: lw ? lw.date : '', stale: lw ? daysBetween(lw.date, todayStr()) > 30 : false });
   });
   list.sort((x, y) => y.age - x.age || (x.name < y.name ? -1 : 1));
   return { rule: r, list };
@@ -1534,14 +1535,14 @@ function saleDecide(id, how) {
   return g.name;
 }
 const saleMove = (ids) => ids.map(id => saleDecide(id, 'sale')).filter(Boolean);
-const srLine = (x) => `${x.name}${x.morph ? ' · ' + x.morph : ''} · ${x.age}일 · ${fmtG(x.w)}g`;
+const srLine = (x) => `${x.name}${x.morph ? ' · ' + x.morph : ''} · ${x.age}일 · ${x.w !== null ? fmtG(x.w) + 'g' : '무게 없음'}`;
 const SR = { stage: null, ids: [], sale: [] };
 function saleReady(text, ctx) {
   const { bot, refreshIndividuals } = ctx;
   const t = String(text || '').trim();
   if (/분양\s*준비\s*명령|킵\s*체크\s*명령|KEEP\s*체크\s*명령/i.test(t) || !SR.stage) {
     const { rule, list } = saleReadyData();
-    if (!list.length) { SR.stage = null; bot(`👍 정할 아이가 없어요.\n기준(${rule.w}g 이상 · ${rule.d}일 이상)을 넘긴 아이가 생기면 분양 화면 위에 한 줄로 알려 드려요.`); return false; }
+    if (!list.length) { SR.stage = null; bot(`👍 정할 아이가 없어요.\n기준(${rule.d}일 이상 · 잰 무게가 있으면 ${rule.w}g 이상)을 넘긴 아이가 생기면 분양 화면 위에 한 줄로 알려 드려요.`); return false; }
     SR.stage = 'pick'; SR.ids = list.map(x => x.id);
     bot(`🏷️ 분양 기준을 넘긴 아이 ${list.length}마리예요\n\n` + list.map((x, k) => `${k + 1}. ${srLine(x)}`).join('\n')
       + '\n\n분양 보낼 아이 번호만 말씀해 주세요 (예: 1, 3)\n나머지는 🔒 KEEP으로 둘게요.',
@@ -1599,7 +1600,7 @@ function SaleReady({ showToast, refreshIndividuals }) {
           <div className="pe-head"><b>🏷️ 키울까요, 보낼까요?</b><button onClick={() => setOpen(false)} aria-label="닫기">×</button></div>
           <div className="pe-body">
             <div style={{fontSize:12.5, color:'var(--text3)'}}>
-              기준 {rule.w}g 이상 · {rule.d}일 이상 <button className="onb-link" onClick={() => setEdit(!edit)} data-testid="sr-rule">{edit ? '닫기' : '바꾸기'}</button>
+              기준 {rule.d}일 이상 · 잰 무게가 있으면 {rule.w}g 이상 <button className="onb-link" onClick={() => setEdit(!edit)} data-testid="sr-rule">{edit ? '닫기' : '바꾸기'}</button>
             </div>
             {edit && <div style={{display:'flex', gap:8, fontSize:12.5, alignItems:'center'}}>
               <input className="input" style={{width:70}} type="number" inputMode="decimal" defaultValue={rule.w} onBlur={e => setRule('saleMinWeight', e.target.value)} data-testid="sr-w" />g 이상
@@ -1610,7 +1611,7 @@ function SaleReady({ showToast, refreshIndividuals }) {
                 <div className="sr-row" key={x.id} data-testid="sr-row">
                   <div className="lc-main">
                     <div className="lc-name">{x.name}{x.morph && <i> · {x.morph}</i>}</div>
-                    <div className="lc-sub">{x.age}일 · {fmtG(x.w)}g{x.stale ? ` · 📏 ${mfDate(x.wDate)} 잰 무게` : ''}</div>
+                    <div className="lc-sub">{x.age}일 · {x.w !== null ? fmtG(x.w) + 'g' : '무게 없음'}{x.stale ? ` · 📏 ${mfDate(x.wDate)} 잰 무게` : ''}</div>
                   </div>
                   <button className="lc-go sr-k" onClick={() => one(x, 'keep')} data-testid="sr-keep">🔒 KEEP</button>
                   <button className="lc-go" onClick={() => one(x, 'sale')} data-testid="sr-sale">🏷️ 분양</button>
