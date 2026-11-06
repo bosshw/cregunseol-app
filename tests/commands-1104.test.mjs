@@ -48,6 +48,8 @@ test("sale decision inbox (v1.9.53): one line only when something to decide, KEE
   assert.match(p, /나머지는 🔒 KEEP으로 둘게요/);
   assert.match(p, /이렇게 할까요\?/, "대화는 한 번 더 묻고 바꿈");
   assert.match(app, /<Extra part="SaleReady" navigate=\{navigate\}/);
+  assert.match(p, /if \(lw && lw\.w < r\.w\) return;/, "v1.9.54 무게 기록이 없으면 나이만 봄");
+  assert.match(p, /'무게 없음'/);
 });
 
 test("laying rhythm: winter and spring/summer gaps are learned separately per animal", () => {
