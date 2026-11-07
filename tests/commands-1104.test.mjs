@@ -91,3 +91,14 @@ test("adopted geckos are never auto-MY even with known parents; manual MY still 
   assert.match(app, /if \(markAdoptedFromMemos\(\)\) refreshIndividuals\(\);/, "예전 기록도 한 번만 정리");
   assert.match(app, /g\.isFromCreGunseol !== true\) \{ DB\.updateIndividual\(id, \{ adopted: true \}\)/, "MY 직접 켠 아이는 건드리지 않음");
 });
+
+/* v1.9.57 동기화 — 두 기기가 같은 기록을 고쳐도 서로의 칸을 덮지 않게 (대표님 2026-11-07) */
+test("sync merges per field instead of overwriting whole records/settings", () => {
+  assert.match(app, /return \{ \.\.\.r, updatedAt: t, _ft: stampFields\(p, r, t\) \};/, "고친 칸마다 시각");
+  assert.match(app, /const ftOf = \(o, k\) => \(o && o\._ft \? \(o\._ft\[k\] \|\| ''\) : /, "옛 기록은 한 줄 단위로");
+  assert.match(app, /const merged = mergeFields\(list\[idx\], incoming\);/);
+  assert.match(app, /const merged = mergeFields\(settings, incoming\);/, "설정도 칸마다");
+  assert.doesNotMatch(app, /if \(pending\.has\('settings\|main'\)\) return;/, "못 올린 설정이 있다고 서버 것을 통째로 무시하지 않음");
+  assert.match(app, /if \(this\.again\) \{ this\.again = false; this\.touch\(\); \}/, "합친 결과를 다시 올림");
+  assert.match(app, /if \(dataChanged\) \{ markAdoptedFromMemos\(\);/, "다른 기기에서 온 입양 메모도 반영");
+});
