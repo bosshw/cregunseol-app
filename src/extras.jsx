@@ -307,7 +307,7 @@ async function adoptImport(snap, code, opt) {
     name, gender: snap.ind.gender || 'unknown', morph: snap.ind.morph || '', morphUnknown: !!snap.ind.morphUnknown,
     spots: snap.ind.spots || '', hatchDate: snap.ind.hatchDate || '',
     traits: Array.isArray(snap.ind.traits) ? snap.ind.traits : [], traitNote: snap.ind.traitNote || '',
-    status: 'own', isFromCreGunseol: false, isExternal: false, sireId: null, damId: null,
+    status: 'own', isFromCreGunseol: false, isExternal: false, sireId: null, damId: null, adopted: true,
     shareCode: newShareCode(),
     adoptFrom: {
       code, breeder: snap.breeder || '', origName: snap.ind.name, sentAt: snap.sentAt || '', at: todayStr(),
@@ -810,6 +810,7 @@ function AddGeckoSheet({ onClose, navigate, showToast, refreshIndividuals }) {
       const saved = DB.addIndividual({
         name: nm, gender: v.gender, morph: v.morph.trim(), hatchDate: v.hatchDate || '', status: v.status,
         isFromCreGunseol: !!v.mine, isExternal: false, sireId: v.sireId || null, damId: v.damId || null,
+        adopted: !v.mine,   // v1.9.56 "우리 집에서 태어난 아이(MY)"를 안 켜면 부모를 골라도 MY 아님
         shareCode: newShareCode(),
       });
       if (photo) DB.addEvent({ individualId: saved.id, type: 'photo', date: todayStr(), data: { photo } });

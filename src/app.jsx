@@ -660,7 +660,7 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.55';
+const APP_VERSION = '1.9.56';
 const APP_PATCHED = '2026-10-31';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -2335,7 +2335,7 @@ function publicSnapshot(gecko, allInds, allEvs) {
     sire: nameOf(gecko.sireId) || (gecko.adoptFrom && gecko.adoptFrom.sire ? gecko.adoptFrom.sire.name : ''),   // v1.9.21 입양으로 받은 아이는 받을 때 적힌 부모 이름
     dam: nameOf(gecko.damId) || (gecko.adoptFrom && gecko.adoptFrom.dam ? gecko.adoptFrom.dam.name : ''),
     litter: sibs,
-    fromUs: !!gecko.isFromCreGunseol,
+    fromUs: isMine(gecko),   // v1.9.56 앱의 MY 배지와 같은 판정
     summary: publicSummary(mine, evs.filter(e => e.individualId === gecko.id).map(e => e.date)),
     breeding: publicBreeding(gecko, list, evs),
     weights,
@@ -3414,7 +3414,7 @@ const PUSH = {
    (저장 필드 이름 isFromCreGunseol/cgOff 는 기존 데이터 호환 때문에 그대로 둡니다) */
 /* v1.9.55 대표님 2026-11-07 "데려온 애가 어떻게 MY겠어" — 데려왔다고 한 아이(adopted)는 부모를 알아도 저절로 MY 가 되지 않습니다.
    프로필에서 MY 를 직접 켜면(isFromCreGunseol=true) 그게 우선입니다. */
-const isMine = (i) => !!i && !i.cgOff && (i.isFromCreGunseol === true || (!i.adopted && !!(i.sireId || i.damId)));
+const isMine = (i) => !!i && !i.cgOff && !i.isExternal && (i.isFromCreGunseol === true || (!i.adopted && !i.adoptFrom && !!(i.sireId || i.damId)));   // v1.9.56 외부 개체·공유로 받은 아이도 MY 아님
 /* 데려온 아이 표시 — 입양처·입양가를 적거나 "데려왔어"라고 하면 붙입니다 */
 function markAdopted(indId) {
   const g = DB.getIndividuals().find(i => i.id === indId);
@@ -8130,6 +8130,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       heldProfileRef.current = null;
       if (hp.spots) morphLine += '\n' + applySpots(saved, hp.spots);
       if (hp.adopt) morphLine += '\n' + applyAdopt(saved, hp.adopt);
+      if (hp.adopt || hp.ask) markAdopted(saved.id);   // v1.9.56 처음 보는 이름 + "데려왔어" → 데려온 아이
       if (hp.ask) follow({ adopt: saved.id, date: hp.ask });   // v1.9.39 등록 뒤 얼마에·어디서
     }
     const extLine = isExternal ? '\n(외부 개체로 등록했어요 — 축양리스트엔 표시되지 않고, 혈통 연결에만 사용돼요)' : '';
@@ -11295,7 +11296,7 @@ function buildWorkbook(XLSX) {
   add('메이팅기록', a2, [3, 6, 12, 14, 14, ...new Array(12).fill(15), 20]);
 
   /* ── 3. 해칭기록 (부·모가 연결된 개체) ── */
-  const babies = inds.filter(i => (i.sireId || i.damId) && !i.isExternal)
+  const babies = inds.filter(i => (i.sireId || i.damId) && isMine(i))   // v1.9.56 데려온 아이는 해칭기록에서 뺌
     .sort((a, b) => ((a.hatchDate || '') < (b.hatchDate || '') ? -1 : 1));
   const a3 = [['', '', '', '', '', '크레건설'], [], [],
     ['', '넘버', '이름', '생년원일', '부', '모', '모프', '점여부', '분양자', '분양가', '특이사항']];
