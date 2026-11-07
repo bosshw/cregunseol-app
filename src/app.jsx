@@ -63,6 +63,48 @@ const withoutPhoto = (ev) =>
     ? { ...ev, data: { ...ev.data, photo: '' } } : ev;
 
 /* ══════════════════════════════════════════
+   v1.9.57 칸 단위 동기화 — 대표님 2026-11-07 "동기화 오류 같은 것도 찾아서 고쳐줘"
+   예전: 기록 한 줄을 통째로 주고받아서, 폰에서 KEEP 을 누르고 PC 에서 모프를 고치면
+         나중에 올린 쪽이 다른 쪽 칸까지 옛 값으로 덮었습니다(설정도 마찬가지 — 테마 vs 분양 기준).
+   지금: 고친 칸마다 시각(_ft)을 적어 두고, 서로 다르면 칸마다 더 나중에 고친 쪽을 남깁니다.
+   ★ _ft 가 없는 옛 기록은 예전처럼 한 줄 단위(updatedAt)로 판단합니다.
+   ══════════════════════════════════════════ */
+const FT_SKIP = { updatedAt: 1, _ft: 1, _updatedAt: 1 };
+function stampFields(p, r, t) {
+  const ft = { ...((p && p._ft) || {}) };
+  const keys = new Set([...Object.keys(p || {}), ...Object.keys(r || {})]);
+  keys.forEach(k => {
+    if (FT_SKIP[k]) return;
+    let diff = true;
+    try { diff = JSON.stringify(p ? p[k] : undefined) !== JSON.stringify(r ? r[k] : undefined); } catch (e) {}
+    if (diff) ft[k] = t;
+  });
+  return ft;
+}
+const ftOf = (o, k) => (o && o._ft ? (o._ft[k] || '') : ((o && (o.updatedAt || o._updatedAt)) || ''));
+/* 같은 기록의 이 기기 사본(l)과 서버 사본(r)을 칸마다 합칩니다. 값이 같거나 시각이 같으면 서버 쪽 */
+function mergeFields(l, r) {
+  const out = {}, ft = {};
+  const keys = new Set([...Object.keys(l || {}), ...Object.keys(r || {})]);
+  keys.forEach(k => {
+    if (FT_SKIP[k]) return;
+    const lt = ftOf(l, k), rt = ftOf(r, k);
+    let eq = false;
+    try { eq = JSON.stringify(l[k]) === JSON.stringify(r[k]); } catch (e) {}
+    const useL = !eq && lt > rt;
+    const v = useL ? l[k] : r[k];
+    if (v !== undefined) out[k] = v;
+    const t = lt > rt ? lt : rt;
+    if (t && ((l && l._ft && l._ft[k]) || (r && r._ft && r._ft[k]))) ft[k] = t;
+  });
+  const ua = (a, b) => (String(a || '') > String(b || '') ? a : b);
+  if (l.updatedAt || r.updatedAt) out.updatedAt = ua(l.updatedAt, r.updatedAt);
+  if (l._updatedAt || r._updatedAt) out._updatedAt = ua(l._updatedAt, r._updatedAt);
+  if ((l && l._ft) || (r && r._ft)) out._ft = ft;
+  return out;
+}
+
+/* ══════════════════════════════════════════
    데이터 레이어 (localStorage / Supabase 교체 지점)
    ══════════════════════════════════════════ */
 const DB = {
@@ -84,10 +126,11 @@ const DB = {
       prevMap.delete(r.id);
       if (!p) { changed.push(r.id); return { ...r, updatedAt: r.updatedAt || t }; }
       let same = false;
-      try { same = JSON.stringify({ ...p, updatedAt: 0 }) === JSON.stringify({ ...r, updatedAt: 0 }); } catch { same = false; }
-      if (same) return { ...r, updatedAt: p.updatedAt || t };
+      try { same = JSON.stringify({ ...p, updatedAt: 0, _ft: 0 }) === JSON.stringify({ ...r, updatedAt: 0, _ft: 0 }); } catch { same = false; }
+      if (same) return { ...r, updatedAt: p.updatedAt || t, ...(p._ft ? { _ft: p._ft } : {}) };
       changed.push(r.id);
-      return { ...r, updatedAt: t };
+      /* v1.9.57 칸마다 고친 시각(_ft) — 두 기기가 같은 아이를 동시에 고쳐도 서로의 칸을 덮지 않게 합니다 */
+      return { ...r, updatedAt: t, _ft: stampFields(p, r, t) };
     });
     const gone = [...prevMap.keys()].filter(Boolean);
     /* 칸이 없으면 여기서 false 가 돌아옵니다. 부르는 쪽이 그걸 보고 판단합니다 —
@@ -315,8 +358,9 @@ const DB = {
     let prev = {};
     try { prev = this.getSettings(); } catch { prev = {}; }
     let same = false;
-    try { same = JSON.stringify({ ...prev, _updatedAt: 0 }) === JSON.stringify({ ...s, _updatedAt: 0 }); } catch { same = false; }
-    const next = same ? { ...s, _updatedAt: prev._updatedAt || now() } : { ...s, _updatedAt: now() };
+    try { same = JSON.stringify({ ...prev, _updatedAt: 0, _ft: 0 }) === JSON.stringify({ ...s, _updatedAt: 0, _ft: 0 }); } catch { same = false; }
+    const t = now();
+    const next = same ? { ...s, _updatedAt: prev._updatedAt || t, ...(prev._ft ? { _ft: prev._ft } : {}) } : { ...s, _updatedAt: t, _ft: stampFields(prev, s, t) };   // v1.9.57 칸마다 시각
     STORE.set('cg_settings', JSON.stringify(next));
     if (typeof SYNC !== 'undefined' && !same) { SYNC.markDirty('cg_settings', ['main']); SYNC.touch(); }
   },
@@ -660,7 +704,7 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.56';
+const APP_VERSION = '1.9.57';
 const APP_PATCHED = '2026-10-31';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -977,15 +1021,18 @@ const SYNC = {
     let changed = 0, settingsChanged = false;
     const dirty = new Set();
     const pending = new Set(this.dirty());
+    const pushBack = [];   // v1.9.57 합친 결과가 서버 사본과 다르면 다시 올립니다
+    const sameJ = (a, b) => { try { return JSON.stringify(a) === JSON.stringify(b); } catch (e) { return false; } };
 
     rows.forEach(row => {
       if (row.kind === 'settings') {
         if (row.deleted) return;
-        if (pending.has('settings|main')) return;   // v1.9.20 이 기기 설정을 아직 못 올렸으면 덮지 않습니다
         const incoming = row.data || {};
-        let same = false;
-        try { same = JSON.stringify(settings) === JSON.stringify(incoming); } catch {}
-        if (!same) { settings = incoming; settingsChanged = true; changed++; }
+        if (sameJ(settings, incoming)) return;
+        /* v1.9.57 설정도 칸마다 합칩니다 (예전: 이 기기 것을 못 올렸으면 서버 것을 통째로 무시 → 올릴 때 다른 기기 칸을 덮음) */
+        const merged = mergeFields(settings, incoming);
+        if (!sameJ(merged, settings)) { settings = merged; settingsChanged = true; changed++; }
+        if (!sameJ(merged, incoming) && !pending.has('settings|main')) pushBack.push(['cg_settings', 'main']);
         return;
       }
       const list = buckets[row.kind];
@@ -998,11 +1045,12 @@ const SYNC = {
       const incoming = row.data || {};
       if (!incoming.id) incoming.id = row.id;
       if (idx < 0) { list.push(incoming); dirty.add(row.kind); changed++; return; }
-      // v1.9.20 — 이 기기에서 고치고 아직 못 올린 기록은 서버 사본으로 덮지 않습니다(다음 올리기 때 이 기기 것이 올라갑니다)
-      if (pending.has(row.kind + '|' + row.id)) return;
-      let same = false;
-      try { same = JSON.stringify(list[idx]) === JSON.stringify(incoming); } catch {}
-      if (!same) { list[idx] = incoming; dirty.add(row.kind); changed++; }
+      if (sameJ(list[idx], incoming)) return;
+      /* v1.9.57 칸마다 합칩니다 — 이 기기에서 고치고 아직 못 올린 칸도, 다른 기기가 고친 칸도 둘 다 남습니다
+         (v1.9.20 은 못 올린 기록이면 서버 사본을 통째로 무시해서, 올릴 때 다른 기기에서 고친 칸을 옛 값으로 덮었습니다) */
+      const merged = mergeFields(list[idx], incoming);
+      if (!sameJ(merged, list[idx])) { list[idx] = merged; dirty.add(row.kind); changed++; }
+      if (!sameJ(merged, incoming) && !pending.has(row.kind + '|' + row.id)) pushBack.push([STORE_OF_KIND[row.kind], row.id]);
     });
 
     // 서버가 개체를 지웠다면 그 개체의 기록도 함께 정리
@@ -1019,6 +1067,7 @@ const SYNC = {
       // 다른 기기에서 바꾼 색상 테마도 바로 반영
       try { applyTheme(settings.theme || THEME_DEFAULT); } catch {}
     }
+    if (pushBack.length) { pushBack.forEach(([st, id]) => this.markDirty(st, [id])); this.again = true; }
     return changed;
   },
 
@@ -1049,6 +1098,7 @@ const SYNC = {
       this.saveSt({ lastSyncAt: now(), lastError: null });
       this.running = false;
       this.emit(got > 0);
+      if (this.again) { this.again = false; this.touch(); }   // v1.9.57 합친 칸을 서버에도 올려 둡니다
       return { sent, got };
     } catch (e) {
       this.running = false;
@@ -3424,14 +3474,13 @@ function markAdopted(indId) {
 }
 /* 예전에 입양처·입양가를 적어 둔 아이에게 한 번만 붙입니다 (MY 를 직접 켠 아이는 건드리지 않음) */
 function markAdoptedFromMemos() {
-  try { if (localStorage.getItem('cg_mig_adopted1')) return 0; } catch (e) { return 0; }
+  /* v1.9.57 한 번만 하던 것을 열 때마다 — 다른 기기의 입양 메모가 나중에 동기화로 들어와도 빠지지 않게 */
   const inds = DB.getIndividuals(), byId = {};
   inds.forEach(i => { byId[i.id] = i; });
   const ids = new Set();
   DB.getEvents().forEach(e => { if (e.type === 'memo' && /입양처\s*:|입양가/.test((e.data && e.data.notes) || '')) ids.add(e.individualId); });
   let n = 0;
   ids.forEach(id => { const g = byId[id]; if (g && !g.adopted && g.isFromCreGunseol !== true) { DB.updateIndividual(id, { adopted: true }); n++; } });
-  try { STORE.set('cg_mig_adopted1', '1'); } catch (e) {}
   return n;
 }
 
@@ -5030,7 +5079,7 @@ function App() {
     if (!SYNC.active()) return;
     SYNC.run('start');
     const off = SYNC.on((dataChanged) => {
-      if (dataChanged) { setIndividuals(DB.getIndividuals()); setRemVer(v => v + 1); }
+      if (dataChanged) { markAdoptedFromMemos(); setIndividuals(DB.getIndividuals()); setRemVer(v => v + 1); }   // v1.9.57 다른 기기에서 온 입양 메모도
     });
     const onVisible = () => { if (document.visibilityState === 'visible') SYNC.run('resume'); };
     const onOnline = () => SYNC.run('online');
