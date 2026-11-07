@@ -352,7 +352,7 @@ const DB = {
     if (!keep || !drop) return null;
 
     const PROFILE = ['gender', 'morph', 'spots', 'hatchDate', 'status', 'salePrice',
-                     'avatar', 'avatarRef', 'isExternal', 'isFromCreGunseol', 'favorite', 'keep', 'babyNotes', 'shareCode',
+                     'avatar', 'avatarRef', 'isExternal', 'isFromCreGunseol', 'adopted', 'favorite', 'keep', 'babyNotes', 'shareCode',
                      'adopterName', 'adopterPhone'];
     const src = profileFrom === 'drop' ? drop : keep;
     const alt = profileFrom === 'drop' ? keep : drop;
@@ -660,7 +660,7 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.54';
+const APP_VERSION = '1.9.55';
 const APP_PATCHED = '2026-10-31';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -3412,7 +3412,28 @@ const PUSH = {
    직접 등록한 아이는 프로필에서 손으로 켜고 끌 수 있습니다. */
 /* 우리 집에서 나온 아이 표시 — 화면에는 MY 로 나옵니다.
    (저장 필드 이름 isFromCreGunseol/cgOff 는 기존 데이터 호환 때문에 그대로 둡니다) */
-const isMine = (i) => !!i && !i.cgOff && (i.isFromCreGunseol === true || !!(i.sireId || i.damId));
+/* v1.9.55 대표님 2026-11-07 "데려온 애가 어떻게 MY겠어" — 데려왔다고 한 아이(adopted)는 부모를 알아도 저절로 MY 가 되지 않습니다.
+   프로필에서 MY 를 직접 켜면(isFromCreGunseol=true) 그게 우선입니다. */
+const isMine = (i) => !!i && !i.cgOff && (i.isFromCreGunseol === true || (!i.adopted && !!(i.sireId || i.damId)));
+/* 데려온 아이 표시 — 입양처·입양가를 적거나 "데려왔어"라고 하면 붙입니다 */
+function markAdopted(indId) {
+  const g = DB.getIndividuals().find(i => i.id === indId);
+  if (!g || (g.adopted && g.isFromCreGunseol !== true)) return false;
+  DB.updateIndividual(indId, { adopted: true, isFromCreGunseol: false });
+  return true;
+}
+/* 예전에 입양처·입양가를 적어 둔 아이에게 한 번만 붙입니다 (MY 를 직접 켠 아이는 건드리지 않음) */
+function markAdoptedFromMemos() {
+  try { if (localStorage.getItem('cg_mig_adopted1')) return 0; } catch (e) { return 0; }
+  const inds = DB.getIndividuals(), byId = {};
+  inds.forEach(i => { byId[i.id] = i; });
+  const ids = new Set();
+  DB.getEvents().forEach(e => { if (e.type === 'memo' && /입양처\s*:|입양가/.test((e.data && e.data.notes) || '')) ids.add(e.individualId); });
+  let n = 0;
+  ids.forEach(id => { const g = byId[id]; if (g && !g.adopted && g.isFromCreGunseol !== true) { DB.updateIndividual(id, { adopted: true }); n++; } });
+  try { STORE.set('cg_mig_adopted1', '1'); } catch (e) {}
+  return n;
+}
 
 // 필터 칩 색
 const CHIP_ON  = { background: 'var(--accent)', color: 'var(--on-accent)', border: '1px solid var(--accent)' };
@@ -4993,6 +5014,7 @@ function App() {
   useEffect(() => {
     if (purgeStoredHatchReminders()) setRemVer(v => v + 1);
     if (dedupeAvatars()) refreshIndividuals();   // 얼굴로 복사해 둔 사진 한 벌로 줄이기 (한 번만)
+    if (markAdoptedFromMemos()) refreshIndividuals();   // v1.9.55 입양처·입양가가 적힌 아이 = 데려온 아이 (한 번만)
     PHOTO.era();                                // 사진을 서버에 두기 시작한 시각 (한 번만)
   }, []);
 
@@ -8434,7 +8456,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     const adoptSaid = ADOPT_STRONG.test(text) && !/[?？]\s*$/.test(text);
     if (adoptSaid && !adoptC) {
       const who = findNamesInText(text, DB.getIndividuals())[0];
-      if (who) { setTarget(who); follow({ adopt: who.id, date: parseKDate(text) }); return; }
+      if (who) { markAdopted(who.id); refreshIndividuals(); setTarget(who); follow({ adopt: who.id, date: parseKDate(text) }); return; }
     }
     // 처음 보는 이름이면 등록한 뒤에 적습니다 (그동안 가계부·먹이로 새지 않게)
     const adoptHeld = adoptC && adoptC.strong ? adoptC : null;
@@ -9384,6 +9406,7 @@ function setAdoptMemo(indId, source, price) {
   const isAdopt = (p) => /^입양처\s*:/.test(p) || /^입양가/.test(p);
   const rest = (n) => String(n || '').split('·').map(x => x.trim()).filter(p => p && !isAdopt(p)).join(' · ');
   const parts = [];
+  if (source || price !== '') markAdopted(indId);   // v1.9.55 데려온 아이 → MY 아님
   if (source) parts.push('입양처: ' + source);
   if (price !== '') parts.push(Number(price) === 0 ? '입양가 0 (무상/선물)' : `입양가 ${price}만원`);
   let host = null;
