@@ -96,9 +96,20 @@ test("adopted geckos are never auto-MY even with known parents; manual MY still 
 test("sync merges per field instead of overwriting whole records/settings", () => {
   assert.match(app, /return \{ \.\.\.r, updatedAt: t, _ft: stampFields\(p, r, t\) \};/, "고친 칸마다 시각");
   assert.match(app, /const ftOf = \(o, k\) => \(o && o\._ft \? \(o\._ft\[k\] \|\| ''\) : /, "옛 기록은 한 줄 단위로");
-  assert.match(app, /const merged = mergeFields\(list\[idx\], incoming\);/);
-  assert.match(app, /const merged = mergeFields\(settings, incoming\);/, "설정도 칸마다");
+  assert.match(app, /const merged = mergeFields\(list\[idx\], incoming, pending\.has\(row\.kind \+ '\|' \+ row\.id\)\);/, "못 올린 기록은 같은 시각이면 이 기기 쪽");
+  assert.match(app, /const merged = mergeFields\(settings, incoming, pending\.has\('settings\|main'\)\);/, "설정도 칸마다");
   assert.doesNotMatch(app, /if \(pending\.has\('settings\|main'\)\) return;/, "못 올린 설정이 있다고 서버 것을 통째로 무시하지 않음");
   assert.match(app, /if \(this\.again\) \{ this\.again = false; this\.touch\(\); \}/, "합친 결과를 다시 올림");
   assert.match(app, /if \(dataChanged\) \{ markAdoptedFromMemos\(\);/, "다른 기기에서 온 입양 메모도 반영");
+});
+
+/* v1.9.58 전체 점검 (대표님 2026-11-07 "다른 방면에서의 오류는 없었어? 꼼꼼히 살펴보고 리팩토링도") */
+test("renames flow into stored partner/sire names; merges move sire links; breeding sires stay out of the sale inbox", () => {
+  assert.match(app, /if \(before && p\.name\.trim\(\) && before\.name !== p\.name\) this\.relabel\(id, p\.name\);/, "이름 바꾸면 기록 속 짝·아빠 이름도");
+  assert.match(app, /relabelAll\(\) \{/);
+  assert.match(app, /if \(x\.data && x\.data\.sireId === dropId\) x = \{ \.\.\.x, data: \{ \.\.\.x\.data, sireId: keepId/, "합치기 뒤 산란 기록 아빠 연결 유지");
+  assert.match(app, /const useL = !eq && \(lt > rt \|\| \(!!mine && lt >= rt && lt !== ''\)\);/, "못 올린 변경은 같은 시각이면 이 기기 쪽");
+  assert.match(ex, /all\.forEach\(i => \{ if \(i\.sireId\) bred\.add\(i\.sireId\); if \(i\.damId\) bred\.add\(i\.damId\); \}\);/, "부모인 아이는 분양 대기함에 안 뜸");
+  assert.match(app, /const APP_PATCHED = '2026-11-07';/, "설정의 최근 업데이트 날짜");
+  for (const dead of ["NOTIFY_WINDOW", "CONDITION_STALE", "HATCH_AFTER_LAYING", "FEED_DUE", "const eggDone", "const euro ", "const irang "]) assert.ok(!app.includes(dead), "안 쓰는 코드 정리: " + dead);
 });
