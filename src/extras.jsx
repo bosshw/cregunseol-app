@@ -1517,7 +1517,18 @@ const SALE_DEF = { w: 5, d: 90 };
 function saleRule() { const s = DB.getSettings() || {}; return { w: Number(s.saleMinWeight) || SALE_DEF.w, d: Number(s.saleMinDays) || SALE_DEF.d }; }
 function saleReadyData() {
   const r = saleRule(), evs = DB.getEvents();
-  const bred = new Set(evs.filter(e => e.type === 'mating' || e.type === 'laying').map(e => e.individualId));
+  /* v1.9.58 짝으로만 적힌 수컷(메이팅·산란 기록은 암컷 쪽에 남음)과 이미 자식이 있는 아이도 번식에 쓰는 아이로 봅니다
+     (예전엔 크울이 같은 아빠가 분양 대기함에 떴습니다) */
+  const bred = new Set();
+  const all = DB.getIndividuals();
+  evs.forEach(e => {
+    if (e.type !== 'mating' && e.type !== 'laying') return;
+    bred.add(e.individualId);
+    const d = e.data || {};
+    const pid = d.partnerId || d.sireId || ((sireByName(d.partnerName || d.sireName || '', all) || {}).id);
+    if (pid) bred.add(pid);
+  });
+  all.forEach(i => { if (i.sireId) bred.add(i.sireId); if (i.damId) bred.add(i.damId); });
   const list = [];
   DB.getIndividuals().forEach(g => {
     if (!isHere(g) || statusOf(g) !== 'own' || g.isExternal || g.keep || bred.has(g.id)) return;
@@ -1535,7 +1546,6 @@ function saleDecide(id, how) {
   DB.updateIndividual(id, how === 'keep' ? { keep: true } : { status: 'available', keep: false });
   return g.name;
 }
-const saleMove = (ids) => ids.map(id => saleDecide(id, 'sale')).filter(Boolean);
 const srLine = (x) => `${x.name}${x.morph ? ' · ' + x.morph : ''} · ${x.age}일 · ${x.w !== null ? fmtG(x.w) + 'g' : '무게 없음'}`;
 const SR = { stage: null, ids: [], sale: [] };
 function saleReady(text, ctx) {
@@ -2534,7 +2544,7 @@ function HatchCheck({ navigate, showToast, onSaved }) {
 
 
 window.CREG_EXTRAS = {
-  SeasonNoteSheet, BirthdayPopup, DupMergeCard, FeedbackCard, FeedbackInbox, fbPayload, FB_PICKS, morphFill, mfList, mfIntro, MF, TrackCard, StorageCard, PushCard, SyncCard, followUp, fuPrice, fuWho, FU, sibParents, sibGroupOf, sibParentsPlan, SIB_PAR_RE, SIB_MORE_RE, SIB, BDAY_LINES, bdayPick, SaleCardSheet, AdoptSendSheet, AdoptReceive, AddGeckoSheet, chat, LayCheck, HatchCheck, saleMove,
+  SeasonNoteSheet, BirthdayPopup, DupMergeCard, FeedbackCard, FeedbackInbox, fbPayload, FB_PICKS, morphFill, mfList, mfIntro, MF, TrackCard, StorageCard, PushCard, SyncCard, followUp, fuPrice, fuWho, FU, sibParents, sibGroupOf, sibParentsPlan, SIB_PAR_RE, SIB_MORE_RE, SIB, BDAY_LINES, bdayPick, SaleCardSheet, AdoptSendSheet, AdoptReceive, AddGeckoSheet, chat, LayCheck, HatchCheck,
   weightCheck, healthCheck, saleReady, cmdHelp, kinCheck, monthReport, kinData, monthData, mrMonth, HealthCard, SaleReady, healthPlan, healthApply, saleReadyData, WC, HC, SR, CMD_LIST,
   // 시험(node)에서 쓰는 순수 함수들
   seasonYears, seasonNoteStats, seasonSummaryText, saveSeasonNote, toggleTrait, SEASON_TRAITS, SEASON_DIRS,

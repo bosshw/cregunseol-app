@@ -82,8 +82,9 @@ function stampFields(p, r, t) {
   return ft;
 }
 const ftOf = (o, k) => (o && o._ft ? (o._ft[k] || '') : ((o && (o.updatedAt || o._updatedAt)) || ''));
-/* 같은 기록의 이 기기 사본(l)과 서버 사본(r)을 칸마다 합칩니다. 값이 같거나 시각이 같으면 서버 쪽 */
-function mergeFields(l, r) {
+/* 같은 기록의 이 기기 사본(l)과 서버 사본(r)을 칸마다 합칩니다. 시각이 같으면 서버 쪽 —
+   단 이 기기에 아직 못 올린 변경이 있으면(mine) 같은 시각에선 이 기기 쪽 (v1.9.58 같은 1/1000초에 고친 경우) */
+function mergeFields(l, r, mine) {
   const out = {}, ft = {};
   const keys = new Set([...Object.keys(l || {}), ...Object.keys(r || {})]);
   keys.forEach(k => {
@@ -91,7 +92,7 @@ function mergeFields(l, r) {
     const lt = ftOf(l, k), rt = ftOf(r, k);
     let eq = false;
     try { eq = JSON.stringify(l[k]) === JSON.stringify(r[k]); } catch (e) {}
-    const useL = !eq && lt > rt;
+    const useL = !eq && (lt > rt || (!!mine && lt >= rt && lt !== ''));
     const v = useL ? l[k] : r[k];
     if (v !== undefined) out[k] = v;
     const t = lt > rt ? lt : rt;
@@ -220,7 +221,44 @@ const DB = {
     // 모프를 실제로 적으면 '아직 모르겠어요' 표시는 자동으로 풀립니다 (한 곳에서만 처리)
     const p = { ...patch };
     if (typeof p.morph === 'string' && p.morph.trim()) p.morphUnknown = false;
+    const before = typeof p.name === 'string' ? this.getIndividuals().find(i => i.id === id) : null;
     this.saveIndividuals(this.getIndividuals().map(i => i.id === id ? { ...i, ...p } : i));
+    if (before && p.name.trim() && before.name !== p.name) this.relabel(id, p.name);
+  },
+  /* v1.9.58 이름이 바뀌면 메이팅·산란 기록에 글자로 남은 짝·아빠 이름도 같이 고칩니다
+     (예전엔 이름 맞추기·이름 고치기 뒤에도 메이팅 목록·알둥지에 옛 이름이 남았습니다) */
+  relabel(id, name) {
+    let n = 0;
+    const evs = this.getEvents().map(e => {
+      const d = e.data;
+      if (!d) return e;
+      let x = d;
+      if (d.partnerId === id && d.partnerName !== name) x = { ...x, partnerName: name };
+      if (d.sireId === id && d.sireName !== name) x = { ...x, sireName: name };
+      if (x === d) return e;
+      n++;
+      return { ...e, data: x };
+    });
+    if (n) this.saveEvents(evs);
+    return n;
+  },
+  /* 예전에 이름이 바뀌어 옛 이름이 남은 기록을 한꺼번에 맞춥니다 (앱 열 때·동기화 뒤 — 다를 때만 저장) */
+  relabelAll() {
+    const nm = {};
+    this.getIndividuals().forEach(i => { if (i && i.id && i.name) nm[i.id] = i.name; });
+    let n = 0;
+    const evs = this.getEvents().map(e => {
+      const d = e.data;
+      if (!d) return e;
+      let x = d;
+      if (d.partnerId && nm[d.partnerId] && d.partnerName && d.partnerName !== nm[d.partnerId]) x = { ...x, partnerName: nm[d.partnerId] };
+      if (d.sireId && nm[d.sireId] && d.sireName && d.sireName !== nm[d.sireId]) x = { ...x, sireName: nm[d.sireId] };
+      if (x === d) return e;
+      n++;
+      return { ...e, data: x };
+    });
+    if (n) this.saveEvents(evs);
+    return n;
   },
   /* v1.9.15 — 부화 기록의 마릿수·날짜를 고치면 알별 기록도 같이 맞춥니다(EGG 한 곳에서).
      어디서 고치든(프로필 연필·캘린더·대화) 이 자리를 지나므로 여기서 한 번만 합니다.
@@ -410,7 +448,9 @@ const DB = {
     const events = this.getEvents().map(e => {
       let x = e;
       if (x.individualId === dropId) x = { ...x, individualId: keepId };
-      if (x.data && x.data.partnerId === dropId) x = { ...x, data: { ...x.data, partnerId: keepId } };
+      if (x.data && x.data.partnerId === dropId) x = { ...x, data: { ...x.data, partnerId: keepId, ...(x.data.partnerName ? { partnerName: merged.name } : {}) } };
+      // v1.9.58 산란 기록의 아빠 연결도 옮깁니다 (예전엔 합친 뒤 알둥지 아빠가 끊겼습니다)
+      if (x.data && x.data.sireId === dropId) x = { ...x, data: { ...x.data, sireId: keepId, ...(x.data.sireName ? { sireName: merged.name } : {}) } };
       return x;
     });
     // 개체 교체 + 자식들의 부모 참조 정정
@@ -704,8 +744,8 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.57';
-const APP_PATCHED = '2026-10-31';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
+const APP_VERSION = '1.9.58';
+const APP_PATCHED = '2026-11-07';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -1030,7 +1070,7 @@ const SYNC = {
         const incoming = row.data || {};
         if (sameJ(settings, incoming)) return;
         /* v1.9.57 설정도 칸마다 합칩니다 (예전: 이 기기 것을 못 올렸으면 서버 것을 통째로 무시 → 올릴 때 다른 기기 칸을 덮음) */
-        const merged = mergeFields(settings, incoming);
+        const merged = mergeFields(settings, incoming, pending.has('settings|main'));
         if (!sameJ(merged, settings)) { settings = merged; settingsChanged = true; changed++; }
         if (!sameJ(merged, incoming) && !pending.has('settings|main')) pushBack.push(['cg_settings', 'main']);
         return;
@@ -1048,7 +1088,7 @@ const SYNC = {
       if (sameJ(list[idx], incoming)) return;
       /* v1.9.57 칸마다 합칩니다 — 이 기기에서 고치고 아직 못 올린 칸도, 다른 기기가 고친 칸도 둘 다 남습니다
          (v1.9.20 은 못 올린 기록이면 서버 사본을 통째로 무시해서, 올릴 때 다른 기기에서 고친 칸을 옛 값으로 덮었습니다) */
-      const merged = mergeFields(list[idx], incoming);
+      const merged = mergeFields(list[idx], incoming, pending.has(row.kind + '|' + row.id));
       if (!sameJ(merged, list[idx])) { list[idx] = merged; dirty.add(row.kind); changed++; }
       if (!sameJ(merged, incoming) && !pending.has(row.kind + '|' + row.id)) pushBack.push([STORE_OF_KIND[row.kind], row.id]);
     });
@@ -1134,7 +1174,6 @@ const SYNC = {
 const localISO = (d) => { const t = new Date(d.getTime() - d.getTimezoneOffset() * 60000); return t.toISOString().slice(0, 10); };
 const todayStr = () => localISO(new Date());
 const daysUntil = (ds) => Math.ceil((new Date(ds) - new Date(todayStr())) / 86400000);
-const NOTIFY_WINDOW = 1; // 알림·배지는 D-1과 당일부터
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('ko-KR', { year:'numeric', month:'short', day:'numeric' }) : '-';
 /* 자리가 좁은 카드용 — 올해 일은 연도를 빼고 "9월 5일" 로만 적습니다.
    ★ 자세히 보는 화면(프로필·상세)에서는 연도가 있는 fmtDate 를 그대로 씁니다. */
@@ -1237,7 +1276,6 @@ const CONDITIONS = [
   { level: 1, key: 'down', label: '처져요',   emoji: '😟', color: '#B3362B' },
 ];
 const conditionOf = (lv) => CONDITIONS.find(c => c.level === Number(lv)) || null;
-const CONDITION_STALE = 14;      // 이만큼 안 적으면 "요즘 기록이 없어요"
 
 /* 한 아이의 컨디션 기록 — 최근 것부터 */
 function conditionLog(id, evs) {
@@ -1475,7 +1513,6 @@ function eggUnitsOf(ev, opt) {
   }
   return out;
 }
-const eggDone = u => u.status !== 'pending';
 
 /* 개체 이상 기록 — 대화·프로필 어느 쪽에서 적어도 같은 항목을 씁니다 */
 /* 해칭 베이비 이름 규칙 — 두 가지뿐입니다.
@@ -1677,7 +1714,6 @@ const CALENDAR_TYPES = ['mating', 'laying', 'hatching', 'feeding', 'health'];
 // 예정일 자동 계산 기준 (일)
 const LAYING_AFTER_MATING = 30;   // 메이팅 → 산란 예정
 const LAYING_INTERVAL = 30;       // 산란 → 다음 산란 (보통 3~5주 간격)
-const HATCH_AFTER_LAYING = 75;    // 기본값(24°C 기준). 실제 계산은 hatchDays() 사용
 
 /* 인큐베이팅 온도 → 부화까지 걸리는 날수
    크레스티드 게코는 22~26°C에서 60~90일. 온도가 낮을수록 길어집니다.
@@ -2181,9 +2217,7 @@ const iga    = (w) => josa(w, '이', '가');             // 크안이가 / 크�
 const eunneun = (w) => josa(w, '은', '는');            // 크안이은 → 크안이는
 const eulreul = (w) => josa(w, '을', '를');
 const gwawa  = (w) => josa(w, '과', '와');
-const euro   = (w) => josa(w, '으로', '로');           // 받침 ㄹ 은 '로' — 아래에서 따로 봅니다
 const igunyo = (w) => josa(w, '이군요', '군요');       // 한울이군요 / 크은이군요
-const irang  = (w) => josa(w, '이랑', '랑');
 /* '으로'는 받침 ㄹ 일 때만 예외로 '로'를 씁니다 (서울로, 연필로) */
 function euroWord(w) {
   const t = String(w || '').trim();
@@ -2268,9 +2302,6 @@ const PUBLIC_PHOTOS = 6;                // 사진은 최근 이만큼만 (한 �
 const PUBLIC_KINDS = ['growth', 'shed', 'feeding', 'health', 'photo'];
 /* 절대 나가지 않는 기록 — 실수로 위에 추가되면 테스트가 잡습니다 */
 const PUBLIC_NEVER = ['ledger', 'distribution', 'memo'];
-/* v1.9.12 — 브리딩 이력은 기록을 통째로 내보내지 않고 '숫자·날짜·짝 이름·자식 이름'만 추려서 냅니다.
-   (산란·메이팅 기록의 메모 글은 나가지 않습니다) 대표님 결정: 기본으로 보이게. */
-const PUBLIC_BREEDING = ['laying', 'mating', 'hatching'];
 const PUBLIC_V = 2;                      // 공유 한 장의 모양 — 바뀌면 열려 있는 링크도 새로 올립니다
 
 /* 브리딩 이력 — 암컷은 낳은 것, 수컷은 아빠로 이어진 것 */
@@ -2571,7 +2602,6 @@ function nudgeCandidates(individuals, events) {
   const countOf = (id, type) => (mine[id] || []).filter(e => e.type === type).length;
   const ageOf = (i) => daysAgo(i.hatchDate);
   const hasMale = inds.some(i => i.gender === 'male');
-  const hasFemale = inds.some(i => i.gender === 'female');
 
   inds.forEach(i => {
     const nm = i.name;
@@ -5063,7 +5093,8 @@ function App() {
   useEffect(() => {
     if (purgeStoredHatchReminders()) setRemVer(v => v + 1);
     if (dedupeAvatars()) refreshIndividuals();   // 얼굴로 복사해 둔 사진 한 벌로 줄이기 (한 번만)
-    if (markAdoptedFromMemos()) refreshIndividuals();   // v1.9.55 입양처·입양가가 적힌 아이 = 데려온 아이 (한 번만)
+    if (markAdoptedFromMemos()) refreshIndividuals();   // v1.9.55 입양처·입양가가 적힌 아이 = 데려온 아이
+    try { if (DB.relabelAll()) setRemVer(v => v + 1); } catch (e) {}   // v1.9.58 바뀐 이름을 기록 속 짝·아빠 이름에도
     PHOTO.era();                                // 사진을 서버에 두기 시작한 시각 (한 번만)
   }, []);
 
@@ -5079,7 +5110,7 @@ function App() {
     if (!SYNC.active()) return;
     SYNC.run('start');
     const off = SYNC.on((dataChanged) => {
-      if (dataChanged) { markAdoptedFromMemos(); setIndividuals(DB.getIndividuals()); setRemVer(v => v + 1); }   // v1.9.57 다른 기기에서 온 입양 메모도
+      if (dataChanged) { markAdoptedFromMemos(); try { DB.relabelAll(); } catch (e) {} setIndividuals(DB.getIndividuals()); setRemVer(v => v + 1); }   // v1.9.57 다른 기기에서 온 입양 메모도
     });
     const onVisible = () => { if (document.visibilityState === 'visible') SYNC.run('resume'); };
     const onOnline = () => SYNC.run('online');
@@ -5715,7 +5746,6 @@ function MatingView({ individuals, navigate, showToast }) {
               <div style={{marginTop:10, borderTop:'1px solid var(--border)', paddingTop:10}}>
                 {mates.map((m, i) => {
                   const isEditing = editingId === m.id;
-                  const target = byId[m.individualId];
                   return (
                     <div key={m.id} style={{padding:'5px 0', borderBottom:'1px dashed var(--border)'}}>
                       <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', fontSize:13}}>
@@ -10699,7 +10729,6 @@ function CalendarScreen({ navigate, individuals, showToast, onRemindersChanged }
    브리핑 화면 (예전 이름: 알림)
    ══════════════════════════════════════════ */
 const WEEK_WINDOW = 7;   // 예정일은 1주일 전부터 화면에 띄웁니다
-const FEED_DUE = 4;      // 마지막 급여로부터 이 일수가 지나면 "밥 줄 아이"
 
 /* 오늘 실제로 손이 가야 하는 일들을 뽑아냅니다.
    D-day 나열이 아니라 "지금 하러 가는 버튼"이 되도록 만듭니다. */
