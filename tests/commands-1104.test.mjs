@@ -113,3 +113,13 @@ test("renames flow into stored partner/sire names; merges move sire links; breed
   assert.match(app, /const APP_PATCHED = '2026-11-07';/, "설정의 최근 업데이트 날짜");
   for (const dead of ["NOTIFY_WINDOW", "CONDITION_STALE", "HATCH_AFTER_LAYING", "FEED_DUE", "const eggDone", "const euro ", "const irang "]) assert.ok(!app.includes(dead), "안 쓰는 코드 정리: " + dead);
 });
+
+/* v1.9.59 메이팅 기록하기 — 수컷 자리엔 수컷만, 암컷 자리엔 암컷만, 미구분 빼기 · 최근 메이팅 짝이 위로 (대표님 2026-11-07) */
+test("mating sheet lists only females/males (no unknown, no away) and the mating list shows the latest pair first", () => {
+  assert.match(app, /const pickable = \(g\) => all\.filter\(i => keepIds\.has\(i\.id\) \|\| \(i\.gender === g && !isAway\(i\)\)\)\.sort\(byKo\);/);
+  assert.match(app, /const females = pickable\('female'\);/);
+  assert.match(app, /const males = pickable\('male'\);/);
+  assert.match(app, /const list = Object\.entries\(pairs\)\.sort\(\(\[, a\], \[, b\]\) => \(lastMate\(b\) \|\| lastOf\(b\)\)\.localeCompare\(lastMate\(a\) \|\| lastOf\(a\)\)\);/);
+  assert.match(app, /pick\('sireId', '아빠', others\.filter\(i => i\.gender === 'male' \|\| i\.id === gecko\.sireId\)\)/, "프로필 부모 고르기도");
+  assert.match(ex, /const males = all\.filter\(i => i\.gender === 'male'\)\.sort\(byName\);/, "개체 추가 부모 고르기도");
+});
