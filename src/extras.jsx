@@ -793,8 +793,8 @@ function AddGeckoSheet({ onClose, navigate, showToast, refreshIndividuals }) {
   const fileRef = useRef(null);
   const put = (k, val) => { setErr(''); setV(x => ({ ...x, [k]: val })); };
   const byName = (a, b) => (a.name || '').localeCompare(b.name || '', 'ko');
-  const males = all.filter(i => i.gender !== 'female').sort(byName);
-  const females = all.filter(i => i.gender !== 'male').sort(byName);
+  const males = all.filter(i => i.gender === 'male').sort(byName);     // v1.9.59 아빠엔 수컷만
+  const females = all.filter(i => i.gender === 'female').sort(byName); //          엄마엔 암컷만
   const save = (open) => {
     const nm = v.name.trim();
     if (!nm) return setErr('이름을 적어 주세요');
@@ -841,11 +841,11 @@ function AddGeckoSheet({ onClose, navigate, showToast, refreshIndividuals }) {
           </div>
           <label className="pe-row"><span>아빠</span>
             <select className="input" value={v.sireId} onChange={e => put('sireId', e.target.value)} data-testid="add-sire">
-              <option value="">없음 · 모름</option>{males.map(i => <option key={i.id} value={i.id}>{i.name}{i.gender === 'male' ? ' (수)' : ''}</option>)}
+              <option value="">없음 · 모름</option>{males.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
             </select></label>
           <label className="pe-row"><span>엄마</span>
             <select className="input" value={v.damId} onChange={e => put('damId', e.target.value)} data-testid="add-dam">
-              <option value="">없음 · 모름</option>{females.map(i => <option key={i.id} value={i.id}>{i.name}{i.gender === 'female' ? ' (암)' : ''}</option>)}
+              <option value="">없음 · 모름</option>{females.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
             </select></label>
           <label style={{display:'flex', alignItems:'center', gap:8, fontSize:13.5}}>
             <input type="checkbox" checked={v.mine} onChange={e => put('mine', e.target.checked)} data-testid="add-mine" /> 우리 집에서 태어난 아이(MY)

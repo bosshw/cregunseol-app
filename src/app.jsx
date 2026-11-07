@@ -744,7 +744,7 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.58';
+const APP_VERSION = '1.9.59';
 const APP_PATCHED = '2026-11-07';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -5673,7 +5673,7 @@ function MatingView({ individuals, navigate, showToast }) {
   const mateIndex = [];   // 산란 귀속에 쓸 메이팅 색인
   evs.filter(e => e.type === 'mating').forEach(e => {
     const tName = (byId[e.individualId] || {}).name || '?';
-    const pName = (e.data && e.data.partnerName) || '?';
+    const pName = ((byId[e.data && e.data.partnerId] || {}).name) || (e.data && e.data.partnerName) || '?';   // v1.9.59 이어진 아이면 지금 이름
     const { k, male, female } = orderPair(e.individualId, tName, e.data && e.data.partnerId, pName);
     (pairs[k] = pairs[k] || { male, female, matings: [], layings: [] }).matings.push(e);
     mateIndex.push({ k, male, female, date: e.date, otherId: e.individualId, otherName: tName });
@@ -5702,7 +5702,10 @@ function MatingView({ individuals, navigate, showToast }) {
     if (!pairs[k]) pairs[k] = { male, female, matings: [], layings: [] };
     pairs[k].layings.push(e);
   });
-  const list = Object.entries(pairs);
+  /* v1.9.59 가장 최근에 메이팅한 짝이 맨 위 (메이팅이 없으면 마지막 산란일로) */
+  const lastOf = (p) => [...p.matings, ...p.layings].reduce((a, e) => (e.date > a ? e.date : a), '');
+  const lastMate = (p) => p.matings.reduce((a, e) => (e.date > a ? e.date : a), '');
+  const list = Object.entries(pairs).sort(([, a], [, b]) => (lastMate(b) || lastOf(b)).localeCompare(lastMate(a) || lastOf(a)));
   if (!list.length) {
     return (
       <div className="empty" style={{padding:'40px 20px'}}>
@@ -6174,9 +6177,13 @@ function recordMating(o) {
 const byKo = (a, b) => (a.name || '').localeCompare(b.name || '', 'ko');
 function BreedSheet({ kind, ev, presetMomId, onClose, onSaved, showToast }) {
   const all = DB.getIndividuals();
-  const females = [...all.filter(i => i.gender === 'female').sort(byKo), ...all.filter(i => i.gender !== 'female').sort(byKo)];
-  const males = [...all.filter(i => i.gender === 'male').sort(byKo), ...all.filter(i => i.gender !== 'male').sort(byKo)];
   const d0 = (ev && ev.data) || {};
+  /* v1.9.59 대표님 2026-11-07 "숫자리엔 숫만, 암자리엔 암만, 미구분은 메이팅이랑 거리가 머니 빼" —
+     성별이 정해진 아이만, 곁을 떠난 아이(분양·무지개다리)는 빼고. 고치는 기록에 이미 골라 둔 아이는 그대로 보입니다 */
+  const keepIds = new Set([ev && ev.individualId, presetMomId, d0.sireId].filter(Boolean));
+  const pickable = (g) => all.filter(i => keepIds.has(i.id) || (i.gender === g && !isAway(i))).sort(byKo);
+  const females = pickable('female');
+  const males = pickable('male');
   const [momId, setMomId] = useState((ev && ev.individualId) || presetMomId || '');
   const [date, setDate] = useState((ev && ev.date) || todayStr());
   const [eggs, setEggs] = useState(d0.eggCount ? String(d0.eggCount) : (ev ? '' : '2'));
@@ -6219,7 +6226,7 @@ function BreedSheet({ kind, ev, presetMomId, onClose, onSaved, showToast }) {
     onSaved('✏️ 산란 정보를 고쳤어요');
   };
   const del = () => { DB.deleteEvent(ev.id); onSaved('🗑️ 산란 기록을 지웠어요', true); };
-  const opt = (list) => list.map(i => <option key={i.id} value={i.id}>{i.name}{i.gender === 'female' ? ' (암)' : i.gender === 'male' ? ' (수)' : ''}</option>);
+  const opt = (list) => list.map(i => <option key={i.id} value={i.id}>{i.name}</option>);   // v1.9.59 이미 성별로 나눴으니 (암)(수) 표시는 뺍니다
   return (
     <div className="pe-bg" onClick={onClose} data-testid={isLay ? 'lay-sheet' : 'mate-sheet'}>
       <div className="pe-sheet" onClick={e => e.stopPropagation()}>
@@ -9600,8 +9607,9 @@ function ProfileEditSheet({ gecko, onClose, onSaved, onMerged, showToast }) {
               같이 나온 {sibs}마리와 부화 기록도 함께 옮기기</label>
           )}
           <label className="pe-row"><span>점</span><input className="input" value={v.spots} placeholder="예: 꼬리점 2개 / 무점" onChange={e => put('spots', e.target.value)} /></label>
-          {pick('sireId', '아빠', others)}
-          {pick('damId', '엄마', others)}
+          {/* v1.9.59 아빠 자리엔 수컷만, 엄마 자리엔 암컷만 (이미 골라 둔 아이는 그대로) */}
+          {pick('sireId', '아빠', others.filter(i => i.gender === 'male' || i.id === gecko.sireId))}
+          {pick('damId', '엄마', others.filter(i => i.gender === 'female' || i.id === gecko.damId))}
           <label className="pe-row"><span>입양처</span><input className="input" value={v.source} placeholder="데려온 곳" onChange={e => put('source', e.target.value)} /></label>
           <label className="pe-row"><span>입양가</span><div className="pe-unit"><input className="input" inputMode="decimal" value={v.price} placeholder="예: 30" onChange={e => put('price', e.target.value)} data-testid="pe-price" /><em>만원</em></div></label>
         </div>
