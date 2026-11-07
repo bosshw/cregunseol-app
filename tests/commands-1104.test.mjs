@@ -76,3 +76,12 @@ test("monthly report counts records of that month only and never invents zeros",
   assert.match(p, /if \(D\.lay\) B\.push/, "기록이 있는 칸만 말함");
   assert.match(p, /월간보고명령 \$\{mrShift\(ym, -1\)\.slice\(0, 4\)\}년/, "지난달 칩은 해까지 적어 1년 넘게 거슬러가도 맞음");
 });
+
+/* v1.9.55 대표님 2026-11-07 "데려온 애가 어떻게 MY겠어" */
+test("adopted geckos are never auto-MY even with known parents; manual MY still wins", () => {
+  assert.match(app, /const isMine = \(i\) => !!i && !i\.cgOff && \(i\.isFromCreGunseol === true \|\| \(!i\.adopted && !!\(i\.sireId \|\| i\.damId\)\)\);/);
+  assert.match(app, /if \(source \|\| price !== ''\) markAdopted\(indId\);/, "입양처·입양가 적으면 데려온 아이");
+  assert.match(app, /if \(who\) \{ markAdopted\(who\.id\);/, "\"데려왔어\"만 말해도");
+  assert.match(app, /if \(markAdoptedFromMemos\(\)\) refreshIndividuals\(\);/, "예전 기록도 한 번만 정리");
+  assert.match(app, /g\.isFromCreGunseol !== true\) \{ DB\.updateIndividual\(id, \{ adopted: true \}\)/, "MY 직접 켠 아이는 건드리지 않음");
+});
