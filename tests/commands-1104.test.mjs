@@ -79,7 +79,13 @@ test("monthly report counts records of that month only and never invents zeros",
 
 /* v1.9.55 대표님 2026-11-07 "데려온 애가 어떻게 MY겠어" */
 test("adopted geckos are never auto-MY even with known parents; manual MY still wins", () => {
-  assert.match(app, /const isMine = \(i\) => !!i && !i\.cgOff && \(i\.isFromCreGunseol === true \|\| \(!i\.adopted && !!\(i\.sireId \|\| i\.damId\)\)\);/);
+  assert.match(app, /const isMine = \(i\) => !!i && !i\.cgOff && !i\.isExternal && \(i\.isFromCreGunseol === true \|\| \(!i\.adopted && !i\.adoptFrom && !!\(i\.sireId \|\| i\.damId\)\)\);/);
+  /* v1.9.56 같은 종류 점검 — 외부 개체·공유로 받은 아이·추가 화면에서 MY 안 켠 아이·처음 보는 이름 + 데려왔어 */
+  assert.match(app, /fromUs: isMine\(gecko\)/, "공유 기록의 '우리 집 출신'도 MY 판정과 같게");
+  assert.match(app, /if \(hp\.adopt \|\| hp\.ask\) markAdopted\(saved\.id\);/);
+  assert.match(app, /const babies = inds\.filter\(i => \(i\.sireId \|\| i\.damId\) && isMine\(i\)\)/, "엑셀 해칭기록에 데려온 아이 안 들어감");
+  assert.match(ex, /adopted: !v\.mine,/, "개체 추가에서 MY 안 켜면 부모를 골라도 MY 아님");
+  assert.match(ex, /damId: null, adopted: true,\n    shareCode: newShareCode\(\),\n    adoptFrom: \{/);
   assert.match(app, /if \(source \|\| price !== ''\) markAdopted\(indId\);/, "입양처·입양가 적으면 데려온 아이");
   assert.match(app, /if \(who\) \{ markAdopted\(who\.id\);/, "\"데려왔어\"만 말해도");
   assert.match(app, /if \(markAdoptedFromMemos\(\)\) refreshIndividuals\(\);/, "예전 기록도 한 번만 정리");
