@@ -744,7 +744,7 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.60';
+const APP_VERSION = '1.9.61';
 const APP_PATCHED = '2026-11-09';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -804,6 +804,135 @@ const VER = {
     try { location.reload(); } catch {}
   },
 };
+
+/* ══════════════════════════════════════════
+   v1.9.61 새 버전 자동 적용 — 아무 말 없이 (대표님 결정 2026-11-09)
+
+   왜: 앱은 폰에 저장해 둔 지난번 파일로 먼저 열리고 새 파일은 뒤에서 받습니다.
+       그래서 새 버전은 "다음번에 켤 때" 보였고, 이틀에 한 번 켜는 분은 며칠씩 늦었습니다
+       (11-09 방문 기록 실측: 쓰는 분들이 늘 한두 버전 뒤).
+
+   지키는 것 네 가지
+     ① 켜는 순간에만 — 켠 뒤 WINDOW_MS 안, 아직 아무것도 누르지 않았고, 홈 화면이고,
+        열린 창(시트·팝업·튜토리얼·앱 받기)·입력 중인 칸이 없을 때만.
+        30분 넘게 쉬었다 돌아오면 다시 켠 것으로 봅니다.
+        대화창에 쌓아 둔 '저장 전' 내용은 메모리에만 있어서, 쓰는 도중엔 절대 바꾸지 않습니다.
+     ② 파일을 지우지 않습니다 — [새로고침] 버튼(VER.refresh)은 캐시를 먼저 비우지만,
+        여기서는 새 서비스워커가 새 파일을 다 받았고 그 파일이 정말 새 버전인지
+        (app.min.js 안에 새 버전 번호가 있는지) 확인된 뒤에만 다시 엽니다.
+        인터넷이 끊기거나 받다가 실패하면 지금 버전 그대로 씁니다.
+     ③ 같은 버전은 한 번만 — 다시 열었는데도 옛것이면(GitHub CDN 10분 지연 등) 더 하지 않고
+        안내 막대로 넘깁니다. 새로고침이 끝없이 반복되지 않게.
+     ④ 못 올린 기록(cg_dirty)·데이터는 폰 저장소에 있어서 다시 열어도 그대로입니다.
+   알리는 말은 없습니다. 바꾸는 동안에는 안내 막대도 숨기고, 실패하면 막대가 그대로 뜹니다.
+   ══════════════════════════════════════════ */
+const AUTO_UPD = {
+  KEY: 'cg_auto_upd',              // 마지막으로 자동 적용을 시도한 버전
+  WINDOW_MS: 10 * 1000,            // 켠 뒤 이 안에 새 버전을 알아챘을 때만
+  RESUME_MS: 30 * 60 * 1000,       // 이만큼 쉬었다 돌아오면 다시 켠 것으로 봅니다
+  WAIT_MS: 25 * 1000,              // 새 파일 받기를 기다리는 한도
+  startedAt: Date.now(),
+  touched: false,                  // 켠 뒤 화면을 누르거나 글자를 쳤는가
+  hiddenAt: 0,
+  busy: false,
+  sessionTried: '',                // 이번에 켠 동안 이미 해 본 버전 (실패해도 다시 안 함)
+
+  tried(v) { try { return localStorage.getItem(this.KEY) === String(v); } catch (e) { return true; } },
+  markTried(v) { try { STORE.set(this.KEY, String(v)); } catch (e) {} },
+
+  // 열린 창이나 입력 중인 칸이 있는가 — 모르면 "있다"로 봅니다
+  overlayOpen() {
+    try {
+      const a = document.activeElement;
+      if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName || '')) return true;
+      if (document.querySelector('.pe-bg, .pe-sheet, .tut, .gate, [role="dialog"]')) return true;
+      const list = document.querySelectorAll('[style*="z-index"]');
+      for (let i = 0; i < list.length; i++) {
+        const st = list[i].style || {};
+        if (st.position === 'fixed' && (parseInt(st.zIndex, 10) || 0) >= 100) return true;
+      }
+      return false;
+    } catch (e) { return true; }
+  },
+
+  // 지금 다시 열어도 아무것도 잃지 않는 순간인가
+  safe(screenName, late) {
+    if (this.touched) return false;
+    if (!late && Date.now() - this.startedAt > this.WINDOW_MS) return false;
+    if (screenName !== 'home') return false;
+    try { if (DEMO.on()) return false; } catch (e) { return false; }
+    try { if (/^\d+$/.test(localStorage.getItem('cg_onb') || '')) return false; } catch (e) { return false; }
+    try { if (new URLSearchParams(location.search).get('adopt')) return false; } catch (e) {}
+    if (this.overlayOpen()) return false;
+    return true;
+  },
+
+  // 폰에 저장된 app.min.js 가 정말 새 버전인가
+  async hasFiles(target) {
+    try {
+      if (typeof caches === 'undefined' || !caches.match) return false;
+      const r = await caches.match('./app.min.js');
+      if (!r) return false;
+      const txt = await r.text();
+      return txt.includes('"' + target + '"') || txt.includes("'" + target + "'");
+    } catch (e) { return false; }
+  },
+
+  // 새 서비스워커가 새 파일을 다 받을 때까지 기다립니다 (캐시는 지우지 않습니다)
+  async ready(target) {
+    const sw = typeof navigator !== 'undefined' && navigator.serviceWorker;
+    if (!sw || !sw.getRegistration) return false;
+    let reg = null;
+    try { reg = await sw.getRegistration(); } catch (e) { return false; }
+    if (!reg) return false;
+    try { await reg.update(); } catch (e) { return false; }   // 인터넷이 끊겼으면 여기서 멈춤
+    const w = reg.installing || reg.waiting;
+    if (w && w.state !== 'activated') {
+      const ok = await new Promise(res => {
+        const t = setTimeout(() => res(false), this.WAIT_MS);
+        const done = v => { clearTimeout(t); res(v); };
+        try {
+          w.addEventListener('statechange', () => {
+            if (w.state === 'activated') done(true);
+            else if (w.state === 'redundant') done(false);
+          });
+        } catch (e) { done(false); }
+      });
+      if (!ok) return false;
+    }
+    return this.hasFiles(target);
+  },
+
+  async run(getScreen) {
+    if (this.busy) return false;
+    const target = VER.latest && VER.latest.app ? String(VER.latest.app) : '';
+    if (!target || !(VER.hasUpdate() || VER.blocked())) return false;
+    if (this.sessionTried === target || this.tried(target)) return false;
+    const screenNow = () => { try { return getScreen(); } catch (e) { return ''; } };
+    if (!this.safe(screenNow())) return false;
+    this.sessionTried = target;
+    this.busy = true; VER.emit();                       // 바꾸는 동안 안내 막대 숨김
+    let ok = false;
+    try { ok = await this.ready(target); } catch (e) { ok = false; }
+    if (ok && this.safe(screenNow(), true)) {           // 받는 사이 손대셨으면 그만둡니다
+      this.markTried(target);
+      try { location.reload(); return true; } catch (e) {}
+    }
+    this.busy = false; VER.emit();                      // 못 바꿨으면 안내 막대가 그대로 뜸
+    return false;
+  },
+};
+try {
+  const markTouched = () => { AUTO_UPD.touched = true; };
+  ['pointerdown', 'touchstart', 'keydown', 'wheel'].forEach(t => window.addEventListener(t, markTouched, { capture: true, passive: true }));
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') { AUTO_UPD.hiddenAt = Date.now(); return; }
+    if (AUTO_UPD.hiddenAt && Date.now() - AUTO_UPD.hiddenAt >= AUTO_UPD.RESUME_MS) {
+      AUTO_UPD.startedAt = Date.now(); AUTO_UPD.touched = false; AUTO_UPD.sessionTried = '';
+    }
+    AUTO_UPD.hiddenAt = 0;
+  });
+} catch (e) {}
 
 const SYNC = {
   listeners: new Set(),
@@ -5061,6 +5190,8 @@ const TAB_SCREENS = ['home', 'calendar', 'reminders', 'ledger'];
 function App() {
   const [screen, setScreen] = useState({ name: 'home', props: {} });
   const [tab, setTab] = useState('home');
+  const screenNameRef = useRef('home');    // v1.9.61 자동 적용이 지금 화면을 알 수 있게
+  screenNameRef.current = screen.name;
   const [toast, showToast] = useToast();
   const [individuals, setIndividuals] = useState(() => DB.getIndividuals());
   const [remVer, setRemVer] = useState(0);
@@ -5128,8 +5259,10 @@ function App() {
   const [, bumpVer] = useState(0);
   useEffect(() => {
     const off = VER.on(() => bumpVer(v => v + 1));
-    VER.check();
-    const onVisible = () => { if (document.visibilityState === 'visible') VER.check(); };
+    // v1.9.61 켤 때·오래 쉬었다 돌아올 때 새 버전이면 아무 말 없이 바꿉니다 (조건은 AUTO_UPD)
+    const auto = () => { try { AUTO_UPD.run(() => screenNameRef.current); } catch (e) {} };
+    VER.check().then(auto);
+    const onVisible = () => { if (document.visibilityState === 'visible') VER.check().then(auto); };
     const onOnlineV = () => VER.check();
     const timer = setInterval(() => { if (document.visibilityState === 'visible') VER.check(); }, VERSION_CHECK_MS);
     document.addEventListener('visibilitychange', onVisible);
@@ -5180,7 +5313,7 @@ function App() {
   return (
     <div className="app">
       {/* 새 버전 안내 — 모양이 바뀐 경우(hard)는 화면에 계속 붙어 있습니다 */}
-      {VER.blocked() ? (
+      {AUTO_UPD.busy ? null : VER.blocked() ? (
         <div className="updbar hard">
           <span>업데이트가 필요해요. 지금은 기록이 서버에 올라가지 않습니다.</span>
           <button onClick={() => VER.refresh()}>지금 업데이트</button>
