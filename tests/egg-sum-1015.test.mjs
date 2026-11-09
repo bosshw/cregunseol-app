@@ -31,7 +31,9 @@ test("알 개수가 글자로 저장돼 있어도 숫자로 더한다", async ()
   const sum = rows.filter(r => r[2]).reduce((s, r) => s + r[1], 0);
   assert.equal(sum, 14);
   const src = await read("src/app.jsx");
-  assert.match(src, /const eggSum = rows\.filter\(r => r\.waiting\)\.reduce\(\(s, r\) => s \+ \(parseInt\(r\.eggs, 10\) \|\| 0\), 0\)/);
+  assert.match(src, /const pendOf = \(r\) => Number\(r\.nPending\) \|\| 0;/, "v1.9.60 아직 인큐에 있는 알만, 숫자로");
+  assert.match(src, /const eggSum = rows\.filter\(r => r\.waiting\)\.reduce\(\(s, r\) => s \+ pendOf\(r\), 0\);/);
   assert.doesNotMatch(src, /eggCount: String\(/, "대화로 적어도 숫자로 저장");
-  assert.match(src, /품는 알\(확인분\)/);
+  assert.match(src, />인큐 속 알</, "v1.9.60 '부화 대기·품는 알' → '인큐 속 알' 하나로");
+  assert.doesNotMatch(src, /품는 알\(확인분\)/);
 });

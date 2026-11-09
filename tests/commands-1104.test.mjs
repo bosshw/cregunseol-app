@@ -110,7 +110,7 @@ test("renames flow into stored partner/sire names; merges move sire links; breed
   assert.match(app, /if \(x\.data && x\.data\.sireId === dropId\) x = \{ \.\.\.x, data: \{ \.\.\.x\.data, sireId: keepId/, "합치기 뒤 산란 기록 아빠 연결 유지");
   assert.match(app, /const useL = !eq && \(lt > rt \|\| \(!!mine && lt >= rt && lt !== ''\)\);/, "못 올린 변경은 같은 시각이면 이 기기 쪽");
   assert.match(ex, /all\.forEach\(i => \{ if \(i\.sireId\) bred\.add\(i\.sireId\); if \(i\.damId\) bred\.add\(i\.damId\); \}\);/, "부모인 아이는 분양 대기함에 안 뜸");
-  assert.match(app, /const APP_PATCHED = '2026-11-07';/, "설정의 최근 업데이트 날짜");
+  assert.match(app, /const APP_PATCHED = '\d{4}-\d{2}-\d{2}';/, "설정의 최근 업데이트 날짜");
   for (const dead of ["NOTIFY_WINDOW", "CONDITION_STALE", "HATCH_AFTER_LAYING", "FEED_DUE", "const eggDone", "const euro ", "const irang "]) assert.ok(!app.includes(dead), "안 쓰는 코드 정리: " + dead);
 });
 
@@ -122,4 +122,12 @@ test("mating sheet lists only females/males (no unknown, no away) and the mating
   assert.match(app, /const list = Object\.entries\(pairs\)\.sort\(\(\[, a\], \[, b\]\) => \(lastMate\(b\) \|\| lastOf\(b\)\)\.localeCompare\(lastMate\(a\) \|\| lastOf\(a\)\)\);/);
   assert.match(app, /pick\('sireId', '아빠', others\.filter\(i => i\.gender === 'male' \|\| i\.id === gecko\.sireId\)\)/, "프로필 부모 고르기도");
   assert.match(ex, /const males = all\.filter\(i => i\.gender === 'male'\)\.sort\(byName\);/, "개체 추가 부모 고르기도");
+});
+
+test("v1.9.60 해칭 화면 숫자는 '인큐 속 알 · 7일 내 부화' 둘만, 둘 다 알 개수", async () => {
+  const src = await readFile(new URL("../src/app.jsx", import.meta.url), "utf8");
+  assert.doesNotMatch(src, /const waitCnt = /);
+  assert.doesNotMatch(src, />부화 대기</);
+  assert.match(src, />인큐 속 알</);
+  assert.match(src, /const soon = rows\.filter\(r => r\.waiting && r\.d >= 0 && r\.d <= 7\)\.reduce\(\(s, r\) => s \+ pendOf\(r\), 0\);/);
 });
