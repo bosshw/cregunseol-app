@@ -744,8 +744,8 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.59';
-const APP_PATCHED = '2026-11-07';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
+const APP_VERSION = '1.9.60';
+const APP_PATCHED = '2026-11-09';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -5860,9 +5860,11 @@ function LayingView({ individuals, navigate, showToast }) {
     return a.e.date < b.e.date ? 1 : -1;
   });
 
-  const waitCnt = rows.filter(r => r.waiting).length;
-  const eggSum = rows.filter(r => r.waiting).reduce((s, r) => s + (parseInt(r.eggs, 10) || 0), 0);
-  const soon = rows.filter(r => r.waiting && r.d >= 0 && r.d <= 7).length;
+  /* v1.9.60 대표님 2026-11-09 "차수는 아래 있으니 합쳐서 — 인큐 속 알 갯수 · 7일 내 부화 이렇게만"
+     둘 다 '알 개수'로 셉니다. 이미 나온 알·문제 알은 빼고 아직 인큐에 있는 알만 (nPending) */
+  const pendOf = (r) => Number(r.nPending) || 0;
+  const eggSum = rows.filter(r => r.waiting).reduce((s, r) => s + pendOf(r), 0);
+  const soon = rows.filter(r => r.waiting && r.d >= 0 && r.d <= 7).reduce((s, r) => s + pendOf(r), 0);
 
   if (!all.length) return (
     <>{layDueList(individuals).length > 0 && <div style={{padding:'0 16px'}}>{chk}</div>}
@@ -5892,13 +5894,9 @@ function LayingView({ individuals, navigate, showToast }) {
 
       {addBtn}
       <div className="card" style={{margin:'0 0 12px', display:'flex', justifyContent:'space-around', textAlign:'center'}}>
-        <div>
-          <div style={{fontSize:20, fontWeight:800, color:'var(--accent2)'}}>{waitCnt}</div>
-          <div style={{fontSize:11, color:'var(--text3)'}}>부화 대기</div>
-        </div>
-        <div>
-          <div style={{fontSize:20, fontWeight:800, color:'var(--accent2)'}}>{eggSum || '—'}</div>
-          <div style={{fontSize:11, color:'var(--text3)'}}>품는 알(확인분)</div>
+        <div data-testid="incu-eggs">
+          <div style={{fontSize:20, fontWeight:800, color:'var(--accent2)'}}>{eggSum}</div>
+          <div style={{fontSize:11, color:'var(--text3)'}}>인큐 속 알</div>
         </div>
         <div>
           <div style={{fontSize:20, fontWeight:800, color: soon ? '#B3261E' : 'var(--text3)'}}>{soon}</div>
