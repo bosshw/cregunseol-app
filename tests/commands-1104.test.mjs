@@ -131,3 +131,12 @@ test("v1.9.60 해칭 화면 숫자는 '인큐 속 알 · 7일 내 부화' 둘만
   assert.match(src, />인큐 속 알</);
   assert.match(src, /const soon = rows\.filter\(r => r\.waiting && r\.d >= 0 && r\.d <= 7\)\.reduce\(\(s, r\) => s \+ pendOf\(r\), 0\);/);
 });
+
+test("v1.9.62 체크표 접기 줄엔 몇 마리·묶음 숫자를 안 적는다 ('다음은 누구 날짜'는 그대로)", async () => {
+  const ex = await rd("src/extras.jsx");
+  assert.doesNotMatch(ex, /다가오는 예정 \{soon\.length\}마리/);
+  assert.doesNotMatch(ex, /시즌 쉬는 아이 \{rest\.length\}마리/);
+  assert.doesNotMatch(ex, /다가오는 부화 \{soon\.length\}묶음/);
+  assert.match(ex, /'▸'\} 다가오는 예정\n/);
+  assert.match(ex, /'▸'\} 시즌 쉬는 아이\n/);
+});
