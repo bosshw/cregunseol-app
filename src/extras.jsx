@@ -2457,13 +2457,14 @@ function LayCheck({ navigate, showToast, onSaved }) {
       ))}
       {soon.length > 0 && (
         <button className="lc-fold" onClick={() => setFold(fold === 'soon' ? '' : 'soon')}>
-          {fold === 'soon' ? '▾' : '▸'} 다가오는 예정 {soon.length}마리
+          {/* v1.9.62 대표님 2026-11-10 "몇 마리는 빼고" — 펼치면 이름이 나오니 숫자는 안 적습니다 */}
+          {fold === 'soon' ? '▾' : '▸'} 다가오는 예정
           {fold === 'soon' && <small>{soon.map(f => `${f.name} ${f.nth}차 ${lcMD(f.eta)}`).join(' · ')}</small>}
         </button>
       )}
       {rest.length > 0 && (
         <button className="lc-fold" onClick={() => setFold(fold === 'rest' ? '' : 'rest')}>
-          {fold === 'rest' ? '▾' : '▸'} 시즌 쉬는 아이 {rest.length}마리
+          {fold === 'rest' ? '▾' : '▸'} 시즌 쉬는 아이
           {fold === 'rest' && <small>{rest.map(f => f.name).join(' · ')} — 다시 낳으면 저절로 체크표에 돌아와요</small>}
         </button>
       )}
@@ -2532,7 +2533,7 @@ function HatchCheck({ navigate, showToast, onSaved }) {
       })}
       {soon.length > 0 && (
         <button className="lc-fold" onClick={() => setFold(!fold)}>
-          {fold ? '▾' : '▸'} 다가오는 부화 {soon.length}묶음
+          {fold ? '▾' : '▸'} 다가오는 부화
           {fold && <small>{soon.map(r => `${r.momName} ${r.nth}차 ${lcMD(r.etaISO)}`).join(' · ')}</small>}
         </button>
       )}
