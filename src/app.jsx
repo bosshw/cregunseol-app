@@ -744,7 +744,7 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.63';
+const APP_VERSION = '1.9.64';
 const APP_PATCHED = '2026-11-13';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -3021,15 +3021,20 @@ function alertLine(r) {
    ══════════════════════════════════════════ */
 
 const parentsOf = (i) => [i && i.sireId, i && i.damId].filter(Boolean);
+/* v1.9.64 대표님 2026-11-13 "코타가 아빠인 애가 크얌이·크단이 2마리 — 엄마는 달라도 아빠가 같으니 교배하면 안 돼요"
+   부모는 이름으로도 맞춰 봅니다. 남의 집 수컷(외부)은 데려올 때마다 따로 등록돼 같은 아이가 두 장일 수 있어서,
+   이름이 같으면 같은 부모로 칩니다(앱 안에서 이름은 겹치지 않게 관리됩니다). */
+const parentKey = (id, byId) => { const p = byId && byId[id]; const n = p && String(p.name || '').replace(/\s+/g, ''); return n ? 'n:' + n : 'i:' + id; };
+const parentKeysOf = (i, byId) => parentsOf(i).map(id => parentKey(id, byId));
 
 /* 형제(동배·반동배) 목록 — 같은 클러치 표를 달았거나, 부모를 하나라도 공유하면 형제 */
 function sibIdsOf(id, byId, list) {
   const x = byId[id];
   if (!x) return [];
-  const px = parentsOf(x);
+  const px = parentKeysOf(x, byId);
   return list.filter(y => y.id !== id && (
     (x.clutchGroup && y.clutchGroup === x.clutchGroup) ||
-    (px.length > 0 && parentsOf(y).some(p => px.indexOf(p) >= 0))
+    (px.length > 0 && parentKeysOf(y, byId).some(p => px.indexOf(p) >= 0))
   )).map(y => y.id);
 }
 
@@ -3037,11 +3042,27 @@ function sibIdsOf(id, byId, list) {
 function littermatesOf(gecko, all) {
   const list = all || DB.getIndividuals();
   const byId = {}; list.forEach(i => { byId[i.id] = i; });
-  const px = parentsOf(gecko);
+  const px = parentKeysOf(gecko, byId);
   return list.filter(y => y.id !== gecko.id && (
     (gecko.clutchGroup && y.clutchGroup === gecko.clutchGroup) ||
-    (px.length === 2 && parentsOf(y).length === 2 && px.every(p => parentsOf(y).indexOf(p) >= 0))
+    (px.length === 2 && parentKeysOf(y, byId).length === 2 && px.every(p => parentKeysOf(y, byId).indexOf(p) >= 0))
   ));
+}
+
+/* v1.9.64 반동배 — 아빠나 엄마 한쪽만 같은 아이들. 동배처럼 붙이면 안 됩니다.
+   돌려주는 값: [{ role: 'sire'|'dam', parent: 그 부모, list: [아이들] }] */
+function halfSibsOf(gecko, all) {
+  const list = all || DB.getIndividuals();
+  const byId = {}; list.forEach(i => { byId[i.id] = i; });
+  const litter = new Set(littermatesOf(gecko, list).map(i => i.id));
+  const out = [];
+  [['sire', gecko.sireId], ['dam', gecko.damId]].forEach(([role, pid]) => {
+    if (!pid) return;
+    const k = parentKey(pid, byId);
+    const l = list.filter(y => y.id !== gecko.id && !litter.has(y.id) && parentKeysOf(y, byId).indexOf(k) >= 0);
+    if (l.length) out.push({ role, parent: byId[pid] || null, list: l.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ko')) });
+  });
+  return out;
 }
 
 /* 두 아이가 어떤 사이인가 — 없으면 null(남남) */
@@ -3057,7 +3078,8 @@ function relationOf(a, b, all) {
   if (a.clutchGroup && a.clutchGroup === b.clutchGroup)
     return { kind: 'litter', level: 'danger', label: '둘은 같은 클러치에서 나온 동배예요' };
 
-  const shared = pa.filter(x => pb.indexOf(x) >= 0);
+  const ka = parentKeysOf(a, byId), kb = parentKeysOf(b, byId);
+  const shared = pa.filter((x, n) => kb.indexOf(ka[n]) >= 0);   // v1.9.64 같은 이름의 부모(외부 수컷 두 장)도 같은 부모
   if (shared.length >= 2) return { kind: 'litter', level: 'danger', label: '아빠·엄마가 모두 같은 동배예요' };
   if (shared.length === 1) {
     const p = byId[shared[0]];
@@ -6468,6 +6490,11 @@ function BreedSheet({ kind, ev, presetMomId, onClose, onSaved, showToast }) {
               <input className="input" value={notes} placeholder="선택" onChange={e => setNotes(e.target.value)} />
             </label>
           )}
+          {(() => {   /* v1.9.64 고른 두 아이가 가까운 사이면 저장 전에 바로 알려 드립니다 (반동배 포함) */
+            const f = all.find(i => i.id === momId), m = sire && sire !== 'auto' && sire !== '__text' ? all.find(i => i.id === sire) : null;
+            const w = f && m ? mateWarning(f, m, all) : null;
+            return w ? <div data-testid="bs-kin" style={{fontSize:12, lineHeight:1.6, whiteSpace:'pre-line', color: w.level === 'danger' ? 'var(--danger)' : 'var(--text2)', background: w.level === 'danger' ? 'rgba(179,38,30,.07)' : 'var(--bg2)', borderRadius:10, padding:'8px 10px', margin:'4px 0 2px'}}>{w.text}</div> : null;
+          })()}
           {err && <div style={{fontSize:12, color:'var(--danger)', margin:'2px 2px 0'}}>{err}</div>}
           {isLay && ev && (delAsk ? (
             <div style={{display:'flex', gap:6, alignItems:'center', marginTop:6}}>
@@ -7769,12 +7796,13 @@ function PedigreeCard({ gecko, navigate }) {
   const dam = all.find(i => i.id === gecko.damId);
   const kids = all.filter(i => i.sireId === gecko.id || i.damId === gecko.id);
   const mates = littermatesOf(gecko, all);        // 같은 클러치에서 나온 아이들
-  if (!sire && !dam && !kids.length && !mates.length) return null;
+  const halves = halfSibsOf(gecko, all);          // v1.9.64 한쪽 부모만 같은 아이들
+  if (!sire && !dam && !kids.length && !mates.length && !halves.length) return null;
   return (
     <div style={{padding:'0 16px 12px'}}>
       <div className="card" style={{margin:0}}>
         <div style={{fontSize:13, fontWeight:700, color:'var(--text2)', marginBottom:8}}>🧬 혈통</div>
-        {[sire, dam, ...mates, ...kids].some(x => x && isAway(x)) && (
+        {[sire, dam, ...mates, ...kids, ...halves.flatMap(h => h.list)].some(x => x && isAway(x)) && (
           <div style={{fontSize:11, color:'var(--text3)', marginBottom:8, lineHeight:1.6}}>
             분양 갔거나 떠난 아이도 혈통에는 그대로 남습니다.
             {'\n'}근친 판정은 이 아이들을 통해 계속 이루어져요.
@@ -7798,8 +7826,20 @@ function PedigreeCard({ gecko, navigate }) {
             </div>
           </div>
         )}
+        {halves.map(h => (
+          <div key={h.role} data-testid="half-sibs" style={{marginTop: (sire || dam || mates.length) ? 10 : 0}}>
+            <div style={{fontSize:11, color:'var(--text3)', marginBottom:4}}>
+              반동배 ({h.role === 'sire' ? '아빠' : '엄마'}{h.parent ? ` ${h.parent.name}` : ''}{h.parent ? (/[가-힣]$/.test(h.parent.name) && ((h.parent.name.charCodeAt(h.parent.name.length - 1) - 0xAC00) % 28) ? '이' : '가') : '가'} 같아요) {h.list.length}마리 — 서로 붙이면 안 돼요
+            </div>
+            <div style={{display:'flex', flexWrap:'wrap', gap:6}}>
+              {h.list.map(m => (
+                <button key={m.id} className="chip-btn" onClick={() => navigate('profile', { gecko: m })}>{m.name}{awayTag(m)}</button>
+              ))}
+            </div>
+          </div>
+        ))}
         {kids.length > 0 && (
-          <div style={{marginTop: (sire || dam || mates.length) ? 10 : 0}}>
+          <div style={{marginTop: (sire || dam || mates.length || halves.length) ? 10 : 0}}>
             <div style={{fontSize:11, color:'var(--text3)', marginBottom:4}}>자식 {kids.length}마리</div>
             <div style={{display:'flex', flexWrap:'wrap', gap:6}}>
               {kids.map(k => (
