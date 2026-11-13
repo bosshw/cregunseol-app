@@ -39,14 +39,22 @@ test("아빠만 같은 두 아이 — 반동배로 보이고, 붙이면 ⛔", as
   assert.match(w.text, /코타가 같은 반동배예요/);
 });
 
-test("같은 외부 수컷이 두 장으로 등록돼 있어도(이름 같음) 같은 아빠로 본다", async () => {
+test("동명이크레 — 이름이 같아도 다른 장이면 남남 (대표님: 외부 개체엔 같은 이름이 흔해요)", async () => {
   const run = await load([
-    mk("k1", "코타", "male", { isExternal: true }), mk("k2", "코타 ", "male", { isExternal: true }),
-    mk("m1", "가온이", "female"), mk("m2", "나래", "female"),
-    mk("y", "다솜이", "female", { sireId: "k1", damId: "m1" }), mk("d", "라온이", "male", { sireId: "k2", damId: "m2" }),
+    mk("k1", "코타", "male", { isExternal: true }), mk("k2", "코타(바다샵)", "male", { isExternal: true }),
+    mk("m1", "가온이", "female"), mk("m2", "나래", "female", { adopted: true, adoptFrom: "바다샵" }),
+    mk("y", "다솜이", "female", { sireId: "k1", damId: "m1" }), mk("d", "라온이", "male", { sireId: "k2", damId: "m2", adopted: true, adoptFrom: "바다샵" }),
+    mk("own", "사랑이", "male", { isFromCreGunseol: true, sireId: "x", damId: "m1" }),
   ]);
-  assert.deepEqual(run("return halfSibsOf(by('다솜이'), L).map(x => x.list.map(i => i.name));"), [["라온이"]]);
-  assert.equal(run("return mateWarning(by('다솜이'), by('라온이'), L).level;"), "danger");
+  assert.deepEqual(run("return halfSibsOf(by('다솜이'), L).filter(x => x.role === 'sire').length;"), 0, "다른 코타라 아빠 쪽 반동배 아님");
+  assert.equal(run("return mateWarning(by('다솜이'), by('라온이'), L);"), null);
+  // 데려온 아이·외부 부모면 잇기 전에 여쭙고, 내 아이끼리면 바로 잇습니다
+  assert.equal(run("return parentNeedsAsk(by('라온이'), by('코타'));"), true);
+  assert.equal(run("return parentNeedsAsk(by('다솜이'), by('가온이'));"), false);
+  assert.equal(run("return parentNeedsAsk(by('라온이'), by('사랑이'));"), true, "데려온 아이의 부모를 내 아이 이름에 붙일 때도 확인");
+  // 다른 코타면 들인 곳을 붙여 따로, 그것도 있으면 숫자
+  assert.equal(run("return uniqueParentName('코타', by('라온이'), L);"), "코타2", "코타(바다샵)이 이미 있으면 코타2");
+  assert.equal(run("return uniqueParentName('코타', { adoptFrom: '하늘농장' }, L);"), "코타(하늘농장)");
 });
 
 test("혈통 카드에 반동배 줄, 메이팅 기록 화면에 경고", async () => {
@@ -55,4 +63,8 @@ test("혈통 카드에 반동배 줄, 메이팅 기록 화면에 경고", async 
   assert.match(src, /반동배 \(\{h\.role === 'sire' \? '아빠' : '엄마'\}/);
   assert.match(src, /data-testid="bs-kin"/);
   assert.match(src, /const w = f && m \? mateWarning\(f, m, all\) : null;/);
+  assert.match(src, /const parentKey = \(id\) => 'i:' \+ id;/, "부모는 id로만 비교");
+  assert.match(src, /if \(p && target\[role\] !== p\.id && parentNeedsAsk\(target, p\)\) \{/, "대화로 부모를 이을 때 동명이면 먼저 확인");
+  assert.match(src, /kind: 'parent-same'/); assert.match(src, /kind: 'parent-new'/);
+  assert.match(src, /if \(kind === 'parent-same' \|\| kind === 'parent-new'\) \{/);
 });
