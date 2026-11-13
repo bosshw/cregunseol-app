@@ -3022,10 +3022,25 @@ function alertLine(r) {
 
 const parentsOf = (i) => [i && i.sireId, i && i.damId].filter(Boolean);
 /* v1.9.64 대표님 2026-11-13 "코타가 아빠인 애가 크얌이·크단이 2마리 — 엄마는 달라도 아빠가 같으니 교배하면 안 돼요"
-   부모는 이름으로도 맞춰 봅니다. 남의 집 수컷(외부)은 데려올 때마다 따로 등록돼 같은 아이가 두 장일 수 있어서,
-   이름이 같으면 같은 부모로 칩니다(앱 안에서 이름은 겹치지 않게 관리됩니다). */
-const parentKey = (id, byId) => { const p = byId && byId[id]; const n = p && String(p.name || '').replace(/\s+/g, ''); return n ? 'n:' + n : 'i:' + id; };
-const parentKeysOf = (i, byId) => parentsOf(i).map(id => parentKey(id, byId));
+   ★ 같은 부모인지는 '등록된 그 아이(id)'로만 봅니다. 이름으로 맞추지 않습니다.
+     대표님: "외부 개체에는 동명이크레가 자주 있어요" — 다른 집 코타를 우리 코타로 치면 남남이 반동배로 묶입니다.
+     그래서 이름이 같은 부모를 이을 때는 대화에서 먼저 '같은 아이인지' 여쭙니다(parentAsk). */
+const parentKey = (id) => 'i:' + id;
+/* 이름이 같은 부모에 바로 이어도 되는가 — 내 아이끼리면 바로, 데려온·외부 아이가 한쪽이라도 끼면 먼저 여쭙니다 */
+function parentNeedsAsk(child, parent) {
+  if (!child || !parent) return false;
+  const childFromOut = !!(child.isExternal || child.adopted || child.adoptFrom || child.cgOff);
+  return childFromOut || !!(parent.isExternal || parent.adopted || parent.adoptFrom);
+}
+/* 다른 코타면 '코타(들인 곳)' → 그래도 겹치면 '코타2', '코타3' … */
+function uniqueParentName(base, child, all) {
+  const taken = new Set((all || DB.getIndividuals()).map(i => i.name));
+  const from = child && child.adoptFrom ? String(child.adoptFrom).trim().slice(0, 12) : '';
+  if (from && !taken.has(`${base}(${from})`)) return `${base}(${from})`;
+  for (let n = 2; n < 100; n++) if (!taken.has(`${base}${n}`)) return `${base}${n}`;
+  return `${base}_${Date.now() % 1000}`;
+}
+const parentKeysOf = (i) => parentsOf(i).map(parentKey);
 
 /* 형제(동배·반동배) 목록 — 같은 클러치 표를 달았거나, 부모를 하나라도 공유하면 형제 */
 function sibIdsOf(id, byId, list) {
@@ -3058,7 +3073,7 @@ function halfSibsOf(gecko, all) {
   const out = [];
   [['sire', gecko.sireId], ['dam', gecko.damId]].forEach(([role, pid]) => {
     if (!pid) return;
-    const k = parentKey(pid, byId);
+    const k = parentKey(pid);
     const l = list.filter(y => y.id !== gecko.id && !litter.has(y.id) && parentKeysOf(y, byId).indexOf(k) >= 0);
     if (l.length) out.push({ role, parent: byId[pid] || null, list: l.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ko')) });
   });
@@ -3079,7 +3094,7 @@ function relationOf(a, b, all) {
     return { kind: 'litter', level: 'danger', label: '둘은 같은 클러치에서 나온 동배예요' };
 
   const ka = parentKeysOf(a, byId), kb = parentKeysOf(b, byId);
-  const shared = pa.filter((x, n) => kb.indexOf(ka[n]) >= 0);   // v1.9.64 같은 이름의 부모(외부 수컷 두 장)도 같은 부모
+  const shared = pa.filter((x, n) => kb.indexOf(ka[n]) >= 0);   // 같은 id의 부모만 같은 부모 (이름이 같아도 다른 장이면 남남)
   if (shared.length >= 2) return { kind: 'litter', level: 'danger', label: '아빠·엄마가 모두 같은 동배예요' };
   if (shared.length === 1) {
     const p = byId[shared[0]];
@@ -8493,6 +8508,22 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
 
   /* ── 칩 버튼 처리 ── */
   const handleChip = (kind, value) => {
+    if (kind === 'parent-same' || kind === 'parent-new') {   // v1.9.64 동명이크레 확인
+      const v = value, all = DB.getIndividuals(), t = all.find(i => i.id === v.targetId);
+      if (!t) return;
+      let p = kind === 'parent-same' ? all.find(i => i.id === v.pid) : null;
+      if (kind === 'parent-new') {
+        const nm = uniqueParentName(v.name, t, all);
+        p = DB.addIndividual({ name: nm, gender: v.role === 'sireId' ? 'male' : 'female', morph: '', hatchDate: '', isFromCreGunseol: false, isExternal: true, sireId: null, damId: null, shareCode: newShareCode(), ...(t.adoptFrom ? { adoptFrom: t.adoptFrom } : {}) });
+      }
+      if (!p) return;
+      DB.updateIndividual(t.id, { [v.role]: p.id });
+      refreshIndividuals(); setTarget(DB.getIndividuals().find(i => i.id === t.id) || t);
+      bot(kind === 'parent-same'
+        ? `🧬 ${t.name} ${v.role === 'sireId' ? '아빠' : '엄마'}를 기존 ${p.name}로 이었어요.\n같은 부모를 둔 아이들은 반동배로 묶여 붙이기 전에 알려 드려요.`
+        : `🧬 다른 아이라서 '${p.name}'(외부)으로 따로 등록하고 ${t.name} ${v.role === 'sireId' ? '아빠' : '엄마'}로 이었어요.\n기존 ${v.name}와는 남남으로 봐요. 이름은 프로필에서 바꿀 수 있어요.`);
+      return;
+    }
     if (kind === 'ext-parent') {   // v1.9.42 혈통에 말한 없는 부모 → 등록하고 바로 연결
       const v = value, all = DB.getIndividuals(), t = all.find(i => i.id === v.targetId);
       if (!t) return;
@@ -9130,6 +9161,16 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       [['sireId', sw, sireM, '부(아빠)'], ['damId', dw, damM, '모(엄마)']].forEach(([role, w, m, lab]) => {
         if (!w) return;
         const p = fresh.find(i => i.name === w);
+        /* v1.9.64 동명이크레 — 데려온 아이·외부 아이의 부모를, 이름이 같은 외부 개체에 바로 잇지 않고 먼저 여쭙니다 */
+        if (p && target[role] !== p.id && parentNeedsAsk(target, p)) {
+          const kidsOfP = fresh.filter(i => i.sireId === p.id || i.damId === p.id).map(i => i.name);
+          lines.push(`${lab} — 이미 등록된 ${p.name}${p.adoptFrom ? `(${p.adoptFrom})` : p.isExternal ? '(외부)' : ''}가 있어요.`
+            + (kidsOfP.length ? `\n지금 ${p.name}의 자식으로 이어진 아이: ${kidsOfP.slice(0, 6).join(', ')}${kidsOfP.length > 6 ? ' …' : ''}` : '')
+            + `\n${target.name}의 ${role === 'sireId' ? '아빠' : '엄마'}가 이 ${p.name}와 같은 아이인가요? 이름만 같은 다른 아이면 혈통이 엉켜요.`);
+          chips.push({ label: `✅ 같은 ${p.name}예요`, kind: 'parent-same', value: { pid: p.id, role, targetId: target.id } },
+            { label: `🆕 다른 ${p.name}예요 (따로 등록)`, kind: 'parent-new', value: { name: p.name, role, targetId: target.id } });
+          return;
+        }
         if (p) { DB.updateIndividual(target.id, { [role]: p.id }); lines.push(`${lab} ${p.name} 🧬 연결 완료`); return; }
         const n = nn(m[1]);
         if (!n || isBadName(n)) { lines.push(`"${w}"는 아직 없는 아이예요. 먼저 등록해주시면 연결해드릴게요.`); return; }
