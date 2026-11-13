@@ -744,8 +744,8 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.62';
-const APP_PATCHED = '2026-11-10';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
+const APP_VERSION = '1.9.63';
+const APP_PATCHED = '2026-11-13';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -1748,6 +1748,81 @@ function extractLedger(text) {
   } else if (/용품|물건|중고/.test(t)) category = '용품 판매';
   const notes = t.replace(/\s+/g, ' ').trim().slice(0, 40);
   return { date: explicitDate(t) || todayStr(), data: { flow, category, amount: won, notes, indId: null } };
+}
+
+/* v1.9.63 "초초 몇 마리야?" · "초초 관련 몇 마리" · "모프별 몇 마리" · "암컷 몇 마리" (대표님 2026-11-13)
+   이름 없이 마릿수를 물으면 곁에 있는 아이(분양·떠난 아이 빼고)를 셉니다.
+   모프 말은 등록된 아이들의 모프 글자에 '들어 있는지'로 봅니다 — "초초"면 헷초초·50헷초초릴리까지 다 잡고, 모프별로 나눠 보여드립니다. */
+const HERD_COUNT_RE = /몇\s*마리|마릿수|몇\s*개체|몇\s*명/;
+const HERD_STOP = new Set(['나','내','난','너','우리','저','제','지금','현재','총','전체','전부','다','모두','합쳐서','통틀어','키우는','키우고','가진','가지고','갖고','있는','있어','있니','있지','있나','있음','있냐','있어요','있을까','있는지','있었지','돼','되','야','이야','관련','관련된','개체','아이','친구','모프','중','중에','에서','알려','알려줘','보여줘','세어줘','세줘','줘','암컷','수컷','숫컷','암놈','수놈','숫놈','미구분','성별','각각','따로','별로','모프별','무슨','어떤','뭐','혹시','그럼','그러면','요즘','곁에','남은','살아있는','기준','몇','마리']);
+const herdNorm = (x) => String(x || '').replace(/\s+/g, '').toLowerCase().replace(/het/g, '헷');
+function herdTokenClean(w) {
+  let t = String(w || '').replace(/[^가-힣A-Za-z0-9%]/g, '');
+  for (let k = 0; k < 4; k++) {
+    const n = t.replace(/(?:이랑|랑|하고|이나|들이|들은|들|인애들|인애|인|애들|애|이는|는|은|이가|가|을|를|도|만|관련된|관련|계열|짜리|들어간|섞인|모프)$/, '');
+    if (n === t || !n) break;
+    t = n;
+  }
+  return t;
+}
+function answerHerdQuery(text, all) {
+  const t = String(text || '').trim();
+  if (!HERD_COUNT_RE.test(t)) return null;
+  // 새끼·부화·산란·분양은 그쪽 물음이 따로 있습니다
+  if (/새끼|자식|애기|아기|베이비|해츨링|나왔|태어|부화|해칭|산란|낳|알\s*(?:몇|개)|분양|판매|팔았|팔린|예약|메이팅|붙였|교배/.test(t)) return null;
+  const inds = all || DB.getIndividuals();
+  if (findNamesInText(t, inds).length) return null;            // 이름이 있으면 그 아이 물음
+  const gender = /암컷|암놈/.test(t) ? 'female' : /수컷|숫컷|수놈|숫놈/.test(t) ? 'male' : /미구분/.test(t) ? 'unknown' : null;
+  const home = inds.filter(i => !isAway(i));
+  const morphPool = [...new Set(inds.map(i => herdNorm(i.morph)).filter(Boolean))];
+  const known = (w) => w.length >= 2 && (morphPool.some(m => m.includes(w)) || MORPH_WORDS.some(m => herdNorm(m) === w));
+  const rest = t.replace(/[?？!！.,~]/g, ' ').replace(/몇\s*마리[가-힣]*|마릿수[가-힣]*|몇\s*개체[가-힣]*|몇\s*명[가-힣]*/g, ' ');
+  const keys = [], unknown = [];
+  rest.split(/\s+/).forEach(w => {
+    const c = herdTokenClean(w);
+    if (!c || HERD_STOP.has(c) || HERD_STOP.has(w)) return;
+    const n = herdNorm(c);
+    if (known(n)) { if (!keys.includes(n)) keys.push(n); }
+    else if (n.length >= 2 && !/^\d+$/.test(n)) unknown.push(c);
+  });
+  const byMorphAsk = /모프\s*별|무슨\s*모프|어떤\s*모프|모프\s*(?:가|는|들)?\s*(?:각각|별로|몇)/.test(t);
+  const gLine = (l) => {
+    const f = l.filter(i => i.gender === 'female').length, m = l.filter(i => i.gender === 'male').length, u = l.length - f - m;
+    return [f && `암 ${f}`, m && `수 ${m}`, u && `미구분 ${u}`].filter(Boolean).join(' · ');
+  };
+  const groupLines = (l, withNames) => {
+    const g = {};
+    l.forEach(i => { const k = (i.morph || '').trim() || '모프 미입력'; (g[k] = g[k] || []).push(i); });
+    const none = (k) => k === '모프 미입력' ? 1 : 0;
+    return Object.entries(g).sort((a, b) => none(a[0]) - none(b[0]) || b[1].length - a[1].length || a[0].localeCompare(b[0], 'ko'))
+      .map(([k, v]) => `· ${k} ${v.length}마리` + (withNames ? ` — ${v.map(i => i.name).sort((a, b) => a.localeCompare(b, 'ko')).join(', ')}` : ''));
+  };
+  const gWord = gender === 'female' ? '암컷 ' : gender === 'male' ? '수컷 ' : gender === 'unknown' ? '미구분 ' : '';
+  const pickG = (l) => gender ? l.filter(i => (gender === 'unknown' ? (i.gender !== 'female' && i.gender !== 'male') : i.gender === gender)) : l;
+  const awayNote = (l) => l.length ? `\n(분양 간·떠난 아이 ${l.length}마리는 뺐어요)` : '';
+
+  if (!keys.length && unknown.length) {
+    const top = [...new Set(home.map(i => (i.morph || '').trim()).filter(Boolean))].slice(0, 6);
+    return `'${unknown.join(' ')}' 들어간 모프는 등록된 아이 중에 없어요 🦎` + (top.length ? `\n지금 있는 모프: ${top.join(' · ')}${top.length >= 6 ? ' …' : ''}` : '');
+  }
+  if (!keys.length) {
+    const l = pickG(home);
+    if (!l.length) return `${gWord ? gWord.trim() + '는' : '곁에 있는 아이는'} 아직 없어요 🦎`;
+    const head = `🦎 지금 곁에 있는 ${gWord}아이는 ${l.length}마리예요.` + (gender ? '' : `\n${gLine(l)}`);
+    return byMorphAsk ? `${head}\n\n모프별로는요\n${groupLines(l, false).join('\n')}` : `${head}\n모프별로 보시려면 "모프별 몇 마리야?"라고 물어보세요.`;
+  }
+  const each = keys.length >= 2 && /각각|따로|별로/.test(t);
+  const hit = (i, ks) => ks.every(k => herdNorm(i.morph).includes(k));
+  const label = (ks) => ks.join('·');
+  const one = (ks) => {
+    const l = pickG(home.filter(i => hit(i, ks)));
+    const away = pickG(inds.filter(i => isAway(i) && hit(i, ks)));
+    if (!l.length) return `${label(ks)} 들어간 ${gWord}아이는 지금 곁에 없어요 🦎${awayNote(away)}`;
+    const lines = groupLines(l, l.length <= 12);
+    return `🦎 ${label(ks)} 들어간 ${gWord}아이는 ${l.length}마리예요.` + (gender ? '' : ` (${gLine(l)})`)
+      + (lines.length > 1 || l.length <= 12 ? `\n${lines.join('\n')}` : '') + awayNote(away);
+  };
+  return each ? keys.map(k => one([k])).join('\n\n') : one(keys);
 }
 
 /* "이번 달 얼마 썼어?" 같은 물음에 답합니다 */
@@ -8678,6 +8753,10 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     }
     // 처음 보는 이름이면 등록한 뒤에 적습니다 (그동안 가계부·먹이로 새지 않게)
     const adoptHeld = adoptC && adoptC.strong ? adoptC : null;
+
+    // 2.945) v1.9.63 "초초 몇 마리야?" — 이름 없이 마릿수를 물으면 모프·성별로 세어 드립니다
+    const hq = answerHerdQuery(text);
+    if (hq) { bot(hq); return; }
 
     // 2.95) 가계부 — 돈 이야기는 개체가 아니라 가계부로 보냅니다
     const lq = answerLedgerQuery(text);
