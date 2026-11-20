@@ -749,7 +749,7 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.66';
+const APP_VERSION = '1.9.67';
 const APP_PATCHED = '2026-11-20';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
@@ -3878,9 +3878,13 @@ function nameFromWord(w, list) {
 function findNamesInText(text, individuals) {
   const found = [];
   const sorted = [...individuals].sort((a, b) => b.name.length - a.name.length);
+  /* v1.9.67 "크온이2 12그램"이 크온이 기록으로 들어갔습니다 — 이름 바로 뒤에 숫자(·호)가 붙어 다른 이름이면 건너뜁니다.
+     "크온이12그램"처럼 숫자 뒤에 단위가 오면 그대로 크온이입니다 */
+  const numberedAfter = (rest) => /^\d+\s*호?(?![\d.]*\s*(?:그램|그람|g|G|kg|개|마리|도|%|일|월|번|차|살|원|만|cm))/.test(rest);
   for (const ind of sorted) {
     if (!ind.name) continue;
-    const i = text.indexOf(ind.name);
+    let i = text.indexOf(ind.name);
+    while (i !== -1 && !/\d$/.test(ind.name) && numberedAfter(text.slice(i + ind.name.length))) i = text.indexOf(ind.name, i + 1);
     if (i !== -1 && !found.some(f => f.ind.id === ind.id)) found.push({ ind, idx: i });
   }
   return found.sort((a, b) => a.idx - b.idx).map(f => f.ind);
@@ -3996,6 +4000,16 @@ const RE_MATE  = /메이팅|교배|합사|짝짓기|붙였|붙여\s*놨|합방|�
 const RE_SHED  = /탈피|허물|각질\s*벗|껍질\s*벗/;
 const RE_FEED  = /피딩|먹이|밥|먹였|먹었|먹임|먹여|급여|사료|줬어|줬음|줬고|줬다|주었|급식/;
 const RE_NOFEED = /안\s*먹|못\s*먹|먹지\s*않|거식|남겼|안먹|입질\s*없/;
+/* v1.9.67 '-어/아 줬어'(바꿔줬·갈아줬·옮겨줬·치워줬) — 줬 바로 앞 글자가 받침 없는 ㅏ·ㅐ·ㅓ·ㅔ·ㅕ·ㅘ·ㅙ·ㅝ 로 끝나면 '해 주다'입니다 */
+function helperGive(text) {
+  const re = /(\S)\s*(?:줬|주었)/g; let m;
+  while ((m = re.exec(text))) {
+    const c = m[1].charCodeAt(0) - 0xAC00;
+    if (c < 0 || c > 11171 || c % 28) continue;
+    if ([0, 1, 4, 5, 6, 9, 10, 14].includes(Math.floor((c % 588) / 28))) return true;
+  }
+  return false;
+}
 /* 그날 이미 먹이 종류가 적힌 급여가 있는지 */
 const sameDayFoodType = (indId, d) => DB.getEvents().some(x => x.individualId === indId && x.type === 'feeding'
   && x.date === (d || todayStr()) && x.data && x.data.foodType);
@@ -4013,11 +4027,13 @@ const CONDITION_RULES = [
 const HEALTH_RULES = [
   [/거식/, '거식'],
   [/탈피\s*부전|탈피부전|허물\s*(안|못)\s*벗|묵은\s*허물/, '탈피부전'],
-  [/꼬리\s*(자절|잘렸|잘림|끊|떨어|빠졌)|자절/, '꼬리 자절'],
+  [/꼬리\s*(?:가|이|는|도)?\s*(자절|잘렸|잘림|끊|떨어|빠졌)|자절/, '꼬리 자절'],   // v1.9.67 "꼬리가 끊겼어"도
   [/다쳤|상처|물렸|찢어|피\s*났|화상/, '외상'],
   [/설사|묽은\s*변|변이\s*묽/, '설사'],
   [/에그\s*바인딩|알이?\s*(걸림|걸렸|걸린|막혔|막힌|안\s*나와|못\s*낳)|난막힘|산란\s*장애/, '에그바인딩'],
   [/폐사|무지개다리/, '폐사'],
+  /* v1.9.67 "죽었어"만 말하면 메모로 담겼습니다. 다른 낱말 없이 그 아이 이야기일 때만(귀뚜라미가 죽었어는 아님) — 저장을 눌러야 남습니다 */
+  [/^\s*(?:얘|걔|우리\s*애)?\s*(?:가|는)?\s*(?:죽었|죽음|죽어\s*있|하늘나라|별이\s*됐|숨\s*졌)/, '폐사'],
 ];
 
 function extractFacts(text) {
@@ -4028,7 +4044,8 @@ function extractFacts(text) {
   let m;
 
   // 몸무게: "12그램", "12.5g"
-  m = text.match(/(\d+(?:\.\d+)?)\s*(?:그램|그람|g\b|G\b)/);
+  m = text.match(/(\d+(?:\.\d+)?)\s*(?:그램|그람|g\b|G\b)/)
+    || text.match(/(?:몸무게|무게|체중)\s*(?:은|는|이|가|:)?\s*(\d+(?:\.\d+)?)(?!\s*(?:개|마리|일|도|%|원|만|번|차|살|개월|월))/);   // v1.9.67 "무게 12"
   if (m) push('growth', { weight: m[1] });
 
   // 메이팅
@@ -4085,7 +4102,14 @@ function extractFacts(text) {
   //   첨가제 낱말만으로는 먹이 기록을 만들지 않습니다("칼슘 부족한가?"는 급여가 아님) — 주는 말이 같이 있어야 합니다.
   const supps = SUPPLEMENTS.filter(x => x.re.test(text)).map(x => x.key);
   const suppGive = supps.length && RE_SUPP_GIVE.test(text);
-  const feedTrigger = RE_FEED.test(text) || CRICKET_RE.test(text) || SUPU_RE.test(text) || suppGive;
+  /* v1.9.67 "물 줬어" · "은신처 바꿔줬어" · "약 먹였어"가 먹이 기록으로 잡혀 "밥 먹었군요!"를 물었습니다.
+     물·분무, '-어/아 줬어'(바꿔줬·갈아줬·옮겨줬), 약은 먹이가 아닙니다 (먹이 낱말이 같이 있으면 먹이로 봅니다) */
+  const foodWord = /밥|먹이|피딩|급여|사료|슈푸|판게아|레파시|귀뚜|귀뚤|밀웜|두비아|충식/.test(text) || CRICKET_RE.test(text) || SUPU_RE.test(text);
+  const notFeed = !foodWord && (/(^|\s)(물|분무|미스팅)\s*(?:을|를|좀)?\s*(?:줬|주었|뿌|했)/.test(text)
+    || (!supps.length && helperGive(text) && !/먹여|먹였|먹임/.test(text))   // "바꿔줬어"·"갈아줬어" (단 "칼슘 넣어줬어"·"먹여줬어"는 급여)
+    || /은신처|사육장|케이지|바닥재|물그릇|조명|히터|매트|화분|유목|청소/.test(text)
+    || /(^|\s)약\s*(?:을|좀)?\s*(?:먹|줬|발라|넣)/.test(text));
+  const feedTrigger = !notFeed && (RE_FEED.test(text) || CRICKET_RE.test(text) || SUPU_RE.test(text) || suppGive);
   if (feedTrigger) {
     const foodType = CRICKET_RE.test(text) ? '충식' : SUPU_RE.test(text) ? '슈푸' : '';
     // 안 먹었다는 말도 기록으로 남깁니다 — 며칠째 안 먹는지 세는 데 씁니다
@@ -4494,7 +4518,10 @@ function extractMorph(text) {
   const m = text.match(/모프(?:는|가|:)?\s*([가-힣A-Za-z0-9 ]+?)(?:야|이야|이에요|예요|입니다|임|이고|고|래|,|\.|!|$)/);
   if (m && m[1].trim() && !/^(뭐|뭔|무엇|머)/.test(m[1].trim())) return m[1].trim();
   for (const w of MORPH_WORDS) {
-    if (text.includes(w)) return w;
+    if (!text.includes(w)) continue;
+    /* v1.9.67 "헷초초야"가 "초초"로 잡혀 모프를 초초로 바꾸자고 물었습니다 — 앞의 헷·50헷·100헷까지 같이 읽습니다 */
+    const hm = text.match(new RegExp('((?:\\d{2,3}\\s*%?\\s*)?(?:헷|het)\\s*)' + w, 'i'));
+    return hm ? hm[1].replace(/\s+/g, '') + w : w;
   }
   return null;
 }
@@ -4627,7 +4654,7 @@ const SUPPLY_WORDS = /사료|먹이|판게아|레파시|슈퍼푸드|슈푸|귀�
 /* ── 점 말 알아듣기 (v1.9.10) ──
    "꼬리점 2개" · "등점 1개 꼬리점 3개" · "무점이야" · "점 없어" · "점박이" → 연필 창의 '점' 칸
    점심·점검·지점·점수처럼 '점'이 들어간 다른 낱말, 알에 생긴 점("알에 점 생겼어")은 건드리지 않습니다. */
-const SPOT_PART = '(꼬리|등|옆구리|옆|머리|얼굴|다리|몸통|배|목|눈|엉덩이|골반|측면|턱|볼)';
+const SPOT_PART = '(도살|꼬리|등|옆구리|옆|머리|얼굴|다리|몸통|배|목|눈|엉덩이|골반|측면|턱|볼)';   // v1.9.67 도살점
 const SPOT_KNUM = { 한: 1, 하나: 1, 두: 2, 둘: 2, 세: 3, 셋: 3, 네: 4, 넷: 4, 다섯: 5, 여섯: 6, 일곱: 7, 여덟: 8, 아홉: 9, 열: 10 };
 function spotsClaim(text) {
   const s = String(text || '').trim();
@@ -4876,6 +4903,7 @@ function extractRetarget(text) {
 
 function extractNameDecl(text) {
   const m = text.match(/이름(?:은|이|:)?\s*([가-힣A-Za-z0-9]{1,10}?)(?:이야|이에요|예요|입니다|이래|라고\s*해|라고|이다|임|야|고)?[\s.!?~]*$/);
+  if (m && /^(바꿀|바꿔|바꾸|변경|수정|고칠|고쳐|뭐|무엇|모르)/.test(m[1])) return null;   // v1.9.67 "이름 바꿀래"는 이름이 아닙니다
   return m ? m[1] : null;
 }
 
@@ -4884,9 +4912,32 @@ function extractNameDecl(text) {
    ★ 애기·아기·베이비·새끼·해츨링은 2026-09-11에 넣었습니다 —
      "애기 태어났어"의 "애기"가 새 아이 이름으로 등록될 뻔했습니다. */
 const KEYWORD_START = /^(오늘|어제|그제|그저께|저장|사진|메모|모프|알|메이팅|교배|합사|산란|해칭|부화|분양|탈피|먹이|피딩|밥|귀뚜라미|외부|이름|몸무게|무게|체중|성별|나이|상태|기록|얘|걔|암컷|수컷|파트너|상대|아빠|엄마|아비|어미|애기|애깅|아기|베이비|새끼|해츨링|해츨)/;
-function guessNewName(text, individuals) {
+/* v1.9.67 대표님 2026-11-20 "비슷하게 못 알아먹을 말 찾아봐" — 대화 101문장을 실제 화면에서 돌려 보니
+   "방금 밥 먹었어" · "꼬리 끊겼어" · "컨디션 좋아" · "습도 70" · "헷초초야" · "거식중이야"처럼
+   첫 낱말이 이름이 아닌데도 "처음 보는 이름이네요"를 31번 물었습니다. 이런 낱말은 이름 후보에서 뺍니다. */
+const NOT_NAME_WORDS = new Set(('방금 방금전 아까 좀전 좀전에 아까전 지난주 지난달 저번주 저번달 이번주 이번달 요즘 요새 최근 새벽 아침 점심 저녁 밤 낮 '
+  + '내일 모레 엊그제 며칠전 일주일전 엄청 완전 진짜 정말 너무 되게 겁나 살짝 약간 조금 좀 많이 드디어 갑자기 계속 자꾸 또 다시 이제 벌써 아직 '
+  + '꼬리 꼬리끝 눈 눈이 입 코 등 배 다리 발 발가락 발톱 손 머리 얼굴 피부 몸 몸통 턱 목 옆구리 혀 크레스트 볏 '
+  + '컨디션 기운 활력 습도 온도 온습도 인큐 인큐베이터 물 분무 미스팅 은신처 칼슘 비타민 영양제 유산균 약 연고 병원 '
+  + '사육장 케이지 바닥재 무지개다리 축 똥 변 배변 소변 허물 껍질 상처 피 혹 붓기 지금 다들 전부 모두').split(' '));
+const NOT_NAME_TAIL = /(같아|같애|같음|인듯|인\s*것\s*같|이야|중이야|중|해|했어|했다|했음|어|없어|있어|김|함|래|요|임|됨|짐|남음)$/;
+const NOT_NAME_TAIL_STRONG = /(했어|했다|했음|었어|았어|었다|았다|없어|있어|같아|같애|인듯|중이야|끊김|빠짐|줬어|줬다|줬음)$/;   // 대화 중인 아이가 없어도 이름이 아닌 끝말
+function notNameWord(raw, hasTarget) {
+  const w = String(raw || '').replace(/[.,!?~]+$/, '');
+  const bare = w.replace(/(에서|에는|에도|이가|이는|이도|에|가|는|은|이|도|를|을|랑|이랑)$/, '');
+  if (NOT_NAME_WORDS.has(w) || NOT_NAME_WORDS.has(bare)) return true;
+  // "헷초초야"·"릴리화이트야"·"초초같아" — 모프 낱말 + 말끝만. "팬텀이"·"릴리2"처럼 이름일 수 있는 건 막지 않습니다
+  const MTAIL = /^(?:야|이야|같아|같애|같음|인듯|인\s*것\s*같아|임|이고|에요|예요|이에요|입니다|이네|네)$/;
+  if (MORPH_WORDS.some(m => w.startsWith(m) && MTAIL.test(w.slice(m.length)))) return true;
+  if (/^(?:\d{2,3}%?)?헷/.test(w) && MORPH_WORDS.some(m => w.includes(m))) return true;
+  if (NOT_NAME_TAIL_STRONG.test(w)) return true;                              // "죽었어"·"기운없어"
+  if (hasTarget && NOT_NAME_TAIL.test(w)) return true;                       // "거식중이야"·"활발해"·"기운없어"·"꼬리끊김"
+  return false;
+}
+function guessNewName(text, individuals, hasTarget) {
   const first = text.trim().split(/\s+/)[0];
   if (!first) return null;
+  if (notNameWord(first, hasTarget)) return null;
   const cleaned = first.replace(/(한테|에게|이랑|께서|랑|의|가|은|는|도|를|을)$/, '') || first;
   if (/^\d+$/.test(cleaned)) return null;                      // 순수 숫자만 거부 ("범림1호" 등 숫자 포함 이름은 허용)
   if (/^\d/.test(cleaned)) return null;                        // 숫자로 시작("12그램" 등)도 거부
@@ -4895,7 +4946,7 @@ function guessNewName(text, individuals) {
   if (CRICKET_RE.test(cleaned) || SUPU_RE.test(cleaned)) return null;
   if (cleaned.length < 1 || cleaned.length > 10) return null;
   // "크민이의"처럼 기존 개체명이 앞부분에 붙은 경우 → 새 이름 아님
-  if (individuals && individuals.some(i => i.name && (cleaned === i.name || cleaned.startsWith(i.name)))) return null;
+  if (individuals && individuals.some(i => i.name && (cleaned === i.name || (cleaned.startsWith(i.name) && !/^\d+\s*호?$/.test(cleaned.slice(i.name.length)))))) return null;   // v1.9.67 "크온이2"는 새 이름
   return cleaned;
 }
 
@@ -9009,7 +9060,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       const genderAssert = !!genderClaim(text);
       /* v1.9.66 대표님 2026-11-20 "점이 많아를 더럽게 못 알아먹어" — 크온이와 이야기하던 중 "점이많아"·"점이 많아"를
          새 이름("점이많아"·"점이")으로 잡아 등록을 물었습니다. 점 이야기로 알아들은 말의 낱말은 이름 후보가 아닙니다 */
-      const c0 = guessNewName(text, inds);
+      const c0 = guessNewName(text, inds, !!target);
       const c = c0 && spotsC && /점/.test(c0) ? null : c0;
       const profileSaid = !!(adoptHeld || spotsC || adoptSaid);
       if (c && isBadName(c) && (singleWord || facts.length || morph || genderAssert || profileSaid)) {
@@ -9111,6 +9162,10 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     if (qa) { bot(qa); return; }
 
     /* 5.52) 점 (v1.9.10) — "꼬리점 2개" · "무점이야" → 연필 창의 '점' 칸 */
+    /* v1.9.67 "이름 바꿀래"처럼 새 이름 없이 바꾸고 싶다고만 하면 — 새 이름을 여쭙니다 (예전엔 '바꿀래'를 새 개체로 등록하려 했습니다) */
+    if (target && /이름/.test(text) && /(바꿀래|바꾸고\s*싶|바꿔\s*줘|바꿔줘|바꿀까|변경|고칠래|고쳐\s*줘)/.test(text) && !detectNameClaim(text)) {
+      bot(`${target.name}의 새 이름을 알려주세요 ✏️\n예) "이름 ${target.name}2로 바꿔줘"`); return;
+    }
     if (spotsC) { bot(applySpots(target, spotsC.value)); return; }
 
     /* 5.54) 이미 적힌 값과 다른 정보가 들어온 경우 — 말없이 덮어쓰지 않고 여쭤봅니다.
@@ -9327,6 +9382,15 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
         return;
       }
 
+      /* v1.9.67 "메모해줘 다리가 약해" · "다리가 약해 메모해줘" → 그 내용을 메모로 (예전엔 '못 알아들었어요') */
+      const memoCmd = text.match(/^\s*메모\s*(?:좀\s*)?(?:해\s*줘|해\s*주세요|해|로|남겨\s*줘|:)?\s*[,:]?\s*(.+)$/)
+        || text.match(/^(.+?)\s*(?:이?라고\s*)?메모\s*(?:좀\s*)?(?:해\s*줘|해\s*주세요|해|남겨\s*줘|남겨)\s*[.!~]*$/);
+      if (memoCmd && memoCmd[1] && memoCmd[1].trim().length > 1) {
+        const note = memoCmd[1].trim();
+        updatePending(p => [...p, { type: 'memo', data: { notes: note }, date, targetId: target.id, targetName: target.name }]);
+        bot(`${target.name} 메모로 담았어요 📝\n· ${note}\n\n계속 말씀하셔도 되고, 끝나면 저장을 눌러주세요.`, [{ label: '💾 이제 저장할래', kind: 'save' }]);
+        return;
+      }
       // 감성/건강 메모 → 따뜻한 응답과 함께 담기
       const warm = memoReply(target.name, text);
       updatePending(p => [...p, { type: 'memo', data: { notes: text }, date, targetId: target.id, targetName: target.name }]);
@@ -9354,7 +9418,7 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
     }
 
     const withTarget = f => ({ ...f, date, targetId: target.id, targetName: target.name });
-    const unknownFeed = facts.find(f => f.type === 'feeding' && !f.data.foodType
+    const unknownFeed = facts.find(f => f.type === 'feeding' && !f.data.foodType && f.data.ate !== false   // v1.9.67 "밥을 안먹어"에 "밥 먹었군요!"를 묻던 것
       && !(f.data.supplements && sameDayFoodType(target.id, f.date || date)));
     if (unknownFeed) {
       const rest = facts.filter(f => f !== unknownFeed);
