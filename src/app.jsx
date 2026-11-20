@@ -245,11 +245,16 @@ const DB = {
   /* 예전에 이름이 바뀌어 옛 이름이 남은 기록을 한꺼번에 맞춥니다 (앱 열 때·동기화 뒤 — 다를 때만 저장) */
   relabelAll() {
     const nm = {};
-    this.getIndividuals().forEach(i => { if (i && i.id && i.name) nm[i.id] = i.name; });
+    const inds = this.getIndividuals();
+    inds.forEach(i => { if (i && i.id && i.name) nm[i.id] = i.name; });
     let n = 0;
     const evs = this.getEvents().map(e => {
       const d = e.data;
       if (!d) return e;
+      if (e.type === 'mating' && d.partnerId) {             // v1.9.65 수컷 쪽에 붙은 메이팅 → 암컷 쪽으로
+        const mom = matingMother(e.individualId, d.partnerId, inds);
+        if (mom) { n++; return { ...e, individualId: mom.id, data: { ...d, partnerId: e.individualId, partnerName: nm[e.individualId] || d.partnerName } }; }
+      }
       let x = d;
       if (d.partnerId && nm[d.partnerId] && d.partnerName && d.partnerName !== nm[d.partnerId]) x = { ...x, partnerName: nm[d.partnerId] };
       if (d.sireId && nm[d.sireId] && d.sireName && d.sireName !== nm[d.sireId]) x = { ...x, sireName: nm[d.sireId] };
@@ -744,8 +749,8 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.64';
-const APP_PATCHED = '2026-11-13';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
+const APP_VERSION = '1.9.65';
+const APP_PATCHED = '2026-11-20';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -2242,6 +2247,17 @@ function reopenSeason(id) {
    ★ 체크는 따로 저장하지 않습니다. 낳았다고 누르면 산란 기록이 생기고, 그러면 예정이 다음 차수로 넘어가 저절로 빠집니다. */
 const LAYCHK_AHEAD = 3;
 const layDueList = (inds, evs) => layingForecasts(inds, evs).filter(f => !f.seasonEnded && f.late >= -LAYCHK_AHEAD);
+/* v1.9.65 대표님 2026-11-20 "크밀이랑 크금이 메이팅했어 — 저장은 됐는데 산란 예정이 안 떠요"
+   대화에서 수컷 이름을 먼저 말하면 메이팅이 수컷(크밀이) 쪽에 저장됐고, 산란 예정은 암컷 기록만 봐서 빠졌습니다.
+   메이팅은 늘 '알을 낳을 쪽(암컷)'에 둡니다. 수컷 쪽에 붙은 메이팅은 상대 암컷 쪽으로 옮겨 적습니다. */
+function matingMother(ownerId, partnerId, inds) {
+  const L = inds || DB.getIndividuals();
+  const o = L.find(i => i.id === ownerId), p = partnerId ? L.find(i => i.id === partnerId) : null;
+  if (!o || !p) return null;
+  if (o.gender === 'female') return null;                       // 이미 암컷 쪽
+  if (p.gender === 'female' || (o.gender === 'male' && p.gender !== 'male')) return p;   // 상대가 암컷(또는 수컷의 상대인 미구분)
+  return null;
+}
 function layingForecasts(individuals, events) {
   const inds = individuals || DB.getIndividuals();
   const evs = events || DB.getEvents();
@@ -6411,6 +6427,8 @@ function recordMating(o) {
   const p = o.partnerId ? all.find(i => i.id === o.partnerId) : null;
   const data = { partnerId: p ? p.id : undefined, partnerName: p ? p.name : (o.partnerName || '').trim() };
   // 산란 예정은 저장하지 않고 layingForecasts 가 메이팅 +30일로 계산합니다
+  const mom = p ? matingMother(o.femaleId, p.id, all) : null;
+  if (mom) { const me = all.find(i => i.id === o.femaleId); return DB.addEvent({ individualId: mom.id, type: 'mating', date, data: { partnerId: me.id, partnerName: me.name } }); }
   return DB.addEvent({ individualId: o.femaleId, type: 'mating', date, data });
 }
 
@@ -9525,6 +9543,10 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
       }
       /* v1.9.17 "이 사진 대표사진으로" — 사진 기록을 남긴 뒤 얼굴로 가리킵니다(표시용 칸은 기록에 남기지 않습니다) */
       const { makeAvatar, ...fdata } = f.data || {};
+      if (f.type === 'mating' && fdata.partnerId) {          // v1.9.65 메이팅은 암컷 쪽에 둡니다
+        const mom = matingMother(f.targetId, fdata.partnerId);
+        if (mom) { const me = DB.getIndividuals().find(i => i.id === f.targetId); fdata.partnerId = f.targetId; fdata.partnerName = me ? me.name : fdata.partnerName; f.targetId = mom.id; }
+      }
       const savedEv = DB.addEvent({ individualId: f.targetId, type: f.type, date: fDate, data: fdata });
       if (makeAvatar && savedEv && f.type === 'photo') DB.updateIndividual(f.targetId, { avatarRef: savedEv.id, avatar: '' });
       // 산란에 겉보기 상태를 적었으면 알마다 같은 상태로 채워 둡니다 (나중에 알별로 고칠 수 있습니다)
