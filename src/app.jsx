@@ -220,7 +220,7 @@ const DB = {
   updateIndividual(id, patch) {
     // 모프를 실제로 적으면 '아직 모르겠어요' 표시는 자동으로 풀립니다 (한 곳에서만 처리)
     const p = { ...patch };
-    if (typeof p.morph === 'string' && p.morph.trim()) p.morphUnknown = false;
+    if (typeof p.morph === 'string' && p.morph.trim() && !('morphUnknown' in p)) p.morphUnknown = false;   // v1.9.68 헷만 붙일 땐 부르는 쪽이 정합니다
     const before = typeof p.name === 'string' ? this.getIndividuals().find(i => i.id === id) : null;
     this.saveIndividuals(this.getIndividuals().map(i => i.id === id ? { ...i, ...p } : i));
     if (before && p.name.trim() && before.name !== p.name) this.relabel(id, p.name);
@@ -749,8 +749,8 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.67';
-const APP_PATCHED = '2026-11-20';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
+const APP_VERSION = '1.9.68';
+const APP_PATCHED = '2026-11-21';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -3158,11 +3158,135 @@ const CAPP_WORDS  = ['슈퍼카푸치노', '슈퍼 카푸치노', '멜라니스�
 const SABLE_WORDS = ['슈퍼세이블', '슈퍼 세이블', '세이블', 'sable'];
 /* 프라푸치노 = 카푸치노 + 릴리화이트 콤보 (서로 다른 자리입니다) */
 const FRAP_WORDS  = ['프라푸치노', 'frappuccino'];
-/* 아잔틱 — 열성. 겉으로 안 드러난 보인자(헷)는 앱이 알 수 없습니다 */
+/* 아잔틱 — 열성. 보인자는 "100헷아잔틱"·"50헷아잔틱"처럼 모프에 적어 둡니다 */
 const AXAN_WORDS  = ['아잔틱', '악산틱', '액산틱', 'axanthic'];
+/* v1.9.68 초초도 열성입니다 (예전엔 무늬 쪽에 있었습니다) */
+const CHOCO_WORDS = ['초초', 'choco'];
 /* 여러 유전자가 함께 작용하는 무늬·색 — 확률 계산이 되지 않습니다 */
 const POLY_TRAITS = ['할리퀸', '핀스트라이프', '핀스', '달마시안', '브린들', '타이거', '플레임',
-  '익스트림', '엑스트림', '크림시클', '트라이컬러', '바이컬러', '팬텀', '솔리드백', '초초', '크라운'];
+  '익스트림', '엑스트림', '크림시클', '트라이컬러', '바이컬러', '팬텀', '솔리드백', '크라운'];
+
+/* ══ v1.9.68 열성 유전자 — 부모 모프로 아기의 헷을 붙입니다 ══
+   "100헷초초"·"50% 헷 아잔틱"·"헷100 초초"·"초초헷" 을 읽고, 보이는 것(그냥 "초초")과 나눕니다.
+   표기는 취미에서 쓰는 단계(100·66·50·25)로만 붙입니다 — 57헷·40헷 같은 말은 안 씁니다. */
+const RECESSIVE_GENES = [
+  { key: 'axan', label: '아잔틱', words: AXAN_WORDS },
+  { key: 'choco', label: '초초', words: CHOCO_WORDS },
+];
+const HET_STEPS = [100, 66, 50, 25];
+const HET_PRE_RE = /(?:(\d{1,3})\s*%?\s*)?(포스|poss\s*)?(?:헷|het)\s*(?:(\d{1,3})\s*%?)?\s*$/i;
+/* 모프 한 줄에서 그 유전자 상태 — null(안 적힘) · { vis: true } · { het: 1~100 } */
+function recState(morph, gene) {
+  const t = String(morph || '').toLowerCase().replace(/\s+/g, ' ');
+  if (!t.trim()) return null;
+  let best = null;
+  for (const w0 of gene.words) {
+    const w = w0.toLowerCase();
+    let i = t.indexOf(w);
+    while (i >= 0) {
+      const m = t.slice(Math.max(0, i - 14), i).match(HET_PRE_RE);
+      const a = t.slice(i + w.length).match(/^\s*(?:헷|het)\s*(\d{1,3})?\s*%?\s*(?=$|[,，、/·])/i);
+      let het = null;
+      if (m) het = (m[1] || m[3]) ? Number(m[1] || m[3]) : (m[2] ? 50 : 100);
+      else if (a) het = a[1] ? Number(a[1]) : 100;
+      if (het === null) return { vis: true };
+      het = Math.max(1, Math.min(100, het));
+      if (!best || het > best.het) best = { het };
+      i = t.indexOf(w, i + w.length);
+    }
+  }
+  return best;
+}
+/* 그 부모가 아기에게 열성 한 짝을 줄 확률 (보임 = 1 · 100헷 = 1/2 · 50헷 = 1/4 · 모름 = 0) */
+function recPass(morph, gene) {
+  const s = recState(morph, gene);
+  return !s ? 0 : s.vis ? 1 : (s.het === 66 || s.het === 67 ? 200 / 3 : s.het) / 200;   // 66헷 = 2/3
+}
+/* 안 보이는 아이가 헷일 확률(0~1) → 쓰는 단계로 내림 (100·66·50·25, 25 밑은 안 붙임) */
+function snapHet(h) {
+  const p = h * 100 + 1e-6;
+  return HET_STEPS.find(x => p >= x) || 0;
+}
+/* 엄마·아빠 모프로 아기에게 붙일 말 — [{ gene, tag, vis, pVis, het }] */
+function inheritRecessive(sire, dam) {
+  const out = [];
+  RECESSIVE_GENES.forEach(g => {
+    const q1 = recPass(sire && sire.morph, g), q2 = recPass(dam && dam.morph, g);
+    if (!q1 && !q2) return;
+    const pVis = q1 * q2;
+    if (pVis >= 0.999) { out.push({ gene: g, tag: g.label, vis: true, pVis: 1, het: 0 }); return; }
+    const pHet = q1 * (1 - q2) + q2 * (1 - q1);
+    const het = snapHet(pHet / (1 - pVis));
+    if (het) out.push({ gene: g, tag: het + '헷' + g.label, vis: false, pVis, het });
+  });
+  return out;
+}
+/* 헷 표기만 뺀 모프 ("릴리 66헷초초" → "릴리") — 모프가 비었는지 볼 때 씁니다 */
+const HET_TAG_RE = new RegExp('(?:\\d{1,3}\\s*%?\\s*)?(?:포스|poss\\s*)?(?:헷|het)\\s*(?:\\d{1,3}\\s*%?\\s*)?(?:'
+  + RECESSIVE_GENES.map(g => g.words.join('|')).join('|') + ')', 'gi');
+function morphSansHet(morph) {
+  return String(morph || '').replace(HET_TAG_RE, ' ').replace(/\s+/g, ' ').trim();
+}
+/* 새로 말한 모프에 예전 헷 표기를 이어 붙입니다 — 새 모프가 그 유전자를 말하면 새 것만 */
+function mergeHetTags(next, prev) {
+  const n = String(next || '').trim();
+  const keep = [];
+  String(prev || '').replace(HET_TAG_RE, (tag) => {
+    const g = RECESSIVE_GENES.find(x => recState(tag, x));
+    if (g && !recState(n, g) && keep.indexOf(tag.trim()) < 0) keep.push(tag.replace(/\s+/g, '').trim());
+    return tag;
+  });
+  return [n, ...keep].filter(Boolean).join(' ');
+}
+/* 아기 모프에 부모 기준 헷을 붙인 값 — 바꿀 게 없으면 원래 값 그대로 */
+function morphWithInherited(morph, sire, dam) {
+  const cur = String(morph || '').trim();
+  const add = inheritRecessive(sire, dam).filter(x => !recState(cur, x.gene)).map(x => x.tag);
+  return add.length ? [cur, ...add].filter(Boolean).join(' ') : cur;
+}
+/* 새로 등록하는 아기 — sireId·damId 로 부모를 찾아 모프에 헷을 붙입니다 (모프 칸은 비어 있어도 '모름' 그대로) */
+function babyWithHet(baby, all) {
+  const list = all || DB.getIndividuals();
+  const sire = baby.sireId ? list.find(i => i.id === baby.sireId) : null;
+  const dam = baby.damId ? list.find(i => i.id === baby.damId) : null;
+  if (!sire && !dam) return baby;
+  const morph = morphWithInherited(baby.morph, sire, dam);
+  return morph === String(baby.morph || '').trim() ? baby : { ...baby, morph, morphUnknown: !morphSansHet(morph) };
+}
+/* 이미 태어난 아이들 한꺼번에 — 부모가 등록된 아이만, 손주까지 퍼지도록 몇 번 돕니다. 돌려주는 값: 바꾼 [{id,name,from,to}] */
+function backfillInheritedHet() {
+  const changed = {};
+  for (let pass = 0; pass < 6; pass++) {
+    const all = DB.getIndividuals();
+    const byId = {}; all.forEach(i => { byId[i.id] = i; });
+    let n = 0;
+    const next = all.map(i => {
+      if (!i || (!i.sireId && !i.damId)) return i;
+      const sire = byId[i.sireId], dam = byId[i.damId];
+      if (!sire && !dam) return i;
+      const to = morphWithInherited(i.morph, sire, dam);
+      if (to === String(i.morph || '').trim()) return i;
+      n++;
+      if (!changed[i.id]) changed[i.id] = { id: i.id, name: i.name, from: i.morph || '' };
+      changed[i.id].to = to;
+      return { ...i, morph: to, morphUnknown: morphSansHet(to) ? false : !!(i.morphUnknown || !String(i.morph || '').trim()) };
+    });
+    if (!n) break;
+    DB.saveIndividuals(next);
+  }
+  return Object.values(changed);
+}
+const HET_FILL_KEY = 'cg_het_fill_v1';
+/* 한 번만 — 동기화를 쓰면 처음 받아온 뒤에 (다른 기기 최신 모프를 덮지 않도록) */
+function runHetBackfillOnce() {
+  try {
+    if (localStorage.getItem(HET_FILL_KEY)) return null;
+    const ch = backfillInheritedHet();
+    STORE.set(HET_FILL_KEY, JSON.stringify({ at: new Date().toISOString(), n: ch.length }));
+    if (ch.length) STORE.set('cg_het_fill_log', JSON.stringify(ch.slice(0, 500)));   // 무엇을 바꿨는지 (되돌릴 때 참고)
+    return ch;
+  } catch (e) { return null; }
+}
 
 const hasWord = (txt, words) => words.some(w => txt.indexOf(w) >= 0);
 
@@ -3178,7 +3302,7 @@ function readGenes(gecko) {
     lw: (frap || hasWord(t, LILY_WORDS)) ? 1 : 0,
     capp: superCapp ? 2 : (frap || hasWord(t, CAPP_WORDS)) ? 1 : 0,
     sable: superSable ? 2 : hasWord(t, SABLE_WORDS) ? 1 : 0,
-    axan: hasWord(t, AXAN_WORDS),          // 보이는 아잔틱 = 열성 두 짝
+    axan: !!(recState(raw, RECESSIVE_GENES[0]) || {}).vis,   // 보이는 아잔틱 = 열성 두 짝 (v1.9.68 "100헷아잔틱"은 보이는 게 아님)
     poly: POLY_TRAITS.filter(w => t.indexOf(w.toLowerCase()) >= 0),
     raw,
   };
@@ -3237,12 +3361,17 @@ function morphForecast(a, b) {
     sure.push(`프라푸치노(카푸치노+릴리) — ${pct(pCapp * pLily)}%`);
   }
 
-  // ⑤ 아잔틱 — 열성. 헷(보인자)은 겉으로 안 보여서 앱이 알 수 없습니다
-  if (ga.axan && gb.axan) {
-    sure.push('아잔틱 — 전부 (100%)');
-  } else if (ga.axan || gb.axan) {
-    notes.push('아잔틱은 열성이에요.\n한쪽만 아잔틱이면 베이비는 겉으로 아잔틱이 아니고\n전부 보인자(헷 아잔틱)로 나와요.\n상대가 헷인지 아닌지는 기록이 없어 제가 알 수 없어요.');
-  }
+  // ⑤ 열성(아잔틱·초초) — v1.9.68 헷까지 셈. 기록이 없는 쪽은 일반으로 봅니다
+  RECESSIVE_GENES.forEach(g => {
+    const qa = recPass(a && a.morph, g), qb = recPass(b && b.morph, g);
+    if (!qa && !qb) return;
+    const pVis = qa * qb, pHet = qa * (1 - qb) + qb * (1 - qa);
+    if (pVis >= 0.999) { sure.push(`${g.label} — 전부 (100%)`); return; }
+    if (pVis > 0) sure.push(`${g.label} — ${pct(pVis)}%`);
+    const het = snapHet(pHet / (1 - pVis));
+    if (het) sure.push(`${pVis > 0 ? `${g.label} 안 나온 아이` : '베이비'}는 ${het}헷${g.label}`);
+    if (!qa || !qb) notes.push(`${eunneun(g.label)} 열성이에요.\n${(!qa ? a : b).name || '상대'} 쪽은 ${g.label} 기록이 없어 일반으로 보고 계산했어요.\n헷이면 모프에 "100헷${g.label}"처럼 적어 주세요.`);
+  });
 
   // ⑥ 무늬·색 — 확률이 아니라 경향입니다
   const bothPoly = ga.poly.filter(w => gb.poly.indexOf(w) >= 0);
@@ -3271,7 +3400,7 @@ function morphAnswer(a, b) {
   }
   L.push('', `· ${a.name} ${(a.morph || '').trim() || '모프 미기재'}`, `· ${b.name} ${(b.morph || '').trim() || '모프 미기재'}`);
   if (f.sure.length) L.push('', '확률로 말할 수 있는 것', ...f.sure.map(x => '· ' + x));
-  else L.push('', '확률로 계산할 수 있는 유전자(릴리화이트·카푸치노·세이블·아잔틱)는 없어요.');
+  else L.push('', '확률로 계산할 수 있는 유전자(릴리화이트·카푸치노·세이블·아잔틱·초초)는 없어요.');
   if (f.trend.length) L.push('', '무늬는 확률로 못 말해요', ...f.trend.map(x => '· ' + x));
   if (f.notes.length) L.push('', '알아두실 점', ...f.notes.map(x => '· ' + x));
   L.push('', '확률은 알 하나하나에 매번 새로 적용돼요.\n네 개 낳는다고 정확히 그 비율로 나오지는 않습니다.');
@@ -4734,6 +4863,12 @@ function planProfileFix(cur, text, individuals, morph) {
   }
   // 성별 '미구분'은 아직 안 정한 상태라 "다른 값"으로 보지 않습니다
   const from = (claim.field === 'gender' && cur.gender === 'unknown') ? '' : (cur[claim.field] || '');
+  if (claim.field === 'morph') {   // v1.9.68 헷 표기만 있던 칸은 빈 칸처럼 — 헷은 이어 붙입니다
+    if (!morphSansHet(from)) return null;
+    const to = mergeHetTags(claim.value, from);
+    if (to === from) return null;
+    return { kind: 'ask', field: 'morph', from, to, sibs: 1 };
+  }
   if (from === claim.value) return null;
   if (!from) return claim.field === 'hatchDate' ? { kind: 'apply', field: 'hatchDate', from: '', to: claim.value } : null;
   /* v1.9.9 — "암컷으로 바꿔줘"처럼 고쳐 달라고 분명히 말씀하시면 되묻지 않고 바로 고칩니다 */
@@ -5375,6 +5510,13 @@ function App() {
   const [individuals, setIndividuals] = useState(() => DB.getIndividuals());
   const [remVer, setRemVer] = useState(0);
   const [storeMsg, setStoreMsg] = useState('');   // 저장 칸이 모자랄 때 띄우는 안내
+  const [hetMsg, setHetMsg] = useState('');       // v1.9.68 이미 태어난 아이들에 헷을 붙였을 때 한 번
+  const hetDone = (ch) => {
+    if (!ch || !ch.length) return;
+    setIndividuals(DB.getIndividuals());
+    const ex = ch.slice(0, 2).map(c => `${c.name} → ${c.to}`).join('\n');
+    setHetMsg(`🧬 부모 모프 기준으로 ${ch.length}마리에 헷을 붙였어요\n${ex}${ch.length > 2 ? '\n…' : ''}`);
+  };
 
   const refreshIndividuals = () => setIndividuals(DB.getIndividuals());
   const refreshReminders = () => setRemVer(v => v + 1);
@@ -5405,6 +5547,7 @@ function App() {
     if (dedupeAvatars()) refreshIndividuals();   // 얼굴로 복사해 둔 사진 한 벌로 줄이기 (한 번만)
     if (markAdoptedFromMemos()) refreshIndividuals();   // v1.9.55 입양처·입양가가 적힌 아이 = 데려온 아이
     try { if (DB.relabelAll()) setRemVer(v => v + 1); } catch (e) {}   // v1.9.58 바뀐 이름을 기록 속 짝·아빠 이름에도
+    if (!SYNC.active() && !DEMO.on()) hetDone(runHetBackfillOnce());   // v1.9.68 (동기화를 쓰면 처음 받아온 뒤에)
     PHOTO.era();                                // 사진을 서버에 두기 시작한 시각 (한 번만)
   }, []);
 
@@ -5421,6 +5564,7 @@ function App() {
     SYNC.run('start');
     const off = SYNC.on((dataChanged) => {
       if (dataChanged) { markAdoptedFromMemos(); try { DB.relabelAll(); } catch (e) {} setIndividuals(DB.getIndividuals()); setRemVer(v => v + 1); }   // v1.9.57 다른 기기에서 온 입양 메모도
+      try { const st = SYNC.st() || {}; if (!SYNC.running && !DEMO.on() && st.lastSyncAt && !st.lastError) hetDone(runHetBackfillOnce()); } catch (e) {}   // v1.9.68
     });
     const onVisible = () => { if (document.visibilityState === 'visible') SYNC.run('resume'); };
     const onOnline = () => SYNC.run('online');
@@ -5510,6 +5654,13 @@ function App() {
         <div className="updbar hard" style={{whiteSpace:'pre-line'}} data-testid="store-bar">
           <span>{storeMsg}</span>
           <button onClick={() => { setStoreMsg(''); navigate('settings'); }}>정리하기</button>
+        </div>
+      ) : null}
+
+      {hetMsg ? (
+        <div className="updbar" style={{whiteSpace:'pre-line'}} data-testid="het-bar">
+          <span>{hetMsg}</span>
+          <button onClick={() => setHetMsg('')}>확인</button>
         </div>
       ) : null}
 
@@ -6353,16 +6504,21 @@ const EGG = {
     const patch = { damId: row.e.individualId, hatchDate: date };
     if (row.dadId && DB.getIndividuals().some(i => i.id === row.dadId)) patch.sireId = row.dadId;
     DB.updateIndividual(babyId, patch);
+    try {   // v1.9.68 이어 붙인 부모 기준 헷
+      const k2 = DB.getIndividuals().find(i => i.id === babyId);
+      const w = k2 && babyWithHet(k2);
+      if (w && w !== k2) DB.updateIndividual(babyId, { morph: w.morph, morphUnknown: w.morphUnknown });
+    } catch (e) {}
     return kid.name;
   },
   newBaby(row, date, name, morph) {
     const all = DB.getIndividuals();
     const nm = (name || '').trim() || makeBabyNames(row.momName, row.dadName || '', 1, all.map(i => i.name))[0];
-    DB.addIndividual({
+    DB.addIndividual(babyWithHet({   // v1.9.68 부모 기준 헷
       name: nm, gender: 'unknown', morph: morph || '', morphUnknown: !morph, hatchDate: date,
       isFromCreGunseol: true, status: 'own', sireId: (row.dad && row.dad.id) || null, damId: row.e.individualId,
       shareCode: newShareCode(),
-    });
+    }, all));
     return nm;
   },
   /* 알 i 의 상태를 바꿉니다.
@@ -6812,11 +6968,11 @@ function ClutchScreen({ layingId, navigate, showToast, refreshIndividuals, back,
       const parts = mo.split(/\s*[,，、/]\s*/).filter(Boolean);   // v1.9.49 "릴리, 할리퀸"처럼 마릿수만큼 나뉘면 아기별로
       names.slice(0, n).forEach((nm, k) => {
         const m1 = n > 1 && parts.length === n ? parts[k] : mo;
-        DB.addIndividual({
+        DB.addIndividual(babyWithHet({   // v1.9.68 부모 기준 헷
           name: nm, gender: 'unknown', morph: m1, morphUnknown: !m1, hatchDate: date,
           isFromCreGunseol: true, status: 'own', sireId: dadId, damId: ev.individualId,
           shareCode: newShareCode(),
-        });
+        }, all));
         made++;
       });
     }
@@ -8465,11 +8621,14 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
   };
 
   /* ── 모프 프로필 반영 ── */
-  const applyMorph = (target, morph) => {
+  const applyMorph = (target, morph0) => {
+    const before = DB.getIndividuals().find(i => i.id === target.id) || target;
+    const morph = mergeHetTags(morph0, before.morph);   // v1.9.68 부모 기준 헷은 남겨 둡니다
     DB.updateIndividual(target.id, { morph });
     refreshIndividuals();
     if (geckoRef.current && geckoRef.current.id === target.id) geckoRef.current = { ...geckoRef.current, morph };
-    return `모프가 ${morph}군요! ✨ ${target.name} 프로필에 적어뒀어요.`;
+    const kept = morph !== String(morph0 || '').trim() ? morph.slice(String(morph0 || '').trim().length).trim() : '';
+    return `모프가 ${morph0}군요! ✨ ${target.name} 프로필에 적어뒀어요.` + (kept ? `\n(부모 기준 ${kept}도 그대로 둘게요)` : '');
   };
 
   /* ── 프로필 값 고치기 (부화일·성별·모프) ── */
@@ -9636,12 +9795,12 @@ function SmartChatScreen({ navigate, showToast, refreshIndividuals, presetGecko 
         if (count > 0) {
           names.forEach((nm, k) => {
             const mo = morphOf(k);
-            DB.addIndividual({
+            DB.addIndividual(babyWithHet({   // v1.9.68 부모 기준 헷
               name: nm, gender: 'unknown', morph: mo, morphUnknown: !mo, hatchDate: f.date || todayStr(),
               isFromCreGunseol: true, status: 'own',
               sireId: dadId, damId: f.targetId,
               shareCode: newShareCode(),
-            });
+            }));
           });
           babyMsg = ` · 🐣 베이비 ${Math.min(count, names.length)}마리 등록`;
         }

@@ -19,18 +19,19 @@ test("command word is 모프누락명령 (with 명령) and the chat routes every
 
 test("only animals that are here and have an empty morph, oldest first", () => {
   const list = part.slice(part.indexOf("function mfList("), part.indexOf("function mfIntro("));
-  assert.match(list, /filter\(g => isHere\(g\) && !String\(g\.morph \|\| ''\)\.trim\(\)\)/);
+  assert.match(list, /filter\(g => isHere\(g\) && mfEmpty\(g\)\)/);
+  assert.match(part, /return !m \|\| \(!!g\.morphUnknown && !morphSansHet\(m\)\);/, "v1.9.68 parent-based het only (morph still unknown) counts as empty");
   assert.match(list, /g\.hatchDate \|\| mfCame\(g, evs\)\.at \|\| String\(g\.createdAt/);
 });
 
 test("answers: saved as typed; 모름 skips; 그만 stops; 취소 restores", () => {
   const fill = part.slice(part.indexOf("function morphFill("));
-  assert.match(fill, /DB\.updateIndividual\(g\.id, \{ morph: t \}\)/, "saved exactly as typed (trimmed)");
+  assert.match(fill, /const mo = mergeHetTags\(t, g\.morph\);[\s\S]*DB\.updateIndividual\(g\.id, \{ morph: mo, morphUnknown: false \}\)/, "saved as typed + parent-based het tags kept (v1.9.68)");
   assert.match(fill, /\^\(모름\|모르겠\|몰라\|넘어가/);
   assert.match(fill, /\^\(그만\|멈춰/);
   assert.match(fill, /\^\(취소\|되돌려/);
-  assert.match(fill, /DB\.updateIndividual\(id, \{ morph: prev \|\| '' \}\)/);
-  assert.match(fill, /모프 "\$\{t\}"로 기록할게요/);
+  assert.match(fill, /DB\.updateIndividual\(id, \{ morph: prev \|\| '', morphUnknown: !!prevU \}\)/);
+  assert.match(fill, /모프 "\$\{mo\}"로 기록할게요/);
   assert.match(part, /'013678'\.indexOf\(d\)/, "digit-final names read by sound for 예요/이에요");
 });
 

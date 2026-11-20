@@ -1218,10 +1218,15 @@ function mfCame(g, evs) {
   if (!at) { const l = evs.find(e => e.type === 'ledger' && e.data && e.data.indId === g.id && e.data.flow !== 'in'); if (l) at = l.date; }
   return { src: String(src).trim(), at };
 }
+/* v1.9.68 비어 있거나, 부모 기준 헷만 붙고 겉모프는 아직 모르는 아이 */
+function mfEmpty(g) {
+  const m = String(g.morph || '').trim();
+  return !m || (!!g.morphUnknown && !morphSansHet(m));
+}
 function mfList() {
   const evs = DB.getEvents();
   const key = (g) => g.hatchDate || mfCame(g, evs).at || String(g.createdAt || '').slice(0, 10) || '9999';
-  return DB.getIndividuals().filter(g => isHere(g) && !String(g.morph || '').trim())
+  return DB.getIndividuals().filter(g => isHere(g) && mfEmpty(g))
     .sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0)).map(g => g.id);
 }
 /* 한 마리 소개 — 기록에 있는 것만 */
@@ -1240,6 +1245,7 @@ function mfIntro(g, k) {
   if (came.at || came.src) L.push(`${came.at ? mfDate(came.at) + '에 ' : ''}${came.src ? came.src + '에서 ' : ''}데려왔어요.`);
   else if (!born && !mine && g.createdAt) L.push(`${mfDate(String(g.createdAt).slice(0, 10))}에 등록한 아이예요.`);
   if (L.length > 1 && /이고$/.test(L[L.length - 1])) L[L.length - 1] = L[L.length - 1].replace(/ 아이이고$/, ' 아이예요.');
+  if (String(g.morph || '').trim()) L.push(`부모 기준 ${eunneun(String(g.morph).trim())} 적어 뒀어요.`);   // v1.9.68
   L.push('모프가 무엇인가요?');
   return L.join('\n');
 }
@@ -1247,7 +1253,7 @@ function mfAsk(bot) {
   const all = DB.getIndividuals();
   while (MF.i < MF.ids.length) {
     const g = all.find(x => x.id === MF.ids[MF.i]);
-    if (g && isHere(g) && !String(g.morph || '').trim()) { bot(mfIntro(g, MF.i)); return true; }
+    if (g && isHere(g) && mfEmpty(g)) { bot(mfIntro(g, MF.i)); return true; }
     MF.i++;   // 그 사이 지워졌거나 다른 데서 모프를 채운 아이는 건너뜁니다
   }
   const n = MF.ids.length;
@@ -1272,9 +1278,9 @@ function morphFill(text, ctx) {
   }
   if (/^(취소|되돌려|방금\s*(거|것)?\s*취소|잘못)/.test(t)) {
     if (!MF.last) { bot('되돌릴 게 아직 없어요 🙂'); return mfAsk(bot); }
-    const { id, prev, k, skipped } = MF.last; MF.last = null;
+    const { id, prev, prevU, k, skipped } = MF.last; MF.last = null;
     const p = DB.getIndividuals().find(x => x.id === id);
-    if (!skipped) { DB.updateIndividual(id, { morph: prev || '' }); MF.done = Math.max(0, MF.done - 1); refreshIndividuals && refreshIndividuals(); }
+    if (!skipped) { DB.updateIndividual(id, { morph: prev || '', morphUnknown: !!prevU }); MF.done = Math.max(0, MF.done - 1); refreshIndividuals && refreshIndividuals(); }
     else MF.skip = Math.max(0, MF.skip - 1);
     MF.i = k;
     bot(`↩️ ${p ? p.name : '방금 아이'} ${skipped ? '다시 여쭐게요.' : '모프를 다시 비웠어요.'}`);
@@ -1288,11 +1294,12 @@ function morphFill(text, ctx) {
     return mfAsk(bot);
   }
   if (!t || t.length > 40 || /\n/.test(t)) { bot('모프 이름만 짧게 말씀해 주세요 🙂 (예: 100헷초초)'); return true; }
-  MF.last = { id: g.id, prev: g.morph || '', k: MF.i, skipped: false };
-  DB.updateIndividual(g.id, { morph: t });
+  MF.last = { id: g.id, prev: g.morph || '', prevU: !!g.morphUnknown, k: MF.i, skipped: false };
+  const mo = mergeHetTags(t, g.morph);   // v1.9.68 부모 기준 헷은 이어 둡니다
+  DB.updateIndividual(g.id, { morph: mo, morphUnknown: false });
   refreshIndividuals && refreshIndividuals();
   MF.done++; MF.i++;
-  bot(`✅ ${g.name} 모프 "${t}"로 기록할게요.`);
+  bot(`✅ ${g.name} 모프 "${mo}"로 기록할게요.`);
   return mfAsk(bot);
 }
 
