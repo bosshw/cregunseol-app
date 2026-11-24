@@ -51,14 +51,41 @@ function demoData(t) {
 }
 
 // 앱 안 브라우저에서 크롬·사파리로 내보내기 (안내 카드와 튜토리얼 첫 화면이 같이 씁니다)
+// v1.9.70 넘어간 쪽에 ?inst=1 을 붙여 "설치 버튼 하나만" 화면으로 맞습니다.
+//   안드로이드는 크롬이 없으면 기본 브라우저로 열리게(browser_fallback_url) — 예전엔 크롬 없는 폰에서 아무 일도 없었습니다.
 function openOutside() {
-  const url = location.origin + location.pathname;
+  const url = location.origin + location.pathname + '?inst=1';
   try {
     if (INAPP === '카카오톡') location.href = 'kakaotalk://web/openExternal?url=' + encodeURIComponent(url);
-    else if (TRACK.device() === 'android') location.href = 'intent://' + url.replace(/^https?:\/\//, '') + '#Intent;scheme=https;package=com.android.chrome;end';
+    else if (TRACK.device() === 'android') location.href = 'intent://' + url.replace(/^https?:\/\//, '') + '#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=' + encodeURIComponent(url) + ';end';
     else location.href = 'x-safari-' + url;
   } catch (e) {}
 }
+/* v1.9.70 인스타·카톡 안에서 처음 열면 누르지 않아도 바로 크롬으로 넘깁니다 (대표님 2026-11-24 "줄일 수 있는 건 줄여봐")
+   · 안드로이드(인스타·페북·스레드·네이버 등)와 카카오톡(아이폰 포함)만 — 아이폰 인스타는 자동으로 넘기면 막히는 경우가 있어 버튼 그대로
+   · 한 번만(이번 방문). 안 넘어가면 지금처럼 [앱 받기] 버튼이 남습니다 */
+const AUTO_OUT_KEY = 'cg_auto_out';
+function autoOutside() {
+  try {
+    if (!INAPP || sessionStorage.getItem(AUTO_OUT_KEY)) return false;
+    if (!(TRACK.device() === 'android' || INAPP === '카카오톡')) return false;
+    sessionStorage.setItem(AUTO_OUT_KEY, '1');
+    try { TRACK.step('auto_out'); } catch (e) {}
+    setTimeout(openOutside, 350);
+    return true;
+  } catch (e) { return false; }
+}
+/* 바깥 브라우저로 막 넘어온 참인지 (?inst=1) — 주소에서는 바로 지웁니다 */
+const CAME_OUT = (() => {
+  try {
+    const q = new URLSearchParams(location.search);
+    if (q.get('inst') !== '1') return false;
+    q.delete('inst');
+    const rest = q.toString();
+    history.replaceState(null, '', location.pathname + (rest ? '?' + rest : '') + location.hash);
+    return true;
+  } catch (e) { return false; }
+})();
 
 function OpenHint() {
   const [, bump] = useState(0);
@@ -504,10 +531,10 @@ function InstallGate() {
     } catch (e) { return false; }
   });
   const [phase, setPhase] = useState('main');   // main | guide | installing | done
-  const [k, setK] = useState(0);
   const [copied, setCopied] = useState(false);
   const [, bump] = useState(0);
   useEffect(() => {
+    if (!hide && !TRACK.standalone() && os !== 'pc') autoOutside();   // v1.9.70
     const f = () => bump(v => v + 1);
     const ok = () => setPhase('done');
     window.addEventListener('cg-install', f);
@@ -529,31 +556,29 @@ function InstallGate() {
       } catch (e) { setPhase('guide'); }
       return;
     }
-    setK(0); setPhase('guide');
+    setPhase('guide');
   };
   const steps = os === 'ios' ? IOS_STEPS() : [
     { t: "오른쪽 위 ⋮ 를 눌러요", d: "삼성 인터넷이면 아래 ≡ 를 눌러요.", arrow: 'top-right' },
     { t: "'앱 설치' 또는 '홈 화면에 추가'", d: "둘 중 보이는 걸 누르면 돼요.", mock: '앱 설치', ic: '⊕' },
     { t: "'설치'를 누르면 끝!", d: "앱 목록·홈 화면에 생긴 브리딩비서로 열어 주세요.", mock: '설치', ic: '✓' },
   ];
-  const st = steps[k] || steps[0];
   return (
     <div className="gate" data-testid="install-gate" data-phase={phase}>
       {phase === 'guide' ? (
         <>
-          {st.arrow && <div className={'gate-arrow ' + st.arrow} aria-hidden="true">{st.arrow.indexOf('top') === 0 ? '▲' : '▼'}</div>}
-          <div className="gate-card guide">
-            <img src="./assets/brand/gecko-transparent.webp" alt="" width="84" height="84" />
-            <div className="gate-step">{k + 1} / {steps.length}</div>
-            <b className="gate-t">{st.t}</b>
-            <p className="gate-d">{st.d}</p>
-            {st.mock && <div className="gate-mock"><span>{st.mock}</span><i>{st.ic}</i></div>}
-            <div className="gate-row">
-              {k > 0 && <button className="ghost" onClick={() => setK(k - 1)}>이전</button>}
-              {k < steps.length - 1
-                ? <button onClick={() => setK(k + 1)} data-testid="gate-next">다음</button>
-                : <button onClick={() => setPhase('main')} data-testid="gate-again">처음으로</button>}
-            </div>
+          {/* v1.9.70 단계를 한 화면에 다 — [다음]을 누르며 넘기지 않아도 보면서 바로 따라 하게 */}
+          {steps[0].arrow && <div className={'gate-arrow ' + steps[0].arrow} aria-hidden="true">{steps[0].arrow.indexOf('top') === 0 ? '▲' : '▼'}</div>}
+          <div className="gate-card guide" data-testid="gate-guide">
+            <img src="./assets/brand/gecko-transparent.webp" alt="" width="64" height="64" />
+            <b className="gate-t">{os === 'ios' ? '홈 화면에 추가하면 앱이 돼요' : '이렇게 설치해요'}</b>
+            <ol className="gate-list">
+              {steps.map((x, i) => (
+                <li key={i}><span className="gate-n">{i + 1}</span><div><b>{x.t}</b><small>{x.d}</small>
+                  {x.mock && <div className="gate-mock"><span>{x.mock}</span><i>{x.ic}</i></div>}</div></li>
+              ))}
+            </ol>
+            <div className="gate-row"><button className="ghost" onClick={() => setPhase('main')} data-testid="gate-again">← 처음으로</button></div>
             <button className="gate-web" onClick={web} data-testid="gate-web">그냥 웹으로 둘러볼게요</button>
           </div>
         </>
@@ -571,7 +596,7 @@ function InstallGate() {
                 <p className="gate-note">{INAPP} 안에서는 설치가 안 돼요.<br />{browser}에서 열리면 바로 받을 수 있어요.<br />
                   <button className="gate-link" onClick={copy}>{copied ? '주소 복사됐어요 ✓' : '주소 복사하기'}</button></p>
               ) : (
-                <p className="gate-note">무료 · 가입 없이 바로 시작<br />{os === 'ios' ? '아이폰은 3단계로 홈 화면에 추가해요' : '버튼 한 번이면 설치돼요'}</p>
+                <p className="gate-note">{CAME_OUT ? <><b>{os === 'ios' ? '사파리로' : '크롬으로'} 넘어왔어요!</b><br /></> : null}무료 · 가입 없이 바로 시작<br />{os === 'ios' ? '아이폰은 3단계로 홈 화면에 추가해요' : '버튼 한 번이면 설치돼요'}</p>
               )}
             </>
           )}
