@@ -749,8 +749,8 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.68';
-const APP_PATCHED = '2026-11-21';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
+const APP_VERSION = '1.9.69';
+const APP_PATCHED = '2026-11-24';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -5236,7 +5236,7 @@ function answerQuery(target, text) {
     const sire = all.find(i => i.id === target.sireId);
     const dam = all.find(i => i.id === target.damId);
     const kids = all.filter(i => i.sireId === target.id || i.damId === target.id);
-    const lm = littermatesOf(target, all);
+    const lm = littermatesOf(target, all).filter(x => statusOf(x) !== 'gone');   // v1.9.69 떠난 아이는 붙일 수 없으니 빼고
     return `${target.name}의 혈통이에요 🧬\n부(아빠): ${sire ? sire.name : '미등록'}\n모(엄마): ${dam ? dam.name : '미등록'}\n`
       + (lm.length ? `동배(같은 클러치): ${lm.map(x => x.name).join(', ')} — 서로 붙이면 안 돼요\n` : '')
       + (kids.length ? `자식 ${kids.length}마리: ${kids.map(k => k.name).join(', ')}` : '자식 기록은 아직 없어요.');
@@ -8035,8 +8035,10 @@ function PedigreeCard({ gecko, navigate }) {
   const sire = all.find(i => i.id === gecko.sireId);
   const dam = all.find(i => i.id === gecko.damId);
   const kids = all.filter(i => i.sireId === gecko.id || i.damId === gecko.id);
-  const mates = littermatesOf(gecko, all);        // 같은 클러치에서 나온 아이들
-  const halves = halfSibsOf(gecko, all);          // v1.9.64 한쪽 부모만 같은 아이들
+  /* v1.9.69 떠난(🌈) 형제는 어차피 붙일 수 없어 칩에서 뺍니다 — 근친 판정은 그대로 이 아이들을 통해 계속합니다 (대표님 2026-11-24) */
+  const alive = (x) => statusOf(x) !== 'gone';
+  const mates = littermatesOf(gecko, all).filter(alive);        // 같은 클러치에서 나온 아이들
+  const halves = halfSibsOf(gecko, all).map(h => ({ ...h, list: h.list.filter(alive) })).filter(h => h.list.length);   // v1.9.64 한쪽 부모만 같은 아이들
   if (!sire && !dam && !kids.length && !mates.length && !halves.length) return null;
   return (
     <div style={{padding:'0 16px 12px'}}>
