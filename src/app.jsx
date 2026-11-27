@@ -170,14 +170,14 @@ const DB = {
     const list = this.getIndividuals();
     list.push({ ...ind, id: uuid(), createdAt: now() });
     this.saveIndividuals(list);
-    if (!DEMO.on()) { try { TRACK.step('record'); } catch (e) {} }   // 이 기기에서 처음 뭔가 적은 순간 (예시 구경 중엔 안 셈)
+    if (!DEMO.on()) { try { TRACK.step('record'); } catch (e) {} pushNudgeArm(); }   // 이 기기에서 처음 뭔가 적은 순간 (예시 구경 중엔 안 셈)
     return list[list.length - 1];
   },
   addEvents(events) {
     const createdAt = now();
     let added = (events || []).map(ev => ({ ...ev, id: uuid(), createdAt }));
     if (!added.length) return [];
-    if (!DEMO.on()) { try { TRACK.step('record'); } catch (e) {} }   // 이 기기에서 처음 뭔가 적은 순간 (예시 구경 중엔 안 셈)
+    if (!DEMO.on()) { try { TRACK.step('record'); } catch (e) {} pushNudgeArm(); }   // 이 기기에서 처음 뭔가 적은 순간 (예시 구경 중엔 안 셈)
     /* 칸이 꽉 차서 못 적었으면 — 사진만 떼고 한 번 더 넣어 봅니다.
        사진을 잃는 건 아깝지만, 기록까지 통째로 잃는 것보다는 낫습니다. */
     if (!this.saveEvents([...this.getEvents(), ...added])) {
@@ -660,11 +660,21 @@ const SERVER = {
    ══════════════════════════════════════════ */
 const OWNER_UID = 'fa66ca69-3637-47b9-9cd3-58eac56c91d1';   // 대표님 계정 — 본인 방문은 세지 않습니다 (v1.9.1: 58aac 로 한 글자 틀려 있던 것을 서버 값과 대조해 고침)
 
+/* v1.9.71 시험 환경 — 내 컴퓨터 주소(localhost 등)·파일로 연 것·자동 조종 브라우저(navigator.webdriver).
+   11/20 방문 410회 중 401회가 이런 시험이었습니다. 실제 서비스 주소에서 사람이 연 것만 셉니다 */
+const TRACK_DEV = () => {
+  try {
+    if (typeof navigator !== 'undefined' && navigator.webdriver) return true;
+    if (typeof location === 'undefined') return false;
+    return location.protocol === 'file:' || /^(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])$|\.local$/.test(location.hostname || '');
+  } catch (e) { return false; }
+};
 const TRACK = {
   off() {
     try {
       if (localStorage.getItem('cg_track_off') === '1') return true;   // 이 기기는 빼기
       if (SYNC.userId() === OWNER_UID) return true;                     // 대표님 기기
+      if (TRACK_DEV()) return true;                                     // v1.9.71 내 컴퓨터에서 띄운 시험판·자동 테스트 브라우저는 안 셈
     } catch (e) {}
     return false;
   },
@@ -749,8 +759,8 @@ const TRACK = {
    그래서 이 값으로 새것/헌것을 따지면 안 됩니다 — hasUpdate() 도 크기가 아니라
    "다르면 새것"으로만 봅니다. 반대로 서비스워커 캐시 이름(creg-vNN)은 계속 올라가기만
    합니다. 옛 캐시를 다시 쓰면 폰에 남은 헌 파일을 새것으로 착각하기 때문입니다. */
-const APP_VERSION = '1.9.70';
-const APP_PATCHED = '2026-11-24';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
+const APP_VERSION = '1.9.71';
+const APP_PATCHED = '2026-11-27';   // 최근 업데이트 날짜 — 배포할 때 APP_VERSION 과 함께 고칩니다
 const SCHEMA_VERSION = 1;          // 데이터 모양 버전. 모양을 바꾸는 패치에서만 올립니다
 const VERSION_URL = './version.json';
 const VERSION_CHECK_MS = 30 * 60 * 1000;
@@ -5510,6 +5520,14 @@ function App() {
   const [individuals, setIndividuals] = useState(() => DB.getIndividuals());
   const [remVer, setRemVer] = useState(0);
   const [storeMsg, setStoreMsg] = useState('');   // 저장 칸이 모자랄 때 띄우는 안내
+  const [pushAsk, setPushAsk] = useState(false);   // v1.9.71 첫 기록 뒤 알림 권유
+  useEffect(() => {
+    let tm = null;
+    const f = () => { clearTimeout(tm); tm = setTimeout(() => { if (pushNudgeDue()) setPushAsk(true); }, 2500); };
+    window.addEventListener('cg-push-nudge', f);
+    if (PUSH.standalone() && (() => { try { return localStorage.getItem(PUSH_NUDGE_KEY) === 'later-ios'; } catch (e) { return false; } })()) f();   // 아이폰: 홈 화면 앱으로 처음 열었을 때
+    return () => { window.removeEventListener('cg-push-nudge', f); clearTimeout(tm); };
+  }, []);
   const [hetMsg, setHetMsg] = useState('');       // v1.9.68 이미 태어난 아이들에 헷을 붙였을 때 한 번
   const hetDone = (ch) => {
     if (!ch || !ch.length) return;
@@ -5657,6 +5675,7 @@ function App() {
         </div>
       ) : null}
 
+      {pushAsk && <Extra part="PushNudgeSheet" showToast={showToast} onClose={() => setPushAsk(false)} />}
       {hetMsg ? (
         <div className="updbar" style={{whiteSpace:'pre-line'}} data-testid="het-bar">
           <span>{hetMsg}</span>
@@ -5861,6 +5880,21 @@ function CrevalueHost(props) {
 /* v1.9.33 의견 한 줄(extras.min.js FeedbackCard) — 홈에서 딱 한 번. 3번째 방문부터(아이가 있으면 2번째부터).
    대표님 기기·빼둔 기기·예시 구경 중엔 안 뜹니다. 보내거나 [안 보낼게요]를 누르면 cg_fb 가 남아 다시 안 뜹니다 */
 const fbDue = (n) => { try { if (DEMO.on() || TRACK.off() || localStorage.getItem('cg_fb')) return false; const v = +localStorage.getItem('cg_visit_no') || 0; return v >= 3 || (n > 0 && v > 1); } catch (e) { return false; } };
+/* v1.9.71 첫 기록 뒤 알림 권유 (대표님 2026-11-27 — 가입 0·알림 0, 들어왔다 나가면 다시 부를 길이 없음)
+   뭔가 적으면 잠깐 뒤 한 번만 "부화일 다가오면 폰으로 알려 드릴까요?" — 계정이 없으면 그 자리에서 가입부터.
+   [나중에] 누르면 다시 안 묻습니다(설정 → 폰 알림에 늘 있음). 아이폰이 아직 홈 화면 앱이 아니면, 홈 화면 앱으로 열었을 때 한 번 더 */
+const PUSH_NUDGE_KEY = 'cg_push_nudge';
+function pushNudgeDue() {
+  try {
+    if (DEMO.on()) return false;
+    const v = localStorage.getItem(PUSH_NUDGE_KEY);
+    if (v === 'done') return false;
+    const st = PUSH.state();
+    if (v === 'later-ios' && st === 'need-install') return false;
+    return st === 'need-install' || st === 'need-login' || st === 'off';
+  } catch (e) { return false; }
+}
+function pushNudgeArm() { try { if (pushNudgeDue()) window.dispatchEvent(new Event('cg-push-nudge')); } catch (e) {} }
 function Extra({ part, ...props }) {
   const [mod, setMod] = useState(() => window.CREG_EXTRAS || null);
   useEffect(() => { if (!mod) loadExtras().then(setMod).catch(() => {}); }, []);

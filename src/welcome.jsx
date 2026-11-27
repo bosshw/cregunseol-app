@@ -70,7 +70,7 @@ function autoOutside() {
     if (!INAPP || sessionStorage.getItem(AUTO_OUT_KEY)) return false;
     if (!(TRACK.device() === 'android' || INAPP === '카카오톡')) return false;
     sessionStorage.setItem(AUTO_OUT_KEY, '1');
-    try { TRACK.step('auto_out'); } catch (e) {}
+    try { TRACK.step('onb_autoout'); } catch (e) {}   // v1.9.71 표의 허용 이름(onb_…)에 맞춤 — 'auto_out'은 서버가 거절했습니다
     setTimeout(openOutside, 350);
     return true;
   } catch (e) { return false; }

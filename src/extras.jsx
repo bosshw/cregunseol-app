@@ -2551,8 +2551,86 @@ function HatchCheck({ navigate, showToast, onSaved }) {
 }
 
 
+/* v1.9.71 첫 기록 뒤 알림 권유 시트 — 한 번만. 계정이 없으면 여기서 바로 가입(이메일·비밀번호)부터.
+   알림 허용 창은 반드시 버튼을 누른 순간에 떠야 해서(특히 아이폰), 가입이 끝나면 [🔔 알림 켜기]를 한 번 더 누르게 합니다 */
+function PushNudgeSheet({ showToast, onClose }) {
+  const [st, setSt] = useState(() => PUSH.state());
+  const [mode, setMode] = useState('signup');   // signup | signin
+  const [form, setForm] = useState({ email: '', password: '' });
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState('');
+  useEffect(() => { try { TRACK.step('onb_pushask'); } catch (e) {} }, []);
+  const mark = (v) => { try { STORE.set(PUSH_NUDGE_KEY, v); } catch (e) {} };
+  const later = () => { mark(st === 'need-install' ? 'later-ios' : 'done'); onClose(); };
+  const toast = (m) => showToast && showToast(m);
+  const doAuth = async () => {
+    const email = form.email.trim();
+    if (!email) return toast('⚠️ 이메일을 넣어주세요');
+    if (!form.password) return toast('⚠️ 비밀번호를 넣어주세요');
+    if (mode === 'signup' && form.password.length < 6) return toast('⚠️ 비밀번호는 6자 이상이어야 해요');
+    setBusy(true);
+    try {
+      if (mode === 'signup') {
+        const r = await SYNC.signUp(email, form.password);
+        if (!r.signedIn) { setNote('📧 인증 메일을 보냈어요. 메일의 링크를 누른 뒤 설정 → 서버 동기화에서 로그인하면 알림을 켤 수 있어요.'); mark('done'); setBusy(false); return; }
+        try { TRACK.step('onb_pushsignup'); } catch (e) {}
+      } else {
+        await SYNC.signIn(email, form.password);
+      }
+      try { await SYNC.firstSync(); } catch (e) {}
+      setForm({ email: '', password: '' });
+      setSt(PUSH.state());
+    } catch (e) { toast('⚠️ ' + ((e && e.message) || '실패')); }
+    setBusy(false);
+  };
+  const doEnable = async () => {
+    setBusy(true);
+    try { await PUSH.enable(); mark('done'); toast('🔔 알림을 켰어요! 부화·산란 예정일 3일 전에 알려 드릴게요'); onClose(); }
+    catch (e) { toast('⚠️ ' + ((e && e.message) || '실패')); setSt(PUSH.state()); }
+    setBusy(false);
+  };
+  const body = st === 'need-install' ? (
+    <>
+      <p className="pn-p">아이폰은 <b>홈 화면에 추가한 앱</b>에서만 알림이 와요.</p>
+      <ol className="pn-ol"><li>사파리 아래 <b>공유 □↑</b></li><li><b>홈 화면에 추가</b></li><li>홈 화면의 브리딩비서로 열면 여기서 바로 켤 수 있어요</li></ol>
+      <button className="btn btn-primary" onClick={later} data-testid="pn-ok">알겠어요</button>
+    </>
+  ) : st === 'need-login' ? (
+    <>
+      <p className="pn-p">{mode === 'signup' ? <>이메일로 가입하면 알림을 켤 수 있어요.<br />기록도 폰·PC에 함께 남고, 본인만 봐요.</> : '가입하신 이메일로 로그인해 주세요.'}</p>
+      <input className="input" type="email" autoComplete="username" placeholder="이메일" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} data-testid="pn-email" />
+      <input className="input" type="password" autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} placeholder={mode === 'signup' ? '비밀번호 (6자 이상)' : '비밀번호'}
+        value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} data-testid="pn-pw" />
+      {note && <div className="pn-note">{note}</div>}
+      <button className="btn btn-primary" disabled={busy} onClick={doAuth} data-testid="pn-auth">{busy ? '진행 중…' : mode === 'signup' ? '가입하고 알림 받기' : '로그인'}</button>
+      <button className="pn-link" onClick={() => { setMode(mode === 'signup' ? 'signin' : 'signup'); setNote(''); }}>{mode === 'signup' ? '이미 계정이 있어요 · 로그인' : '← 처음이에요 · 가입하기'}</button>
+    </>
+  ) : st === 'off' ? (
+    <>
+      <p className="pn-p">앱을 안 켜도 <b>잠금화면</b>으로 알려 드려요.<br />부화·산란 예정일 3일 전, 아침 8시에 한 번씩이에요.</p>
+      <button className="btn btn-primary" disabled={busy} onClick={doEnable} data-testid="pn-enable">{busy ? '켜는 중…' : '🔔 알림 켜기'}</button>
+    </>
+  ) : (
+    <>
+      <p className="pn-p">{st === 'denied' ? '알림이 차단돼 있어요. 폰 설정 → 알림에서 이 앱을 허용해 주세요.' : st === 'on' ? '알림이 켜져 있어요 🔔' : '이 브라우저는 알림을 지원하지 않아요.'}</p>
+      <button className="btn btn-primary" onClick={() => { mark('done'); onClose(); }}>확인</button>
+    </>
+  );
+  return (
+    <div className="pe-bg" onClick={later} data-testid="push-nudge">
+      <div className="pe-sheet" onClick={e => e.stopPropagation()}>
+        <div className="pe-head"><b>🔔 부화일 다가오면 알려 드릴까요?</b><button onClick={later} aria-label="닫기">×</button></div>
+        <div className="pe-body pn-body">
+          {body}
+          {st !== 'need-install' && <button className="pn-later" onClick={later} data-testid="pn-later">나중에 할게요 · 설정 → 폰 알림에서 언제든 켤 수 있어요</button>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 window.CREG_EXTRAS = {
-  SeasonNoteSheet, BirthdayPopup, DupMergeCard, FeedbackCard, FeedbackInbox, fbPayload, FB_PICKS, morphFill, mfList, mfIntro, MF, TrackCard, StorageCard, PushCard, SyncCard, followUp, fuPrice, fuWho, FU, sibParents, sibGroupOf, sibParentsPlan, SIB_PAR_RE, SIB_MORE_RE, SIB, BDAY_LINES, bdayPick, SaleCardSheet, AdoptSendSheet, AdoptReceive, AddGeckoSheet, chat, LayCheck, HatchCheck,
+  SeasonNoteSheet, BirthdayPopup, DupMergeCard, FeedbackCard, FeedbackInbox, fbPayload, FB_PICKS, morphFill, mfList, mfIntro, MF, TrackCard, StorageCard, PushCard, PushNudgeSheet, SyncCard, followUp, fuPrice, fuWho, FU, sibParents, sibGroupOf, sibParentsPlan, SIB_PAR_RE, SIB_MORE_RE, SIB, BDAY_LINES, bdayPick, SaleCardSheet, AdoptSendSheet, AdoptReceive, AddGeckoSheet, chat, LayCheck, HatchCheck,
   weightCheck, healthCheck, saleReady, cmdHelp, kinCheck, monthReport, kinData, monthData, mrMonth, HealthCard, SaleReady, healthPlan, healthApply, saleReadyData, WC, HC, SR, CMD_LIST,
   // 시험(node)에서 쓰는 순수 함수들
   seasonYears, seasonNoteStats, seasonSummaryText, saveSeasonNote, toggleTrait, SEASON_TRAITS, SEASON_DIRS,

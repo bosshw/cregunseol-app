@@ -96,7 +96,7 @@ test("the name is 브리딩비서 everywhere a visitor sees it, and the welcome 
   assert.match(worker, /'\.\/welcome\.min\.js'/);
   assert.match(app, /welcome\.min\.js/);
   assert.match(source, /data-testid="demo-bar"/);
-  assert.match(source, /if \(!DEMO\.on\(\)\) \{ try \{ TRACK\.step\('record'\); \} catch \(e\) \{\} \}/);
+  assert.match(source, /if \(!DEMO\.on\(\)\) \{ try \{ TRACK\.step\('record'\); \} catch \(e\) \{\} pushNudgeArm\(\); \}/, "v1.9.71 처음 적으면 알림 권유도");
 });
 
 test("the tutorial walks a real path: chat → say → save → calendar → briefing, on anchors the app keeps", async () => {
